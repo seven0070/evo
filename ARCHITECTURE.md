@@ -402,3 +402,75 @@ Rollback: restore the previous known-good version
 ```
 
 Cognitive reasoning cannot bypass the Kernel, permissions, approvals, sandbox, benchmark, verification, promotion, rollback, or protected core. It cannot directly modify production or its own source, approve evolution/metamorphosis/promotion, disable governance, execute unrestricted commands, create unlimited reasoning loops, or fabricate task completion.
+
+
+## Persistent Memory and Knowledge Intelligence Layer
+
+Phase 11 adds a single SQLite-backed `MemoryManager` between Cognitive planning and the existing Experience/Evaluation evidence systems. It is a knowledge-support layer, not a governance layer.
+
+```text
+Current authoritative state
+          |
+          v
+Cognitive Layer <---- bounded CognitiveMemoryContext
+          |                         ^
+          v                         |
+      MemoryManager                 |
+  /       |       |       |         |
+Working Episodic Semantic Procedural User
+  \       |       |       |         /
+   Retrieval -> Consolidation -> Forgetting
+          |
+          v
+Agent Kernel -> Observation -> Verification
+          |
+          v
+Experience / Evaluation -> Phase 9 Evolution Orchestrator
+```
+
+### Memory records and provenance
+
+`MemoryRecord` is structured rather than an opaque history blob. It carries memory type, content, summary, source, source ID, provenance chain, confidence, importance, relevance, timestamps, access counters, version, temporal validity, agent and architecture versions, environment snapshot, lifecycle status, occurrence counts, source IDs, and metadata. `ProvenanceManager` rejects durable records that cannot answer where their information came from. Derived semantic records retain the source memory chain and are explicitly labelled as observed fact, inference, or generalization.
+
+Working memory contains the current goal, constraints, selected plan, and recent task context. It is bounded by item count and serialized bytes, evicts the least useful non-critical records deterministically, and preserves critical constraints. It is task-associated and cleared when the goal ends. Episodic memory captures actual Experience, Evaluation, and Observation evidence. Semantic memory is created only from repeated evidence; recurring failures produce conservative inference rather than universal policy. Procedural memory stores candidate workflows and is never blindly replayed. User memory is explicit `USER_INPUT`, non-executable, and requires an explicit auditable deletion action.
+
+### Retrieval and knowledge use
+
+`RetrievalEngine` uses deterministic, inspectable scoring across topic, task, failure, tool, capability, strategy, recency, importance, confidence, environment, and architecture-version compatibility. Retrieval is bounded by maximum records, serialized bytes, and time. Expired, invalid, incompatible, low-confidence, contradictory, environment-mismatched, version-mismatched, or injection-like records are filtered or warned. Conflicts retain both records and provenance; no record is silently overwritten.
+
+Before plan selection, CognitiveOrchestrator requests a bounded `CognitiveMemoryContext`. The selected plan records the IDs and warnings of historical evidence considered. Before runtime adaptation, failure retrieval is passed as evidence into the existing Flexibility context. Memory is evidence, not instruction: current user requirements, task state, security policy, permissions, approvals, capability restrictions, sandbox rules, governance, verification, and the existing Phase 9–7 authorities always win.
+
+### Lifecycle, updates, retention, and integrity
+
+The durable lifecycle is `CAPTURE -> VALIDATE -> CLASSIFY -> STORE -> RETRIEVE -> REUSE -> UPDATE -> CONSOLIDATE -> ARCHIVE/EXPIRE`. Deterministic fingerprints collapse duplicate observations while preserving first/last seen, occurrence count, and source IDs. Updates mark the old record `SUPERSEDED`, create a new version, preserve snapshots and supersession links, and retain provenance. Records can be `ACTIVE`, `ARCHIVED`, `EXPIRED`, `SUPERSEDED`, or `CONFLICT`; forgetting changes status rather than destroying important provenance.
+
+The existing SQLite database contains the Phase 11 memory record, history, link, procedure, feedback, and audit-event tables. `MemoryIntegrityReport` checks required schema, parseable structured payloads, mandatory IDs/content, and provenance. Corrupt or malformed memory is reported as an invalid record and is not silently rebuilt into trusted knowledge. Restart creates a new `MemoryManager`, reloads durable records, validates versions and environments during retrieval/procedure selection, and does not blindly restore stale working context.
+
+### Authority and safety
+
+```text
+Memory: retained data and evidence
+Knowledge: validated or conservatively derived evidence
+Experience: what actually happened
+Learning: useful patterns derived from experience
+Cognition: understands and plans
+Kernel: executes through policy and tools
+Evolution: governed behavioral modification
+Metamorphosis: governed structural modification
+Governance: controls what may change
+```
+
+Memory cannot execute stored content, change permissions, approve evolution/metamorphosis/promotion, modify protected components, bypass the Kernel, bypass sandbox or benchmark, disable verification or rollback, alter governance, modify production, or create autonomous loops. Prompt-injection-like text remains untrusted data with `executable = false` and is never converted into a tool call or policy. Procedures are candidate strategies subject to current capability, environment, policy, approval, and verification checks.
+
+### Feedback loop
+
+```text
+Task -> Cognition -> Kernel execution -> Observation -> Verification
+  -> Experience / Evaluation -> Episodic memory
+  -> Conservative consolidation -> Retrieval
+  -> Memory-informed planning and Flexibility
+  -> Evidence-backed Phase 9 opportunity
+  -> Existing governed Evolution / Metamorphosis pipeline
+```
+
+The memory layer does not create a second evolution system. It supplies bounded historical evidence to the existing Cognitive and Phase 9 paths; only the existing sandbox, benchmark, promotion, health verification, and rollback authorities can evaluate or activate governed changes.

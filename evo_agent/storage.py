@@ -495,8 +495,104 @@ class SQLiteStore:
                     payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_cognitive_verification_goal ON cognitive_verification_results(goal_id);
+                CREATE TABLE IF NOT EXISTS memory_records (
+                    memory_id TEXT PRIMARY KEY,
+                    memory_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    provenance TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    confidence_score REAL NOT NULL,
+                    importance REAL NOT NULL,
+                    relevance REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_accessed_at TEXT,
+                    access_count INTEGER NOT NULL,
+                    version INTEGER NOT NULL,
+                    memory_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    expiration TEXT,
+                    valid_from TEXT,
+                    valid_until TEXT,
+                    agent_version TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    source_version TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    knowledge_kind TEXT,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    memory_key TEXT NOT NULL,
+                    source_ids TEXT NOT NULL,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    occurrence_count INTEGER NOT NULL,
+                    metadata TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_type_status ON memory_records(memory_type, status);
+                CREATE INDEX IF NOT EXISTS idx_memory_source ON memory_records(source, source_id);
+                CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_records(memory_key);
+                CREATE TABLE IF NOT EXISTS memory_history (
+                    history_id TEXT PRIMARY KEY,
+                    memory_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    changed_at TEXT NOT NULL,
+                    reason TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_history_memory ON memory_history(memory_id, version);
+                CREATE TABLE IF NOT EXISTS memory_links (
+                    link_id TEXT PRIMARY KEY,
+                    memory_id TEXT NOT NULL,
+                    parent_id TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_links_memory ON memory_links(memory_id);
+                CREATE TABLE IF NOT EXISTS memory_procedures (
+                    procedure_id TEXT PRIMARY KEY,
+                    task_type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    steps TEXT NOT NULL,
+                    required_capabilities TEXT NOT NULL,
+                    required_tools TEXT NOT NULL,
+                    constraints TEXT NOT NULL,
+                    success_history INTEGER NOT NULL,
+                    failure_history INTEGER NOT NULL,
+                    confidence TEXT NOT NULL,
+                    confidence_score REAL NOT NULL,
+                    source_experiences TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    agent_version TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_procedures_type ON memory_procedures(task_type, status);
+                CREATE TABLE IF NOT EXISTS memory_feedback (
+                    feedback_id TEXT PRIMARY KEY,
+                    memory_id TEXT NOT NULL,
+                    feedback TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_events (
+                    event_id TEXT PRIMARY KEY,
+                    memory_id TEXT NOT NULL,
+                    event_name TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
+            if columns and "payload" not in columns:
+                db.execute("ALTER TABLE memory_records ADD COLUMN payload TEXT NOT NULL DEFAULT '{}' ")
 
     def create_task(self, goal: Goal) -> None:
         with self._connect() as db:
@@ -531,6 +627,124 @@ class SQLiteStore:
         with self._connect() as db:
             rows = db.execute("SELECT kind, content, created_at FROM memories ORDER BY memory_id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
+
+    def save_memory(self, record: Any) -> None:
+        payload = record.to_dict()
+        with self._connect() as db:
+            existing = db.execute("SELECT payload, version, fingerprint, content, status FROM memory_records WHERE memory_id = ?", (record.memory_id,)).fetchone()
+            if existing and (existing["content"] != record.content or existing["status"] != record.status.value or existing["version"] != record.version):
+                db.execute("INSERT INTO memory_history(history_id, memory_id, version, snapshot, changed_at, reason) VALUES (?, ?, ?, ?, ?, ?)", (new_id("memory_history"), record.memory_id, existing["version"], existing["payload"], datetime.now(timezone.utc).isoformat(), str(record.metadata.get("update_reason", "versioned memory update"))))
+            fingerprint = record.metadata.get("fingerprint", "")
+            if not fingerprint:
+                import hashlib
+                fingerprint = hashlib.sha256(json.dumps({"type": record.type.value, "key": record.key, "content": record.content.strip().lower()}, sort_keys=True).encode()).hexdigest()
+                record.metadata["fingerprint"] = fingerprint
+                payload = record.to_dict()
+            environment = json.dumps(record.environment.to_dict())
+            db.execute("INSERT OR REPLACE INTO memory_records(memory_id, memory_type, content, summary, source, source_id, provenance, confidence, confidence_score, importance, relevance, created_at, updated_at, last_accessed_at, access_count, version, memory_version, status, expiration, valid_from, valid_until, agent_version, architecture_version, source_version, environment, knowledge_kind, fingerprint, memory_key, source_ids, first_seen, last_seen, occurrence_count, metadata, payload) VALUES (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?)", (record.memory_id, record.type.value, record.content, record.summary, record.source.value, record.source_id, json.dumps(record.provenance.to_dict()), record.confidence.value, record.confidence_score, record.importance, record.relevance, record.created_at, record.updated_at, record.last_accessed_at, record.access_count, record.version, record.memory_version, record.status.value, record.expiration, record.valid_from, record.valid_until, record.agent_version, record.architecture_version, record.source_version, environment, record.knowledge_kind.value if record.knowledge_kind else None, fingerprint, record.key, json.dumps(record.source_ids), record.first_seen or record.created_at, record.last_seen or record.updated_at, record.occurrence_count, json.dumps(record.metadata), json.dumps(payload)))
+
+    def memory_by_id(self, memory_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM memory_records WHERE memory_id = ?", (memory_id,)).fetchone()
+        return dict(row) if row else None
+
+    def memory_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM memory_records WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        return dict(row) if row else None
+
+    def memories_by_key(self, memory_key: str, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM memory_records WHERE memory_key = ? ORDER BY updated_at DESC LIMIT ?", (memory_key, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_memory_conflicts(self, memory_key: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clauses = ["status = 'conflict'"]
+        values: list[Any] = []
+        if memory_key:
+            clauses.append("memory_key = ?")
+            values.append(memory_key)
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM memory_records WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_memories(self, memory_type: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if memory_type:
+            clauses.append("memory_type = ?")
+            values.append(memory_type)
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM memory_records {where} ORDER BY updated_at DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def memory_history(self, memory_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT snapshot FROM memory_history WHERE memory_id = ? ORDER BY version DESC", (memory_id,)).fetchall()
+        return [{"payload": row["snapshot"]} for row in rows]
+
+    def save_memory_link(self, memory_id: str, parent_id: str, relation: str) -> None:
+        with self._connect() as db:
+            db.execute("INSERT INTO memory_links(link_id, memory_id, parent_id, relation, created_at) VALUES (?, ?, ?, ?, ?)", (new_id("memory_link"), memory_id, parent_id, relation, datetime.now(timezone.utc).isoformat()))
+
+    def memory_links(self, memory_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM memory_links WHERE memory_id = ? OR parent_id = ? ORDER BY created_at", (memory_id, memory_id)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_memory_event(self, memory_id: str, event_name: str, payload: dict[str, Any]) -> None:
+        with self._connect() as db:
+            db.execute("INSERT INTO memory_events(event_id, memory_id, event_name, payload, created_at) VALUES (?, ?, ?, ?, ?)", (new_id("memory_event"), memory_id, event_name, json.dumps(payload), datetime.now(timezone.utc).isoformat()))
+
+    def save_procedure(self, procedure: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO memory_procedures(procedure_id, task_type, name, steps, required_capabilities, required_tools, constraints, success_history, failure_history, confidence, confidence_score, source_experiences, version, agent_version, architecture_version, environment, status, created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (procedure.procedure_id, procedure.task_type, procedure.name, json.dumps(procedure.steps), json.dumps(procedure.required_capabilities), json.dumps(procedure.required_tools), json.dumps(procedure.constraints), procedure.success_history, procedure.failure_history, procedure.confidence.value, procedure.confidence_score, json.dumps(procedure.source_experiences), procedure.version, procedure.agent_version, procedure.architecture_version, json.dumps(procedure.environment.to_dict()), procedure.status.value, procedure.created_at, procedure.updated_at, json.dumps(procedure.metadata)))
+
+    def find_procedures(self, task_type: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if task_type:
+                rows = db.execute("SELECT * FROM memory_procedures WHERE task_type = ? ORDER BY confidence_score DESC, updated_at DESC LIMIT ?", (task_type, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM memory_procedures ORDER BY confidence_score DESC, updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_memory_feedback(self, memory_id: str, feedback: str, note: str = "") -> None:
+        with self._connect() as db:
+            db.execute("INSERT INTO memory_feedback(feedback_id, memory_id, feedback, note, created_at) VALUES (?, ?, ?, ?, ?)", (new_id("memory_feedback"), memory_id, feedback, note, datetime.now(timezone.utc).isoformat()))
+
+    def memory_statistics(self) -> dict[str, Any]:
+        with self._connect() as db:
+            total = db.execute("SELECT COUNT(*) AS n FROM memory_records").fetchone()["n"]
+            type_rows = db.execute("SELECT memory_type, COUNT(*) AS n FROM memory_records GROUP BY memory_type").fetchall()
+            status_rows = db.execute("SELECT status, COUNT(*) AS n FROM memory_records GROUP BY status").fetchall()
+            duplicates = db.execute("SELECT COALESCE(SUM(occurrence_count - 1), 0) AS n FROM memory_records").fetchone()["n"]
+        result = {"total_memories": total, "working_memories": 0, "episodic_memories": 0, "semantic_memories": 0, "procedural_memories": 0, "user_memories": 0, "archived_memories": 0, "expired_memories": 0, "conflicts": 0, "duplicates": int(duplicates or 0)}
+        for row in type_rows:
+            result[f"{row['memory_type']}_memories"] = row["n"]
+        for row in status_rows:
+            if row["status"] in {"archived", "expired"}:
+                result[f"{row['status']}_memories"] = row["n"]
+        return result
+
+    def average_memory_score(self) -> float:
+        with self._connect() as db:
+            row = db.execute("SELECT AVG(relevance) AS score FROM memory_records").fetchone()
+        return float(row["score"] or 0.0)
+
+    def memory_schema_valid(self) -> bool:
+        required = {"memory_records", "memory_history", "memory_links", "memory_procedures", "memory_feedback", "memory_events"}
+        required_columns = {"memory_id", "provenance", "fingerprint", "metadata", "payload"}
+        with self._connect() as db:
+            rows = db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            tables = {row["name"] for row in rows}
+            if not required.issubset(tables):
+                return False
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
+        return required_columns.issubset(columns)
 
     def add_checkpoint(self, checkpoint_id: str, task_id: str, label: str, path: str, created_at: str) -> None:
         with self._connect() as db:

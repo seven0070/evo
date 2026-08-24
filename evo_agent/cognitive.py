@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable
 from .experience import ExperienceEngine
 from .flexibility import FlexibilityContext
 from .kernel import AgentKernel
+from .memory import CognitiveMemoryContext, MemoryManager, MemoryType, RetrievalQuery
 from .models import Event, EventType, Goal, OutcomeType, PlanStep, RiskLevel, TaskOutcome, TaskStatus, ToolResult, new_id, utc_now
 from .orchestrator import EvolutionOpportunity, EvolutionOrchestrator, OrchestrationPath
 from .storage import SQLiteStore
@@ -247,6 +248,8 @@ class CognitivePlan:
     architecture_version: str = ""
     selected: bool = False
     created_at: str = field(default_factory=utc_now)
+    memory_evidence_ids: list[str] = field(default_factory=list)
+    memory_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -356,6 +359,7 @@ class CognitiveResult:
     replans: int = 0
     experience_id: str | None = None
     evaluation_id: str | None = None
+    memory_context: CognitiveMemoryContext | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -373,6 +377,7 @@ class CognitiveResult:
             "replans": self.replans,
             "experience_id": self.experience_id,
             "evaluation_id": self.evaluation_id,
+            "memory_context": self.memory_context.to_dict() if self.memory_context else None,
         }
 
 
@@ -577,9 +582,19 @@ class PlanningEngine:
     def generate_plans(self, goal: CognitiveGoal, graph: TaskGraph, architecture_version: str = "") -> list[CognitivePlan]:
         return self.generate(goal, graph, architecture_version)
 
-    def generate(self, goal: CognitiveGoal, graph: TaskGraph, architecture_version: str = "") -> list[CognitivePlan]:
+    def generate(self, goal: CognitiveGoal, graph: TaskGraph, architecture_version: str = "", memory_context: CognitiveMemoryContext | None = None) -> list[CognitivePlan]:
         ordered = TaskGraphEngine().order(graph)
-        primary = CognitivePlan(new_id("plan"), goal.goal_id, [node.task_id for node in ordered], {node.task_id: node.dependencies for node in ordered}, sorted({node.tool_name for node in ordered if node.tool_name}), sorted({cap for node in ordered for cap in node.required_capabilities}), float(len(ordered)), max((node.risk for node in ordered), key=lambda risk: [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL].index(risk)), "All subtasks complete and goal criteria pass", "Dependency-aware sequential plan preserves verification after each Kernel task.", architecture_version=architecture_version)
+        evidence_ids = [item.memory.memory_id for item in (memory_context.relevant_episodic_memory + memory_context.relevant_semantic_memory)] if memory_context else []
+        warnings = memory_context.memory_warnings if memory_context else []
+        procedures = len(memory_context.relevant_procedures) if memory_context else 0
+        rationale = "Dependency-aware sequential plan preserves verification after each Kernel task."
+        if evidence_ids:
+            rationale += f" Considered {len(evidence_ids)} bounded historical memory record(s)."
+        if procedures:
+            rationale += f" Validated {procedures} candidate procedural memory record(s) against current context."
+        if warnings:
+            rationale += " Historical memory warnings were retained as evidence, not instructions."
+        primary = CognitivePlan(new_id("plan"), goal.goal_id, [node.task_id for node in ordered], {node.task_id: node.dependencies for node in ordered}, sorted({node.tool_name for node in ordered if node.tool_name}), sorted({cap for node in ordered for cap in node.required_capabilities}), float(len(ordered)), max((node.risk for node in ordered), key=lambda risk: [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL].index(risk)), "All subtasks complete and goal criteria pass", rationale, architecture_version=architecture_version, memory_evidence_ids=evidence_ids, memory_warnings=warnings)
         candidates = [primary]
         if len(ordered) > 1:
             candidates.append(CognitivePlan(new_id("plan"), goal.goal_id, list(reversed([node.task_id for node in ordered])), {node.task_id: node.dependencies for node in ordered}, primary.required_tools, primary.required_capabilities, primary.estimated_cost + 1, primary.estimated_risk, primary.expected_result, "Alternative ordering retained only for comparison; dependency validation must pass.", architecture_version=architecture_version))
@@ -804,6 +819,8 @@ class CognitiveOrchestrator:
         self.verifier = CognitiveVerifier(self.workspace)
         self.persistence = CognitivePersistence(self.store)
         self.experiences = ExperienceEngine(self.store)
+        self.memory = MemoryManager(self.store, self.workspace, max_memories=self.policy["max_context_size"] // 1200, max_memory_bytes=self.policy["max_context_size"])
+        self._memory_context: CognitiveMemoryContext | None = None
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)
@@ -815,6 +832,7 @@ class CognitiveOrchestrator:
         started = time.monotonic()
         goal = self.goal_engine.understand(text, goal_id)
         self.context = ContextManager(self.policy["max_context_size"])
+        self.memory.begin_task(goal.goal_id, goal.original_text, [item.text for item in goal.constraints if item.critical])
         self.context.current_goal = goal
         intent = self.intent_engine.build(goal)
         state = CognitiveStateRecord(goal.goal_id, CognitiveState.UNDERSTANDING)
@@ -825,13 +843,15 @@ class CognitiveOrchestrator:
             state.last_error = "; ".join(goal.missing_requirements)
             goal.status = state.state
             self._persist(goal, intent, None, [], state, [], decisions, None)
-            return CognitiveResult(goal, intent, None, None, state, CognitiveOutcome.WAITING_FOR_INPUT, f"Clarification required: {state.last_error}")
+            self.memory.end_task()
+            return CognitiveResult(goal, intent, None, None, state, CognitiveOutcome.WAITING_FOR_INPUT, f"Clarification required: {state.last_error}", memory_context=self._memory_context)
         if goal.ambiguity is AmbiguityStatus.AMBIGUOUS:
             state.state = CognitiveState.WAITING_FOR_INPUT
             state.last_error = "; ".join(goal.missing_requirements)
             goal.status = state.state
             self._persist(goal, intent, None, [], state, [], decisions, None)
-            return CognitiveResult(goal, intent, None, None, state, CognitiveOutcome.WAITING_FOR_INPUT, f"Non-critical ambiguity requires input: {state.last_error}")
+            self.memory.end_task()
+            return CognitiveResult(goal, intent, None, None, state, CognitiveOutcome.WAITING_FOR_INPUT, f"Non-critical ambiguity requires input: {state.last_error}", memory_context=self._memory_context)
         if time.monotonic() - started > self.policy["max_execution_time"]:
             return self._safe_failure(goal, intent, state, "Goal understanding exceeded the execution limit.")
         state.state = CognitiveState.PLANNING
@@ -840,8 +860,10 @@ class CognitiveOrchestrator:
         graph_errors = self.graph_engine.validate(graph)
         if graph_errors:
             return self._safe_failure(goal, intent, state, "; ".join(graph_errors), graph=graph)
-        plans = self.planner.generate(goal, graph, self._architecture_version())
+        self._memory_context = self.memory.cognitive_context(RetrievalQuery(goal=goal.normalized_goal, max_memories=self.policy["max_context_size"] // 1200, max_memory_bytes=self.policy["max_context_size"], architecture_version=self._architecture_version()))
+        plans = self.planner.generate(goal, graph, self._architecture_version(), self._memory_context)
         plan = self.reasoner.select_plan(plans, self._available_tools())
+        self.memory.add_working(json.dumps(plan.to_dict(), sort_keys=True), "Current selected plan", importance=0.9, critical=True, source_id=goal.goal_id)
         self.context.current_intent = intent
         self.context.task_graph = graph
         self.context.current_plan = plan
@@ -859,7 +881,8 @@ class CognitiveOrchestrator:
             state.last_error = "; ".join(gap.reason for gap in gaps)
             goal.status = state.state
             self._persist(goal, intent, graph, plans, state, [], decisions)
-            return CognitiveResult(goal, intent, plan, graph, state, CognitiveOutcome.BLOCKED, state.last_error, capability_gaps=gaps)
+            self.memory.end_task()
+            return CognitiveResult(goal, intent, plan, graph, state, CognitiveOutcome.BLOCKED, state.last_error, capability_gaps=gaps, memory_context=self._memory_context)
         state.state = CognitiveState.EXECUTING
         goal.status = state.state
         result = self._execute(goal, intent, graph, plan, state, decisions, started)
@@ -1011,7 +1034,8 @@ class CognitiveOrchestrator:
             flexibility = getattr(self._get_kernel(), "flexibility", None)
             if flexibility is None:
                 return None
-            context = FlexibilityContext(Goal(goal.original_text), failures=[{"task": node.description, "error": outcome.error or outcome.summary}], attempt=state.replan_count)
+            historical = self.memory.retrieve(RetrievalQuery(goal=goal.normalized_goal, subtask=node.description, failure=outcome.error or outcome.summary, max_memories=4, max_memory_bytes=4000))
+            context = FlexibilityContext(Goal(goal.original_text), failures=[{"task": node.description, "error": outcome.error or outcome.summary}], attempt=state.replan_count, constraints={"historical_memories": [item.to_dict() for item in historical]})
             failed_step = PlanStep(node.task_id, node.description, node.tool_name, {}, node.risk, "kernel verification")
             result = ToolResult(new_id("call"), node.tool_name or "unknown", False, error=outcome.error or outcome.summary)
             return flexibility.recommend_next_action(context, failed_step, result)
@@ -1065,14 +1089,16 @@ class CognitiveOrchestrator:
         state.last_error = None if outcome in {CognitiveOutcome.SUCCESS, CognitiveOutcome.PARTIAL} else state.last_error or (failures[-1].reason if failures else None)
         self._persist(goal, intent, graph, [plan], state, observations, decisions, verification)
         experience_id, evaluation_id = self._record_experience(goal, state, outcome, observations, failures, verification)
-        return CognitiveResult(goal, intent, plan, graph, state, outcome, summary, verification, observations, failures, [], state.replan_count, experience_id, evaluation_id)
+        self.memory.end_task()
+        return CognitiveResult(goal, intent, plan, graph, state, outcome, summary, verification, observations, failures, [], state.replan_count, experience_id, evaluation_id, self._memory_context)
 
     def _safe_failure(self, goal: CognitiveGoal, intent: IntentModel, state: CognitiveStateRecord, reason: str, graph: TaskGraph | None = None) -> CognitiveResult:
         state.state = CognitiveState.FAILED
         state.last_error = reason
         goal.status = state.state
         self._persist(goal, intent, graph, [], state, [], [])
-        return CognitiveResult(goal, intent, None, graph, state, CognitiveOutcome.INCONCLUSIVE, reason)
+        self.memory.end_task()
+        return CognitiveResult(goal, intent, None, graph, state, CognitiveOutcome.INCONCLUSIVE, reason, memory_context=self._memory_context)
 
     def _persist(self, goal: CognitiveGoal, intent: IntentModel, graph: TaskGraph | None, plans: list[CognitivePlan], state: CognitiveStateRecord, observations: list[Observation], decisions: list[dict[str, Any]], verification: VerificationReport | None = None) -> None:
         self.persistence.save_goal_bundle(goal, intent, graph, plans, state, observations, decisions, verification)
@@ -1096,6 +1122,13 @@ class CognitiveOrchestrator:
         experience = self.experiences.create(task_outcome, __version__, "cognitive")
         self.experiences.persist(experience)
         evaluation = self.evolution.evaluations.evaluate(experience)
+        try:
+            self.memory.capture_experience(experience)
+            self.memory.capture_evaluation(evaluation)
+            for observation in observations:
+                self.memory.capture_observation(observation)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            pass
         self.store.save_evaluation(evaluation)
         self.store.update_experience_evaluation(experience.experience_id, evaluation.evaluation_id, evaluation.to_dict())
         self.store.add_memory("cognitive", json.dumps({"goal_id": goal.goal_id, "outcome": outcome.value, "summary": report.summary}), utc_now())

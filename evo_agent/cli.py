@@ -10,6 +10,7 @@ from .experience import ExperienceEngine
 from .evolver import Evolver
 from .kernel import AgentKernel
 from .model_adapter import OpenAICompatibleAdapter, RuleBasedAdapter
+from .memory import MemoryManager, MemoryStatus, MemoryType, RetrievalQuery
 from .metamorphosis import MetamorphosisEngine
 from .orchestrator import ApprovalType, EvolutionOrchestrator, OrchestrationPolicy
 from .promotion import PromotionEngine
@@ -83,6 +84,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-cognitive-state", metavar="GOAL_ID", help="Show persisted cognitive state for a goal")
     parser.add_argument("--clarify-goal", metavar="GOAL_ID", help="Resume an ambiguous goal with explicit clarification")
     parser.add_argument("--clarification", default="", help="Clarification text used with --clarify-goal")
+    parser.add_argument("--list-memory", action="store_true", help="List durable and active memory records")
+    parser.add_argument("--show-memory", metavar="MEMORY_ID", help="Show one memory record")
+    parser.add_argument("--search-memory", metavar="QUERY", help="Search memory with deterministic bounded retrieval")
+    parser.add_argument("--memory-history", metavar="MEMORY_ID", help="Show version history and supersession links")
+    parser.add_argument("--memory-provenance", metavar="MEMORY_ID", help="Show memory provenance and source chain")
+    parser.add_argument("--list-procedures", action="store_true", help="List procedural memories")
+    parser.add_argument("--show-procedure", metavar="PROCEDURE_ID", help="Show one procedural memory")
+    parser.add_argument("--memory-stats", action="store_true", help="Show memory statistics")
+    parser.add_argument("--memory-integrity", action="store_true", help="Validate memory schema and record integrity")
+    parser.add_argument("--archive-memory", metavar="MEMORY_ID", help="Archive a non-user memory explicitly")
+    parser.add_argument("--restore-memory", metavar="MEMORY_ID", help="Restore an archived or expired memory")
+    parser.add_argument("--delete-user-memory", metavar="MEMORY_ID", help="Explicitly archive user-owned memory")
     return parser
 
 
@@ -96,10 +109,11 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
+    memory = MemoryManager(store, workspace)
     experiences = ExperienceEngine(store)
     evolver = Evolver(store, experiences)
     metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
@@ -128,6 +142,36 @@ def inspect_command(args: argparse.Namespace) -> bool:
     elif args.show_cognitive_state:
         row = store.cognitive_state_by_goal(args.show_cognitive_state)
         print_json(row or {"error": "cognitive state not found", "goal_id": args.show_cognitive_state})
+    elif args.list_memory:
+        memory_type = MemoryType(args.task_type) if args.task_type in {item.value for item in MemoryType} else None
+        print_json([item.to_dict() for item in memory.list(memory_type=memory_type)])
+    elif args.show_memory:
+        item = memory.get(args.show_memory)
+        print_json(item.to_dict() if item else {"error": "memory not found", "memory_id": args.show_memory})
+    elif args.search_memory:
+        print_json([item.to_dict() for item in memory.retrieve(RetrievalQuery(goal=args.search_memory, max_memories=10, max_memory_bytes=12000))])
+    elif args.memory_history:
+        print_json([item.to_dict() for item in memory.get_history(args.memory_history)])
+    elif args.memory_provenance:
+        try:
+            print_json(memory.get_provenance(args.memory_provenance))
+        except KeyError:
+            print_json({"error": "memory not found", "memory_id": args.memory_provenance})
+    elif args.list_procedures:
+        print_json([item.to_dict() for item in memory.list_procedures()])
+    elif args.show_procedure:
+        procedure = next((item for item in memory.list_procedures() if item.procedure_id == args.show_procedure), None)
+        print_json(procedure.to_dict() if procedure else {"error": "procedure not found", "procedure_id": args.show_procedure})
+    elif args.memory_stats:
+        print_json(memory.statistics())
+    elif args.memory_integrity:
+        print_json(memory.validate_integrity().to_dict())
+    elif args.archive_memory:
+        print_json(memory.archive(args.archive_memory).to_dict())
+    elif args.restore_memory:
+        print_json(memory.restore(args.restore_memory).to_dict())
+    elif args.delete_user_memory:
+        print_json(memory.delete_user_memory(args.delete_user_memory, actor="cli").to_dict())
     elif args.list_opportunities:
         print_json([opportunity.to_dict() for opportunity in orchestrator.list_opportunities()])
     elif args.show_opportunity:

@@ -262,3 +262,35 @@ evo --show-cognitive-state GOAL_ID --workspace ./workspace
 > **Cognition understands and plans. The Kernel executes safely. Flexibility adapts execution. Evolution improves behavior. Metamorphosis changes structure. Governance controls what may change.**
 
 The Cognitive Layer cannot bypass permission enforcement, approval gates, sandboxing, benchmarking, verification, promotion, rollback, or protected-core enforcement. It may observe, reason, plan, queue, execute authorized Kernel tasks, recover within limits, and route genuine gaps to Phase 9; it may not approve evolution, metamorphosis, or promotion, directly modify production, execute unrestricted commands, or claim completion without goal-level verification.
+
+## Persistent Memory and Knowledge Intelligence Layer
+
+Phase 11 adds a durable, structured **Memory and Knowledge Layer** on the existing SQLite database. Memory is retained information; knowledge is validated or conservatively generalized information; Experience records what happened; Learning derives useful patterns; Evolution remains governed modification. The memory layer informs cognition but never becomes an alternate authority.
+
+The `MemoryManager` coordinates bounded working memory, episodic experience memory, semantic knowledge, procedural memory, explicit user memory, deterministic retrieval, provenance, consolidation, feedback, forgetting, and integrity validation. Working memory is task-associated, size-bounded, and cleared at task end. Episodic memories reference actual Experience, Observation, and Evaluation records. Semantic consolidation requires repeated evidence and labels derived knowledge as an observed fact, inference, or generalization. Repeated failures remain conservative recurring-failure evidence rather than universal rules.
+
+Every durable record carries type, content, summary, source and source ID, provenance chain, confidence, importance, relevance, version, agent and architecture versions, temporal validity, environment context, status, and occurrence history. Contradictory records are retained as `CONFLICT`; updates create versioned history and supersession links rather than silently overwriting evidence. Deterministic deduplication preserves first and last seen timestamps, occurrence counts, and source IDs.
+
+Retrieval is transparent and bounded by memory count, serialized context bytes, and retrieval time. Topic, task, tool, capability, strategy, recency, importance, confidence, environment, and architecture-version dimensions contribute to an inspectable score. Expired, invalid, incompatible, low-confidence, contradictory, or injection-like records are filtered or downgraded. Retrieved text is data only: stored content cannot execute commands, alter permissions, approve changes, disable safety, or become policy. Current user instructions, task requirements, security policy, permissions, approvals, capabilities, sandbox rules, governance, and verification always outrank historical memory.
+
+Procedural memories store reusable workflows only as candidate strategies. The current capability registry, tool availability, architecture version, environment, policy, and task constraints are revalidated before reuse. Explicit user memory is marked `USER_INPUT`, remains non-executable, and can be archived only through an explicit auditable deletion action. Retention uses `ACTIVE`, `ARCHIVED`, `EXPIRED`, `SUPERSEDED`, and `CONFLICT` states; provenance is retained when information is archived or superseded.
+
+Cognitive planning retrieves a small `CognitiveMemoryContext` before plan selection. Relevant episodic and semantic evidence, candidate procedures, conflicts, and warnings are recorded in the selected plan rationale. Failure handling retrieves historical evidence before consulting the existing Flexibility Engine. Completed Cognitive goals capture Experience, Evaluation, Observation, verification, strategy, tool, and recovery evidence into the same memory database. Memory may strengthen future evidence for Phase 9 opportunity detection, but it cannot approve, promote, modify production, modify protected components, or create a parallel evolution path.
+
+Phase 11 memory inspection commands are:
+
+```bash
+evo --list-memory --workspace ./workspace
+evo --show-memory MEMORY_ID --workspace ./workspace
+evo --search-memory "text file processing" --workspace ./workspace
+evo --memory-history MEMORY_ID --workspace ./workspace
+evo --memory-provenance MEMORY_ID --workspace ./workspace
+evo --list-procedures --workspace ./workspace
+evo --show-procedure PROCEDURE_ID --workspace ./workspace
+evo --memory-stats --workspace ./workspace
+evo --memory-integrity --workspace ./workspace
+```
+
+The memory subsystem has no second database, vector-database requirement, unrestricted context dump, autonomous daemon, executable memory, or governance authority. Integrity validation fails safely on missing schema, malformed payloads, missing provenance, or invalid records rather than silently rebuilding corrupted data.
+
+> **Memory retains information. Knowledge is validated or conservatively derived information. Experience records outcomes. Learning identifies useful patterns. Evolution changes the agent only through the governed pipeline.**
