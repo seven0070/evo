@@ -147,6 +147,78 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_evidence_experiment ON evolution_evidence(experiment_id);
                 CREATE INDEX IF NOT EXISTS idx_evidence_decision ON evolution_evidence(decision);
+                CREATE TABLE IF NOT EXISTS versions (
+                    version_id TEXT PRIMARY KEY,
+                    source_commit TEXT NOT NULL,
+                    parent_version TEXT,
+                    proposal_id TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    evidence_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    version_path TEXT NOT NULL,
+                    manifest_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_version ON versions(status) WHERE status = 'active';
+                CREATE INDEX IF NOT EXISTS idx_versions_status ON versions(status);
+                CREATE TABLE IF NOT EXISTS promotion_requests (
+                    promotion_id TEXT PRIMARY KEY,
+                    proposal_id TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    evidence_id TEXT NOT NULL,
+                    candidate_version TEXT NOT NULL,
+                    current_production_version TEXT,
+                    requested_at TEXT NOT NULL,
+                    requested_by TEXT NOT NULL,
+                    approval_status TEXT NOT NULL,
+                    approval_reason TEXT,
+                    eligibility_status TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_promotions_status ON promotion_requests(status);
+                CREATE TABLE IF NOT EXISTS promotion_checkpoints (
+                    checkpoint_id TEXT PRIMARY KEY,
+                    production_version TEXT NOT NULL,
+                    source_commit TEXT NOT NULL,
+                    configuration TEXT NOT NULL,
+                    runtime_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    integrity_hash TEXT NOT NULL,
+                    active_target TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS promotion_records (
+                    promotion_id TEXT PRIMARY KEY,
+                    candidate_version TEXT NOT NULL,
+                    previous_version TEXT,
+                    proposal_id TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    evidence_id TEXT NOT NULL,
+                    checkpoint_id TEXT NOT NULL,
+                    final_status TEXT NOT NULL,
+                    promoted_at TEXT,
+                    rolled_back_at TEXT,
+                    rollback_reason TEXT,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_promotion_records_status ON promotion_records(final_status);
+                CREATE TABLE IF NOT EXISTS rollback_records (
+                    rollback_id TEXT PRIMARY KEY,
+                    promotion_id TEXT NOT NULL,
+                    from_version TEXT NOT NULL,
+                    to_version TEXT NOT NULL,
+                    checkpoint_id TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_rollbacks_promotion ON rollback_records(promotion_id);
                 """
             )
 
@@ -296,6 +368,102 @@ class SQLiteStore:
     def find_experiments(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM evolution_experiments ORDER BY start_time DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_version(self, version: Any) -> None:
+        payload = version.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO versions(
+                    version_id, source_commit, parent_version, proposal_id, experiment_id,
+                    evidence_id, status, version_path, manifest_hash, created_at, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (version.version_id, version.source_commit, version.parent_version, version.proposal_id, version.experiment_id, version.evidence_id, version.status.value, version.version_path, version.manifest_hash, version.created_at, json.dumps(version.metadata)),
+            )
+
+    def version_by_id(self, version_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM versions WHERE version_id = ?", (version_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_versions(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if status:
+                rows = db.execute("SELECT * FROM versions WHERE status = ? ORDER BY created_at DESC LIMIT ?", (status, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM versions ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_promotion_request(self, request: Any) -> None:
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO promotion_requests(
+                    promotion_id, proposal_id, experiment_id, evidence_id, candidate_version,
+                    current_production_version, requested_at, requested_by, approval_status,
+                    approval_reason, eligibility_status, status, created_at, policy_version, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (request.promotion_id, request.proposal_id, request.experiment_id, request.evidence_id, request.candidate_version, request.current_production_version, request.requested_at, request.requested_by, request.approval_status.value, request.approval_reason, request.eligibility_status.value, request.status.value, request.created_at, request.promotion_policy_version, json.dumps(request.to_dict())),
+            )
+
+    def promotion_request_by_id(self, promotion_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM promotion_requests WHERE promotion_id = ?", (promotion_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_promotion_requests(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM promotion_requests ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_promotion_checkpoint(self, checkpoint: Any) -> None:
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO promotion_checkpoints(
+                    checkpoint_id, production_version, source_commit, configuration,
+                    runtime_state, created_at, integrity_hash, active_target, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (checkpoint.checkpoint_id, checkpoint.production_version, checkpoint.source_commit, json.dumps(checkpoint.configuration), json.dumps(checkpoint.runtime_state), checkpoint.created_at, checkpoint.integrity_hash, checkpoint.active_target, json.dumps(checkpoint.to_dict())),
+            )
+
+    def checkpoint_by_id(self, checkpoint_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM promotion_checkpoints WHERE checkpoint_id = ?", (checkpoint_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_promotion_record(self, record: Any) -> None:
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO promotion_records(
+                    promotion_id, candidate_version, previous_version, proposal_id,
+                    experiment_id, evidence_id, checkpoint_id, final_status,
+                    promoted_at, rolled_back_at, rollback_reason, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (record.promotion_id, record.candidate_version, record.previous_version, record.proposal_id, record.experiment_id, record.evidence_id, record.checkpoint_id, record.final_status.value, record.promoted_at, record.rolled_back_at, record.rollback_reason, json.dumps(record.to_dict())),
+            )
+
+    def promotion_record_by_id(self, promotion_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM promotion_records WHERE promotion_id = ?", (promotion_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_rollback_record(self, rollback: Any) -> None:
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO rollback_records(
+                    rollback_id, promotion_id, from_version, to_version, checkpoint_id,
+                    reason, started_at, completed_at, status, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (rollback.rollback_id, rollback.promotion_id, rollback.from_version, rollback.to_version, rollback.checkpoint_id, rollback.reason, rollback.started_at, rollback.completed_at, rollback.status, json.dumps(rollback.to_dict())),
+            )
+
+    def rollback_record_by_id(self, rollback_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM rollback_records WHERE rollback_id = ?", (rollback_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_rollback_records(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM rollback_records ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
     def save_benchmark(self, benchmark: Any) -> None:

@@ -9,6 +9,7 @@ from .experience import ExperienceEngine
 from .evolver import Evolver
 from .kernel import AgentKernel
 from .model_adapter import OpenAICompatibleAdapter, RuleBasedAdapter
+from .promotion import PromotionEngine
 from .models import ToolCall
 from .sandbox import SandboxEngine
 from .storage import SQLiteStore
@@ -44,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-benchmark", metavar="BENCHMARK_ID", help="Run a benchmark against an eligible sandbox experiment")
     parser.add_argument("--experiment", metavar="EXPERIMENT_ID", help="Sandbox experiment to benchmark")
     parser.add_argument("--show-evidence", metavar="EVIDENCE_ID", help="Show one comparative evaluation evidence package")
+    parser.add_argument("--list-versions", action="store_true", help="List registered agent versions")
+    parser.add_argument("--show-version", metavar="VERSION_ID", help="Show one registered agent version")
+    parser.add_argument("--request-promotion", metavar="CANDIDATE_VERSION", help="Request promotion of a candidate version")
+    parser.add_argument("--evidence", metavar="EVIDENCE_ID", help="Evidence used for a promotion request")
+    parser.add_argument("--approve-promotion", metavar="PROMOTION_ID", help="Record explicit human promotion approval")
+    parser.add_argument("--reject-promotion", metavar="PROMOTION_ID", help="Reject a promotion request")
+    parser.add_argument("--promote", metavar="PROMOTION_ID", help="Activate an explicitly approved candidate")
+    parser.add_argument("--rollback", metavar="VERSION_ID", help="Rollback the active version to the previous known-good version")
+    parser.add_argument("--rollback-reason", default="", help="Reason recorded for rollback")
     return parser
 
 
@@ -57,7 +67,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -109,6 +119,26 @@ def inspect_command(args: argparse.Namespace) -> bool:
     elif args.show_evidence:
         record = store.evidence_by_id(args.show_evidence)
         print_json(record or {"error": "evidence not found", "evidence_id": args.show_evidence})
+    elif args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback:
+        promotion = PromotionEngine(store, Path(args.source_root), Path(args.sandbox_root).expanduser().resolve() if args.sandbox_root else None)
+        if args.list_versions:
+            print_json([version.to_dict() for version in promotion.list_versions()])
+        elif args.show_version:
+            version = promotion.get_version(args.show_version)
+            print_json(version.to_dict() if version else {"error": "version not found", "version_id": args.show_version})
+        elif args.request_promotion:
+            if not args.evidence:
+                print_json({"error": "--evidence is required with --request-promotion"})
+            else:
+                print_json(promotion.request_promotion(args.request_promotion, args.evidence, "human").to_dict())
+        elif args.approve_promotion:
+            print_json(promotion.approve_promotion(args.approve_promotion, args.proposal_reason).to_dict())
+        elif args.reject_promotion:
+            print_json(promotion.reject_promotion(args.reject_promotion, args.proposal_reason).to_dict())
+        elif args.promote:
+            print_json(promotion.promote(args.promote).to_dict())
+        elif args.rollback:
+            print_json(promotion.rollback(args.rollback, args.rollback_reason).to_dict())
     return True
 
 

@@ -56,6 +56,43 @@ class ProposalRisk(str, Enum):
     PROTECTED = "protected"
 
 
+class PromotionApprovalStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class PromotionEligibilityStatus(str, Enum):
+    UNKNOWN = "unknown"
+    ELIGIBLE = "eligible"
+    REJECTED = "rejected"
+
+
+class PromotionStatus(str, Enum):
+    REQUESTED = "requested"
+    ELIGIBILITY_CHECK = "eligibility_check"
+    APPROVED = "approved"
+    CHECKPOINT_CREATED = "checkpoint_created"
+    STAGED = "staged"
+    INTEGRITY_VERIFIED = "integrity_verified"
+    ACTIVATING = "activating"
+    HEALTH_CHECK = "health_check"
+    ACTIVE = "active"
+    ROLLING_BACK = "rolling_back"
+    ROLLED_BACK = "rolled_back"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+class VersionStatus(str, Enum):
+    CANDIDATE = "candidate"
+    ACTIVE = "active"
+    PREVIOUS = "previous"
+    ROLLED_BACK = "rolled_back"
+    RETIRED = "retired"
+    INVALID = "invalid"
+
+
 class CandidateStatus(str, Enum):
     CREATED = "created"
     PREPARED = "prepared"
@@ -127,6 +164,22 @@ class EventType(str, Enum):
     SANDBOX_CLEANUP_STARTED = "sandbox_cleanup_started"
     SANDBOX_DESTROYED = "sandbox_destroyed"
     SANDBOX_ABORTED = "sandbox_aborted"
+    PROMOTION_REQUESTED = "promotion_requested"
+    PROMOTION_ELIGIBILITY_CHECKED = "promotion_eligibility_checked"
+    PROMOTION_APPROVED = "promotion_approved"
+    PROMOTION_REJECTED = "promotion_rejected"
+    PROMOTION_CHECKPOINT_CREATED = "promotion_checkpoint_created"
+    CANDIDATE_STAGED = "candidate_staged"
+    CANDIDATE_INTEGRITY_VERIFIED = "candidate_integrity_verified"
+    PROMOTION_STARTED = "promotion_started"
+    PRODUCTION_VERSION_ACTIVATED = "production_version_activated"
+    POST_PROMOTION_HEALTH_CHECK = "post_promotion_health_check"
+    PROMOTION_COMPLETED = "promotion_completed"
+    PROMOTION_FAILED = "promotion_failed"
+    ROLLBACK_STARTED = "rollback_started"
+    ROLLBACK_CHECKPOINT_RESTORED = "rollback_checkpoint_restored"
+    ROLLBACK_VERIFIED = "rollback_verified"
+    ROLLBACK_COMPLETED = "rollback_completed"
     BENCHMARK_CREATED = "benchmark_created"
     BENCHMARK_VALIDATED = "benchmark_validated"
     BENCHMARK_STARTED = "benchmark_started"

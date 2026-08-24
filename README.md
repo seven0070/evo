@@ -67,6 +67,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 | `evolver.py` | Evidence analysis, proposal generation, validation, persistence, and recorded review |
 | `sandbox.py` | Proposal-gated isolated candidate experiments, bounded execution, comparison, and cleanup |
 | `benchmark.py` | Versioned benchmark trials, metrics, regression/safety gates, and evidence decisions |
+| `promotion.py` | Version registry, explicit promotion approvals, atomic activation, health checks, and native rollback |
 
 ## Verification
 
@@ -74,7 +75,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 python3 -m pytest -q
 ```
 
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, and Phase 1–5 regression behavior.
+The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, version registry bootstrap and lineage, separate promotion approval, eligibility rejection, candidate integrity and TOCTOU checks, atomic activation, health verification, native rollback, manual rollback, audit records, previous-version retention, and Phase 1–6 regression behavior.
 
 ## Flexibility Engine
 
@@ -151,6 +152,28 @@ Evidence is persisted in the existing SQLite database using `benchmarks`, `bench
 
 > **Sandbox asks whether a candidate can execute safely. Benchmark asks whether it performs better. Promotion is a later phase.**
 
-## Next milestone: controlled promotion and rollback
+## Controlled Promotion and Native Rollback
 
-Phase 7 may consume evidence packages for explicit human-reviewed promotion and rollback. Phase 6 does not modify production, merge Git history, deploy, approve autonomously, or promote any candidate.
+The repository now includes a separate `PromotionEngine` for the final controlled transition from a benchmark-proven candidate to an immutable active version. Promotion requires all of the following: approved proposal, passed and retained sandbox experiment, valid `BETTER` evidence, no safety regression, matching candidate integrity, registered lineage, and explicit human promotion approval. Proposal approval authorizes experimentation only; it can never substitute for promotion approval.
+
+The version registry preserves source commit, parent version, proposal, experiment, evidence, manifest hash, immutable path, status, and metadata. It bootstraps a known-good `v0`, maintains a single `ACTIVE` version, retains the previous version, and keeps failed or rolled-back candidates available for investigation. Activation uses an atomic `active` symlink switch after staging and a final integrity check, so the previous version is never destructively overwritten.
+
+After activation, the engine verifies required agent files, database opening, safety-control presence, workspace protection, and a bounded smoke test. A failed health check automatically invokes the native rollback path to restore the checkpointed previous version. Manual rollback is also available. Rollback verifies the actual active pointer and restored manifest and preserves all promotion, experiment, benchmark, evidence, candidate, and audit history.
+
+Promotion commands are:
+
+```bash
+evo --list-versions --workspace ./workspace --source-root .
+evo --show-version VERSION_ID --workspace ./workspace --source-root .
+evo --request-promotion CANDIDATE_VERSION --evidence EVIDENCE_ID --workspace ./workspace --source-root .
+evo --approve-promotion PROMOTION_ID --proposal-reason "Promote verified candidate" --workspace ./workspace --source-root .
+evo --reject-promotion PROMOTION_ID --proposal-reason "Insufficient confidence" --workspace ./workspace --source-root .
+evo --promote PROMOTION_ID --workspace ./workspace --source-root .
+evo --rollback VERSION_ID --rollback-reason "Post-promotion regression" --workspace ./workspace --source-root .
+```
+
+> **Only an explicitly approved, benchmark-proven, integrity-verified candidate may become active. Every promotion remains reversible.**
+
+## Next milestone: broader controlled evolution
+
+Phase 8 may extend promotion policy and retention governance. Phase 7 does not implement autonomous promotion, autonomous approval, deployment, Git merging, production mutation outside the atomic version pointer, or Metamorphosis.

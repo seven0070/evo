@@ -33,7 +33,7 @@ def test_success_creates_persisted_experience_and_evaluation(tmp_path: Path):
     experience = experiences[0]
     assert experience.final_outcome is OutcomeType.SUCCESS
     assert experience.selected_strategy == "direct"
-    assert experience.agent_version == "0.3.0"
+    assert experience.agent_version == "0.4.0"
     assert experience.evaluation_id
     evaluation = kernel.store.evaluation_by_id(experience.evaluation_id)
     assert evaluation is not None

@@ -171,6 +171,39 @@ STOP — no promotion
 
 > **Sandbox asks whether a candidate can execute safely. Benchmark asks whether it performs better. Promotion is a later phase.**
 
+## Controlled Promotion and Native Rollback
+
+The `PromotionEngine` is separate from the Kernel, Flexibility, Experience, Evaluation, Evolver, Sandbox, and Benchmark subsystems. It coordinates only the final controlled transition from verified candidate to active immutable version. It does not redefine security policy and never infers approval from proposal approval or benchmark success.
+
+Two approvals remain distinct: evolution approval authorizes a proposal to enter the sandbox; promotion approval authorizes a benchmark-proven candidate to become active production. A `PromotionRequest` is eligible only when the proposal is approved, the sandbox experiment is passed and retained, evidence is valid with decision `BETTER`, safety results contain no failure, candidate integrity matches the registered candidate, and the candidate is in the version registry. A separate explicit human promotion approval is required immediately before activation.
+
+The version registry preserves source commit, parent version, proposal, experiment, evidence, manifest hash, immutable version path, status, and metadata. `v0` is the initial known-good version. Only one registry entry may be `ACTIVE`; the previous known-good version remains `PREVIOUS` until retention policy permits removal. Candidate, active, previous, rolled-back, retired, and invalid states preserve lineage and investigation history.
+
+Promotion is staged atomically: validate eligibility, create a checkpoint, copy the exact candidate into the version registry, verify identity and manifest again to protect against time-of-check/time-of-use changes, atomically replace the `active` symlink, update registry state, run health and smoke verification, and commit the promotion record. The old active path is never destructively overwritten. A failed health check invokes native rollback to the checkpointed previous version and preserves the failed candidate as `ROLLED_BACK`.
+
+Rollback restores the active version pointer and verifies the actual active path and manifest, rather than relying only on database status. Manual rollback and health-triggered rollback both preserve promotion, experiment, benchmark, evidence, and candidate records. Promotion and rollback operations have dedicated durable records and auditable events with relevant IDs and version lineage.
+
+```text
+BETTER Evidence
+      +
+Explicit Promotion Approval
+      |
+      v
+Checkpoint -> Stage -> Integrity Check -> Atomic Activate
+                                      |
+                                      v
+                              Health + Smoke Check
+                                /             \\
+                             PASS             FAIL
+                              |                |
+                            ACTIVE       Native Rollback
+                                              |
+                                              v
+                                    Previous Known-Good
+```
+
+> **Only an explicitly approved, benchmark-proven, integrity-verified candidate may become active. Every promotion remains reversible.**
+
 ## Deferred evolution system
 
-The future promotion phase may consume evidence packages for explicit human-reviewed promotion and rollback. Candidate code and configuration must never receive broader permissions than the active agent, and benchmark decisions remain evidence rather than production authority.
+Future phases may improve promotion policy and retention governance, but no later layer may bypass explicit approval, integrity verification, immutable activation, health verification, or native rollback. Metamorphosis remains deferred.
