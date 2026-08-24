@@ -231,3 +231,34 @@ evo --approve-orchestration WORK_ITEM_ID --approval-type evolution_approval --ap
 > **Orchestration coordinates evolution. Evolution improves existing behavior. Metamorphosis changes declared structure. Governance controls what may change.**
 
 The protected-core boundary remains immutable: governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, and promotion authorization cannot be modified, disabled, bypassed, or routed around by the orchestrator. No autonomous approval, promotion, deployment, arbitrary generated-code execution, production mutation, or uncontrolled self-modification is introduced.
+
+
+## Cognitive Intelligence Layer
+
+Phase 10 adds a **Cognitive Intelligence Layer** that turns a natural-language goal into a bounded, inspectable execution lifecycle. `CognitiveOrchestrator` coordinates goal understanding, intent extraction, measurable success criteria, dependency-aware task decomposition, plan generation and selection, capability checks, Kernel execution, observation, verification, bounded diagnosis and replanning, and learning through the existing Experience/Evaluation system.
+
+The cognitive layer distinguishes explicit, inferred, and unknown requirements. Clear goals receive deterministic normalization and criteria. Critical ambiguity, such as `Build me an app`, is persisted as `WAITING_FOR_INPUT` with the missing requirements exposed; the layer never silently invents critical requirements. Non-critical ambiguity is also represented rather than treated as success.
+
+Complex goals are represented by a persisted `TaskGraph`. Nodes carry dependencies, required capabilities, expected outputs, success criteria, risk, tool hints, status, attempts, and result lineage. The executor orders nodes only after dependencies succeed. Candidate plans are scored deterministically by tool availability, risk, and cost, with a conservative limit on plan candidates and reasoning iterations.
+
+Every executable subtask is delegated to the existing `AgentKernel`. The Cognitive Layer does not implement a shell runner or filesystem executor. Kernel workspace confinement, tool registry lookup, shell allowlisting, approval callbacks, timeouts, checkpoints, rollback, and step verification remain authoritative. A successful process result without a successful Kernel verification event is rejected as false success. Medium- and high-risk actions remain blocked or approval-gated exactly as in the Kernel.
+
+After each subtask, bounded observations record tool, output, status, errors, artifacts, duration, side-effect notes, and verification hints. Failure diagnosis distinguishes tool, input, permission, environment, planning, strategy, capability, verification, and unknown failures with confidence. The existing Kernel FlexibilityEngine is consulted for runtime adaptation, while `ReplanningEngine` preserves successful subtasks and limits retries/replans. Partial completion is reported as `PARTIAL`, never as `SUCCESS`.
+
+Before execution, each subtask is checked against the Phase 8 capability registry. Missing capabilities are explicit `CapabilityGap` records. Ordinary gaps create an `EVOLUTION` opportunity in the existing Phase 9 EvolutionOrchestrator; structural gaps create a `METAMORPHOSIS` opportunity there. The Cognitive Layer does not create a second evolution pipeline, approve a proposal, modify itself, alter governance, or fabricate a capability.
+
+Cognitive goals, intents, plans, task graphs, task steps, states, observations, decisions, and verification reports are stored in the existing SQLite database. Restart loads the persisted bundle and safely resumes only when replay is safe; an interrupted executing task is not blindly replayed. Resource ceilings cover subtasks, plans, reasoning iterations, replans, execution time, context size, and tool calls. There is no permanent autonomous daemon.
+
+Phase 10 commands are:
+
+```bash
+evo --run-goal "list every text file, count the lines in each file, and create a report" --workspace ./workspace
+evo --show-goal GOAL_ID --workspace ./workspace
+evo --show-plan PLAN_ID --workspace ./workspace
+evo --show-task TASK_ID --workspace ./workspace
+evo --show-cognitive-state GOAL_ID --workspace ./workspace
+```
+
+> **Cognition understands and plans. The Kernel executes safely. Flexibility adapts execution. Evolution improves behavior. Metamorphosis changes structure. Governance controls what may change.**
+
+The Cognitive Layer cannot bypass permission enforcement, approval gates, sandboxing, benchmarking, verification, promotion, rollback, or protected-core enforcement. It may observe, reason, plan, queue, execute authorized Kernel tasks, recover within limits, and route genuine gaps to Phase 9; it may not approve evolution, metamorphosis, or promotion, directly modify production, execute unrestricted commands, or claim completion without goal-level verification.

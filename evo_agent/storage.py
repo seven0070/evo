@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .models import Event, Goal, TaskStatus
+from .models import Event, Goal, TaskStatus, new_id
 
 
 class SQLiteStore:
@@ -378,6 +378,123 @@ class SQLiteStore:
                     cooldown_until TEXT,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS cognitive_goals (
+                    goal_id TEXT PRIMARY KEY,
+                    original_text TEXT NOT NULL,
+                    normalized_goal TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    constraints TEXT NOT NULL,
+                    resources TEXT NOT NULL,
+                    expected_outputs TEXT NOT NULL,
+                    success_criteria TEXT NOT NULL,
+                    risks TEXT NOT NULL,
+                    ambiguity TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cognitive_intents (
+                    goal_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cognitive_plans (
+                    plan_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    plan_version TEXT NOT NULL,
+                    agent_version TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    steps TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    required_tools TEXT NOT NULL,
+                    required_capabilities TEXT NOT NULL,
+                    estimated_cost REAL NOT NULL,
+                    estimated_risk TEXT NOT NULL,
+                    expected_result TEXT NOT NULL,
+                    selected INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cognitive_plans_goal ON cognitive_plans(goal_id);
+                CREATE TABLE IF NOT EXISTS cognitive_task_graphs (
+                    graph_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    graph_type TEXT NOT NULL,
+                    nodes TEXT NOT NULL,
+                    edges TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cognitive_states (
+                    goal_id TEXT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    current_task_id TEXT,
+                    replan_count INTEGER NOT NULL,
+                    tool_call_count INTEGER NOT NULL,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cognitive_task_steps (
+                    task_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    parent_task_id TEXT,
+                    description TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    inputs TEXT NOT NULL,
+                    expected_outputs TEXT NOT NULL,
+                    success_criteria TEXT NOT NULL,
+                    required_capabilities TEXT NOT NULL,
+                    risk TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cognitive_steps_goal ON cognitive_task_steps(goal_id);
+                CREATE TABLE IF NOT EXISTS cognitive_observations (
+                    observation_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    tool TEXT,
+                    output TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    errors TEXT NOT NULL,
+                    artifacts TEXT NOT NULL,
+                    duration REAL NOT NULL,
+                    side_effects TEXT NOT NULL,
+                    verification_hints TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cognitive_observations_goal ON cognitive_observations(goal_id);
+                CREATE TABLE IF NOT EXISTS cognitive_decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    task_id TEXT,
+                    decision_type TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cognitive_decisions_goal ON cognitive_decisions(goal_id);
+                CREATE TABLE IF NOT EXISTS cognitive_verification_results (
+                    verification_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    task_id TEXT,
+                    success INTEGER NOT NULL,
+                    outcome TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    checks TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cognitive_verification_goal ON cognitive_verification_results(goal_id);
                 """
             )
 
@@ -823,6 +940,132 @@ class SQLiteStore:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM rollback_records ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
+
+    def save_cognitive_goal(self, goal: Any) -> None:
+        payload = goal.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_goals(goal_id, original_text, normalized_goal, objective, constraints, resources, expected_outputs, success_criteria, risks, ambiguity, confidence, status, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (goal.goal_id, goal.original_text, goal.normalized_goal, goal.objective, json.dumps([item.to_dict() for item in goal.constraints]), json.dumps(goal.resources), json.dumps(goal.expected_outputs), json.dumps([item.to_dict() for item in goal.success_criteria]), json.dumps(goal.risks), goal.ambiguity.value, goal.confidence, goal.status.value, goal.created_at, goal.updated_at, json.dumps(payload)))
+
+    def cognitive_goal_by_id(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_goals WHERE goal_id = ?", (goal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_cognitive_goals(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM cognitive_goals ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_cognitive_intent(self, intent: Any) -> None:
+        payload = intent.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_intents(goal_id, payload, created_at) VALUES (?, ?, ?)", (intent.goal_id, json.dumps(payload), datetime.now(timezone.utc).isoformat()))
+
+    def cognitive_intent_by_goal(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_intents WHERE goal_id = ?", (goal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_cognitive_plan(self, plan: Any) -> None:
+        payload = plan.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_plans(plan_id, goal_id, plan_version, agent_version, architecture_version, steps, dependencies, required_tools, required_capabilities, estimated_cost, estimated_risk, expected_result, selected, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (plan.plan_id, plan.goal_id, plan.plan_version, plan.agent_version, plan.architecture_version, json.dumps(plan.steps), json.dumps(plan.dependencies), json.dumps(plan.required_tools), json.dumps(plan.required_capabilities), plan.estimated_cost, plan.estimated_risk.value, plan.expected_result, int(plan.selected), plan.created_at, json.dumps(payload)))
+
+    def cognitive_plan_by_id(self, plan_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_plans WHERE plan_id = ?", (plan_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_cognitive_plans(self, goal_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if goal_id:
+                rows = db.execute("SELECT * FROM cognitive_plans WHERE goal_id = ? ORDER BY created_at DESC LIMIT ?", (goal_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM cognitive_plans ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def cognitive_plan_by_goal(self, goal_id: str, selected: bool | None = None) -> dict[str, Any] | None:
+        query = "SELECT * FROM cognitive_plans WHERE goal_id = ?"
+        values: tuple[Any, ...] = (goal_id,)
+        if selected is not None:
+            query += " AND selected = ?"
+            values += (int(selected),)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with self._connect() as db:
+            row = db.execute(query, values).fetchone()
+        return dict(row) if row else None
+
+    def save_cognitive_task_graph(self, graph: Any) -> None:
+        payload = graph.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_task_graphs(graph_id, goal_id, graph_type, nodes, edges, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)", (graph.graph_id, graph.goal_id, graph.graph_type.value, json.dumps([node.task_id for node in graph.nodes]), json.dumps([list(edge) for edge in graph.edges]), graph.created_at, json.dumps(payload)))
+
+    def find_cognitive_task_graphs(self, goal_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if goal_id:
+                rows = db.execute("SELECT * FROM cognitive_task_graphs WHERE goal_id = ? ORDER BY created_at DESC LIMIT ?", (goal_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM cognitive_task_graphs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def cognitive_task_graph_by_goal(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_task_graphs WHERE goal_id = ? ORDER BY created_at DESC LIMIT 1", (goal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_cognitive_state(self, state: Any) -> None:
+        payload = state.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_states(goal_id, state, current_task_id, replan_count, tool_call_count, last_error, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (state.goal_id, state.state.value, state.current_task_id, state.replan_count, state.tool_call_count, state.last_error, state.created_at, state.updated_at, json.dumps(payload)))
+
+    def cognitive_state_by_goal(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_states WHERE goal_id = ?", (goal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_cognitive_task(self, task: Any) -> None:
+        payload = task.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_task_steps(task_id, goal_id, parent_task_id, description, dependencies, inputs, expected_outputs, success_criteria, required_capabilities, risk, status, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task.task_id, task.goal_id, task.parent_task_id, task.description, json.dumps(task.dependencies), json.dumps(task.inputs), json.dumps(task.expected_outputs), json.dumps(task.success_criteria), json.dumps(task.required_capabilities), task.risk.value, task.status.value, task.created_at, task.updated_at, json.dumps(payload)))
+
+    def cognitive_task_by_id(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_task_steps WHERE task_id = ?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_cognitive_tasks(self, goal_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM cognitive_task_steps WHERE goal_id = ? ORDER BY created_at LIMIT ?", (goal_id, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_cognitive_observation(self, observation: Any) -> None:
+        payload = observation.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_observations(observation_id, goal_id, task_id, tool, output, status, errors, artifacts, duration, side_effects, verification_hints, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (observation.observation_id, observation.goal_id, observation.task_id, observation.tool, observation.output, observation.status, json.dumps(observation.errors), json.dumps(observation.artifacts), observation.duration, json.dumps(observation.side_effects), json.dumps(observation.verification_hints), observation.created_at, json.dumps(payload)))
+
+    def find_cognitive_observations(self, goal_id: str, limit: int = 500) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM cognitive_observations WHERE goal_id = ? ORDER BY created_at LIMIT ?", (goal_id, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_cognitive_decision(self, decision: dict[str, Any]) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_decisions(decision_id, goal_id, task_id, decision_type, decision, confidence, reason, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (decision.get("decision_id", new_id("decision")), decision["goal_id"], decision.get("task_id"), decision.get("decision_type", "unknown"), decision.get("decision", ""), decision.get("confidence", "uncertain"), decision.get("reason", ""), decision.get("created_at", datetime.now(timezone.utc).isoformat()), json.dumps(decision)))
+
+    def find_cognitive_decisions(self, goal_id: str, limit: int = 500) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM cognitive_decisions WHERE goal_id = ? ORDER BY created_at LIMIT ?", (goal_id, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_cognitive_verification(self, verification: Any) -> None:
+        payload = verification.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO cognitive_verification_results(verification_id, goal_id, task_id, success, outcome, summary, checks, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (payload.get("verification_id", new_id("verification")), verification.goal_id, payload.get("task_id"), int(verification.success), verification.outcome.value, verification.summary, json.dumps(verification.checks), datetime.now(timezone.utc).isoformat(), json.dumps(payload)))
+
+    def cognitive_verification_by_goal(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM cognitive_verification_results WHERE goal_id = ? ORDER BY created_at DESC LIMIT 1", (goal_id,)).fetchone()
+        return dict(row) if row else None
 
     def save_benchmark(self, benchmark: Any) -> None:
         payload = benchmark.to_dict()

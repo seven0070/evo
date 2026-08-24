@@ -28,9 +28,13 @@ class RuleBasedAdapter(ModelAdapter):
         if "list" in text or "files" in text:
             steps.append(PlanStep(new_id("step"), "Inspect the workspace contents", "workspace_list", {"path": "."}, RiskLevel.LOW, "result is valid JSON"))
         if "read" in text and "file" in text:
-            steps.append(PlanStep(new_id("step"), "Read the requested workspace file", "workspace_read", {"path": "README.md"}, RiskLevel.LOW, "result is non-empty"))
+            import re
+            match = re.search(r"(?:file|read)\s+([A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+)", goal.text, flags=re.IGNORECASE)
+            path = match.group(1) if match else "README.md"
+            steps.append(PlanStep(new_id("step"), "Read the requested workspace file", "workspace_read", {"path": path}, RiskLevel.LOW, "result is non-empty"))
         if any(word in text for word in ("write", "create", "save")):
-            steps.append(PlanStep(new_id("step"), "Record the goal for review", "workspace_write", {"path": "agent_goal.txt", "content": goal.text + "\n"}, RiskLevel.MEDIUM, "file exists"))
+            path = "report.txt" if any(word in text for word in ("report", "summary")) else "agent_goal.txt"
+            steps.append(PlanStep(new_id("step"), "Record the goal for review", "workspace_write", {"path": path, "content": goal.text + "\n"}, RiskLevel.MEDIUM, "file exists"))
         if any(word in text for word in ("run", "execute", "test")):
             steps.append(PlanStep(new_id("step"), "Run the requested safe check", "shell", {"command": "pwd"}, RiskLevel.HIGH, "result is non-empty"))
         if not steps:

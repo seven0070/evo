@@ -322,3 +322,83 @@ Governance    = controls what may change
 ```
 
 The orchestrator’s protected-core policy is intentionally redundant with the underlying engines. It rejects opportunities targeting governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, or promotion authorization. The downstream Evolver, MetamorphosisEngine, SandboxEngine, BenchmarkEngine, and PromotionEngine independently retain their own fail-closed checks.
+
+
+## Cognitive Intelligence Layer
+
+Phase 10 adds `CognitiveOrchestrator` as the brain of a single bounded natural-language goal, while retaining the Phase 1–9 hierarchy. Cognition understands and plans; the Kernel executes safely; Flexibility adapts runtime strategy; Experience and Evaluation produce evidence; Phase 9 coordinates governed behavior changes; Metamorphosis changes declared structure; Governance controls what may change.
+
+```text
+Natural-language goal
+        |
+        v
+GoalUnderstanding -> Intent -> Success Criteria
+        |
+        v
+TaskDecomposition -> TaskGraph -> Planning -> Reasoning
+        |                                |
+        +------------------------------->+
+                                         v
+                              Capability + Tool Selection
+                                         |
+                                         v
+                              Existing AgentKernel.run()
+                                         |
+                          +--------------+--------------+
+                          v                             v
+                     Observation                     Verification
+                          |                             |
+                          +---------- failure ---------+
+                                         |
+                                         v
+                             Diagnosis -> Flexibility
+                                         |
+                                         v
+                                  Bounded Replanning
+                                         |
+                              capability gap / outcome
+                                         |
+                          +--------------+--------------+
+                          v                             v
+                    Experience/Evaluation       Phase 9 Orchestrator
+                                                        |
+                                               Evolution / Metamorphosis
+```
+
+### Goal understanding and planning
+
+`GoalUnderstandingEngine` normalizes natural-language input and records explicit, inferred, and unknown requirements. It marks critical ambiguity as `WAITING_FOR_INPUT` instead of fabricating requirements. `IntentModel` captures the primary and secondary objectives, constraints, preferences, required outputs, success definition, risk, and resource information. `SuccessCriteriaEngine` creates measurable checks before execution; process exit alone is never a goal-success definition.
+
+`TaskDecompositionEngine` creates bounded `CognitiveTask` nodes with dependencies, inputs, expected outputs, required capabilities, risk, and status. `TaskGraphEngine` rejects missing dependencies, duplicate IDs, self-dependencies, and cycles; its topological ordering ensures a subtask never executes before its prerequisites. `PlanningEngine` produces bounded candidate plans, and `ReasoningEngine` selects the lowest-risk viable plan using tool availability, risk, and cost. Plan records contain plan, agent, and architecture versions.
+
+### Kernel-owned execution and observation
+
+The Cognitive Layer calls `AgentKernel.run()` for each executable subtask. It does not create a second shell executor, filesystem executor, verifier, approval system, or checkpoint manager. The Kernel’s existing `ToolRegistry`, `SecurityPolicy`, workspace confinement, shell allowlist, approval callback, timeouts, checkpoints, rollback, and step verifier remain authoritative. A Kernel result counts as a completed cognitive subtask only when the outcome is successful **and** a successful authoritative verification event is present.
+
+`Observation` records are derived from persisted Kernel events and retain tool, output, status, errors, artifacts, duration, side-effect notes, and verification hints. `CognitiveVerifier` evaluates the complete goal criteria over the graph and observations. It distinguishes `SUCCESS`, `PARTIAL`, `FAILED`, `INCONCLUSIVE`, `BLOCKED`, `WAITING_FOR_INPUT`, and `WAITING_FOR_APPROVAL`. A successful subtask count with unmet required criteria cannot be reported as success.
+
+### Flexibility, diagnosis, and gaps
+
+After a failure, `FailureDiagnosisEngine` assigns a bounded, confidence-labelled category such as tool failure, permission failure, strategy failure, verification failure, or capability gap. The existing Kernel FlexibilityEngine is consulted for adaptation; `ReplanningEngine` preserves completed nodes and limits replans. Permission or approval failures produce `WAITING_FOR_APPROVAL` and are never retried around the Kernel gate.
+
+Before execution, required capabilities are checked against the Phase 8 capability registry. An unavailable capability becomes a persisted `CapabilityGap`. Ordinary gaps create an `EVOLUTION` `EvolutionOpportunity` in the existing Phase 9 EvolutionOrchestrator. Explicitly structural gaps create a `METAMORPHOSIS` opportunity there. The Cognitive Layer never invents a capability, creates a parallel evolution pipeline, approves a proposal, or changes its own source.
+
+### Persistence and recovery
+
+The existing SQLite store persists cognitive goals and intents, plans, task graphs, task steps, states, observations, decisions, and verification reports. Cognitive state records include the current task, replan count, tool-call count, last error, and timestamps. Restart reloads this state and the selected plan. If a task was executing when the process stopped, the layer refuses to assume that replay is safe and records an inconclusive failure unless an external authoritative result permits safe continuation.
+
+The cognitive policy applies ceilings to subtasks, plan candidates, reasoning iterations, replans, execution time, context size, and tool calls. Context observations are bounded by size. A single `--run-goal` command executes one bounded goal lifecycle and terminates; no uncontrolled background loop is created.
+
+### Authority and safety contract
+
+```text
+Cognitive Layer: understand, plan, select, observe, diagnose, and request
+Agent Kernel: execute through registered tools and enforce permissions
+Verifier: determine whether requested conditions actually hold
+Phase 9: coordinate evidence-backed evolution work
+Sandbox/Benchmark: isolate and evaluate candidates
+Promotion: require separate approval and activate atomically
+Rollback: restore the previous known-good version
+```
+
+Cognitive reasoning cannot bypass the Kernel, permissions, approvals, sandbox, benchmark, verification, promotion, rollback, or protected core. It cannot directly modify production or its own source, approve evolution/metamorphosis/promotion, disable governance, execute unrestricted commands, create unlimited reasoning loops, or fabricate task completion.

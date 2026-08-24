@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .benchmark import BenchmarkEngine
+from .cognitive import CognitiveOrchestrator, CognitiveOutcome
 from .experience import ExperienceEngine
 from .evolver import Evolver
 from .kernel import AgentKernel
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="offline", help="offline or an OpenAI-compatible model ID")
     parser.add_argument("--base-url", default=None, help="Optional OpenAI-compatible API base URL")
     parser.add_argument("--json", action="store_true", help="Print structured JSON output")
+    parser.add_argument("--legacy-kernel", action="store_true", help="Use the direct Phase 1 Kernel path instead of the Cognitive Layer")
     parser.add_argument("--list-experiences", action="store_true", help="List recent structured experiences")
     parser.add_argument("--show-experience", metavar="EXPERIENCE_ID", help="Show one structured experience")
     parser.add_argument("--show-evaluation", metavar="EVALUATION_ID", help="Show one evaluation result")
@@ -74,6 +76,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--approval-actor", default="human", help="Human actor recorded with orchestration approval")
     parser.add_argument("--run-orchestrator", action="store_true", help="Run one bounded orchestration cycle")
     parser.add_argument("--resume-work-item", metavar="WORK_ITEM_ID", help="Safely resume one persisted work item")
+    parser.add_argument("--run-goal", metavar="GOAL", help="Run one bounded Cognitive Layer goal lifecycle")
+    parser.add_argument("--show-goal", metavar="GOAL_ID", help="Show one persisted cognitive goal")
+    parser.add_argument("--show-plan", metavar="PLAN_ID", help="Show one persisted cognitive plan")
+    parser.add_argument("--show-task", metavar="TASK_ID", help="Show one persisted cognitive subtask")
+    parser.add_argument("--show-cognitive-state", metavar="GOAL_ID", help="Show persisted cognitive state for a goal")
+    parser.add_argument("--clarify-goal", metavar="GOAL_ID", help="Resume an ambiguous goal with explicit clarification")
+    parser.add_argument("--clarification", default="", help="Clarification text used with --clarify-goal")
     return parser
 
 
@@ -87,7 +96,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -95,7 +104,31 @@ def inspect_command(args: argparse.Namespace) -> bool:
     evolver = Evolver(store, experiences)
     metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
     orchestrator = EvolutionOrchestrator(store, Path(args.source_root), policy=OrchestrationPolicy()) if metamorphosis else None
-    if args.list_opportunities:
+    cognitive = None
+    if args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal:
+        adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
+        kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
+        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator)
+    if args.clarify_goal:
+        if not args.clarification:
+            print_json({"error": "--clarification is required with --clarify-goal"})
+        else:
+            print_json(cognitive.clarify(args.clarify_goal, args.clarification).to_dict())
+    elif args.run_goal:
+        print_json(cognitive.run_goal(args.run_goal).to_dict())
+    elif args.show_goal:
+        goal = cognitive.persistence.load_goal(args.show_goal)
+        print_json(goal.to_dict() if goal else {"error": "goal not found", "goal_id": args.show_goal})
+    elif args.show_plan:
+        row = store.cognitive_plan_by_goal(args.show_plan) or store.cognitive_plan_by_id(args.show_plan)
+        print_json(row or {"error": "plan not found", "plan_id": args.show_plan})
+    elif args.show_task:
+        row = store.cognitive_task_by_id(args.show_task)
+        print_json(row or {"error": "task not found", "task_id": args.show_task})
+    elif args.show_cognitive_state:
+        row = store.cognitive_state_by_goal(args.show_cognitive_state)
+        print_json(row or {"error": "cognitive state not found", "goal_id": args.show_cognitive_state})
+    elif args.list_opportunities:
         print_json([opportunity.to_dict() for opportunity in orchestrator.list_opportunities()])
     elif args.show_opportunity:
         opportunity = orchestrator.get_opportunity(args.show_opportunity)
@@ -218,16 +251,29 @@ def main() -> int:
         adapter = RuleBasedAdapter()
     else:
         adapter = OpenAICompatibleAdapter(args.model, args.base_url)
-    kernel = AgentKernel(Path(args.workspace), adapter, approval_callback=approval_prompt)
-    outcome = kernel.run(args.request)
+    workspace = Path(args.workspace).expanduser().resolve()
+    store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
+    kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
+    if args.legacy_kernel:
+        outcome = kernel.run(args.request)
+        if args.json:
+            print_json(outcome.to_dict())
+        else:
+            print(f"[{outcome.status.value}] {outcome.summary}")
+            print(f"Task ID: {outcome.task_id}")
+            if outcome.error:
+                print(f"Error: {outcome.error}")
+        return 0 if outcome.status.value == "succeeded" else 1
+    cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel)
+    result = cognitive.run_goal(args.request)
     if args.json:
-        print_json(outcome.to_dict())
+        print_json(result.to_dict())
     else:
-        print(f"[{outcome.status.value}] {outcome.summary}")
-        print(f"Task ID: {outcome.task_id}")
-        if outcome.error:
-            print(f"Error: {outcome.error}")
-    return 0 if outcome.status.value == "succeeded" else 1
+        print(f"[{result.outcome.value}] {result.summary}")
+        print(f"Goal ID: {result.goal.goal_id}")
+        if result.state.last_error:
+            print(f"Error: {result.state.last_error}")
+    return 0 if result.outcome is CognitiveOutcome.SUCCESS else 1
 
 
 if __name__ == "__main__":

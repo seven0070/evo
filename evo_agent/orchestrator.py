@@ -340,6 +340,8 @@ class ChangeClassifier:
         text = f"{opportunity.problem} {' '.join(opportunity.affected_components)} {' '.join(opportunity.affected_capabilities)}".lower()
         if any(term in text for term in self.PROTECTED_TERMS):
             return ClassificationResult(OrchestrationPath.NO_CHANGE, 1.0, "Protected-core concern is not routable to a change engine.", protected=True)
+        if opportunity.metadata.get("cognitive_capability_gap") and not opportunity.metadata.get("structural"):
+            return ClassificationResult(OrchestrationPath.EVOLUTION, opportunity.confidence, "A genuine non-structural capability gap is routed to the existing Evolution path.")
         if opportunity.confidence < 0.45 or opportunity.frequency < 1:
             return ClassificationResult(OrchestrationPath.INCONCLUSIVE, opportunity.confidence, "Evidence is insufficient for a deterministic route.")
         if opportunity.recommended_change_type is OrchestrationPath.NO_CHANGE:
