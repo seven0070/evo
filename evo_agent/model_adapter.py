@@ -27,9 +27,13 @@ class RuleBasedAdapter(ModelAdapter):
         steps: list[PlanStep] = []
         if "list" in text or "files" in text:
             steps.append(PlanStep(new_id("step"), "Inspect the workspace contents", "workspace_list", {"path": "."}, RiskLevel.LOW, "result is valid JSON"))
-        elif "read" in text and "file" in text:
+        if "read" in text and "file" in text:
             steps.append(PlanStep(new_id("step"), "Read the requested workspace file", "workspace_read", {"path": "README.md"}, RiskLevel.LOW, "result is non-empty"))
-        else:
+        if any(word in text for word in ("write", "create", "save")):
+            steps.append(PlanStep(new_id("step"), "Record the goal for review", "workspace_write", {"path": "agent_goal.txt", "content": goal.text + "\n"}, RiskLevel.MEDIUM, "file exists"))
+        if any(word in text for word in ("run", "execute", "test")):
+            steps.append(PlanStep(new_id("step"), "Run the requested safe check", "shell", {"command": "pwd"}, RiskLevel.HIGH, "result is non-empty"))
+        if not steps:
             steps.append(PlanStep(new_id("step"), "Record the goal for review", "workspace_write", {"path": "agent_goal.txt", "content": goal.text + "\n"}, RiskLevel.MEDIUM, "file exists"))
         return Plan(goal.task_id, steps, "Offline rule-based plan generated for safe local execution")
 

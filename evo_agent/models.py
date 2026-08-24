@@ -45,6 +45,13 @@ class EventType(str, Enum):
     VERIFICATION = "verification"
     RECOVERY = "recovery"
     TASK_COMPLETED = "task_completed"
+    STRATEGY_SELECTED = "strategy_selected"
+    TOOL_RECOMMENDED = "tool_recommended"
+    STRATEGY_FAILED = "strategy_failed"
+    ADAPTATION_TRIGGERED = "adaptation_triggered"
+    STRATEGY_CHANGED = "strategy_changed"
+    REPLAN_TRIGGERED = "replan_triggered"
+    RECOVERY_ATTEMPTED = "recovery_attempted"
 
 
 @dataclass

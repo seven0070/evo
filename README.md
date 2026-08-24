@@ -71,7 +71,15 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 python3 -m pytest -q
 ```
 
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, and checkpoint rollback.
+The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, and Phase 1 regression behavior.
+
+## Flexibility Engine
+
+The repository now includes a runtime-only Flexibility Engine. It assesses task complexity, expected steps, risk, reversibility, verification difficulty, available tools, and resource needs; selects a direct, plan-first, approval-aware, or recovery strategy; recommends tools through the existing registry; and records adaptation decisions in the existing SQLite event stream.
+
+When an execution fails, the engine can diagnose the failure context, switch to a bounded recovery strategy, and request one replan. The kernel still owns execution limits, permissions, approvals, checkpoints, rollback, and final verification. The Flexibility Engine cannot declare success, modify source code, change permanent capabilities, or mutate the repository.
+
+> **Flexibility = runtime adaptation. Evolution = long-term controlled improvement.**
 
 ## Next milestone: controlled evolution
 
