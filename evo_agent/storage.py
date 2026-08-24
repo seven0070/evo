@@ -219,6 +219,69 @@ class SQLiteStore:
                     payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_rollbacks_promotion ON rollback_records(promotion_id);
+                CREATE TABLE IF NOT EXISTS components (
+                    component_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    component_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    interfaces TEXT NOT NULL,
+                    capabilities TEXT NOT NULL,
+                    protected INTEGER NOT NULL,
+                    source_reference TEXT NOT NULL,
+                    integrity_hash TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS capabilities (
+                    capability_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    provider_component TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    permissions_required TEXT NOT NULL,
+                    risk_class TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS architecture_versions (
+                    architecture_version TEXT PRIMARY KEY,
+                    agent_version TEXT NOT NULL,
+                    components TEXT NOT NULL,
+                    capabilities TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    interfaces TEXT NOT NULL,
+                    protected_components TEXT NOT NULL,
+                    configuration TEXT NOT NULL,
+                    integrity_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS metamorphosis_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    change_type TEXT NOT NULL,
+                    target_component TEXT NOT NULL,
+                    risk_class TEXT NOT NULL,
+                    source_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_metamorphosis_status ON metamorphosis_proposals(status);
+                CREATE TABLE IF NOT EXISTS metamorphosis_experiments (
+                    experiment_id TEXT PRIMARY KEY,
+                    proposal_id TEXT NOT NULL,
+                    baseline_architecture TEXT NOT NULL,
+                    candidate_architecture TEXT NOT NULL,
+                    compatibility_status TEXT NOT NULL,
+                    benchmark_evidence_id TEXT,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_metamorphosis_experiment_proposal ON metamorphosis_experiments(proposal_id);
                 """
             )
 
@@ -445,6 +508,76 @@ class SQLiteStore:
         with self._connect() as db:
             row = db.execute("SELECT * FROM promotion_records WHERE promotion_id = ?", (promotion_id,)).fetchone()
         return dict(row) if row else None
+
+    def save_component(self, component: Any) -> None:
+        with self._connect() as db:
+            db.execute("""INSERT OR REPLACE INTO components(component_id, name, version, component_type, status, dependencies, interfaces, capabilities, protected, source_reference, integrity_hash, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (component.component_id, component.name, component.version, component.component_type, component.status.value, json.dumps(component.dependencies), json.dumps(component.interfaces), json.dumps(component.capabilities), int(component.protected), component.source_reference, component.integrity_hash, json.dumps(component.metadata), component.created_at))
+
+    def component_by_id(self, component_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM components WHERE component_id = ?", (component_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_components(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM components ORDER BY name LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_capability(self, capability: Any) -> None:
+        with self._connect() as db:
+            db.execute("""INSERT OR REPLACE INTO capabilities(capability_id, name, provider_component, version, dependencies, permissions_required, risk_class, status, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (capability.capability_id, capability.name, capability.provider_component, capability.version, json.dumps(capability.dependencies), json.dumps(capability.permissions_required), capability.risk_class, capability.status.value, json.dumps(capability.metadata), capability.created_at))
+
+    def capability_by_id(self, capability_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM capabilities WHERE capability_id = ?", (capability_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_capabilities(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM capabilities ORDER BY name LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_architecture(self, architecture: Any) -> None:
+        with self._connect() as db:
+            db.execute("""INSERT OR REPLACE INTO architecture_versions(architecture_version, agent_version, components, capabilities, dependencies, interfaces, protected_components, configuration, integrity_hash, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (architecture.architecture_version, architecture.agent_version, json.dumps(architecture.components), json.dumps(architecture.capabilities), json.dumps(architecture.dependencies), json.dumps(architecture.interfaces), json.dumps(architecture.protected_components), json.dumps(architecture.configuration), architecture.integrity_hash, architecture.created_at, json.dumps(architecture.to_dict())))
+
+    def architecture_by_version(self, architecture_version: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM architecture_versions WHERE architecture_version = ?", (architecture_version,)).fetchone()
+        return dict(row) if row else None
+
+    def find_architectures(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM architecture_versions ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_metamorphosis_proposal(self, proposal: Any) -> None:
+        with self._connect() as db:
+            db.execute("""INSERT OR REPLACE INTO metamorphosis_proposals(proposal_id, change_type, target_component, risk_class, source_version, status, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (proposal.proposal_id, getattr(proposal.change_type, "value", str(proposal.change_type)), proposal.target_component, proposal.risk_class, proposal.source_version, getattr(proposal.status, "value", str(proposal.status)), proposal.created_at, json.dumps(proposal.to_dict())))
+
+    def metamorphosis_proposal_by_id(self, proposal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM metamorphosis_proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_metamorphosis_proposals(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM metamorphosis_proposals ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_metamorphosis_experiment(self, experiment: Any) -> None:
+        with self._connect() as db:
+            db.execute("""INSERT OR REPLACE INTO metamorphosis_experiments(experiment_id, proposal_id, baseline_architecture, candidate_architecture, compatibility_status, benchmark_evidence_id, status, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (experiment.experiment_id, experiment.proposal_id, experiment.baseline_architecture, experiment.candidate_architecture, experiment.compatibility_status.value, experiment.benchmark_evidence_id, experiment.status.value, experiment.created_at, json.dumps(experiment.to_dict())))
+
+    def metamorphosis_experiment_by_id(self, experiment_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM metamorphosis_experiments WHERE experiment_id = ?", (experiment_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_metamorphosis_experiments(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM metamorphosis_experiments ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
     def save_rollback_record(self, rollback: Any) -> None:
         with self._connect() as db:

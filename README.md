@@ -55,12 +55,12 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 
 | Component | Responsibility |
 |---|---|
-| `models.py` | Typed task, plan, tool, event, verification, and outcome records |
+| `models.py` | Typed task, plan, tool, event, verification, outcome, architecture, capability, and metamorphosis records |
 | `model_adapter.py` | Provider-neutral interface, offline adapter, and OpenAI-compatible adapter |
 | `security.py` | Workspace confinement, shell allowlist, risk classification, and approval policy |
 | `tools.py` | Workspace file and permissioned shell tools |
 | `kernel.py` | Plan → approve → execute → observe → verify → recover orchestration |
-| `storage.py` | SQLite tasks, events, memories, and checkpoint metadata |
+| `storage.py` | SQLite tasks, events, memories, checkpoints, architecture manifests, registries, proposals, and experiments |
 | `checkpoints.py` | Snapshot and rollback operations |
 | `verifier.py` | Deterministic postcondition checks |
 | `cli.py` | Local command-line entry point and proposal/experience inspection |
@@ -68,6 +68,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 | `sandbox.py` | Proposal-gated isolated candidate experiments, bounded execution, comparison, and cleanup |
 | `benchmark.py` | Versioned benchmark trials, metrics, regression/safety gates, and evidence decisions |
 | `promotion.py` | Version registry, explicit promotion approvals, atomic activation, health checks, and native rollback |
+| `metamorphosis.py` | Governed structural proposals, component/capability registries, architecture manifests, deterministic compatibility analysis, and pipeline handoff |
 
 ## Verification
 
@@ -75,7 +76,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 python3 -m pytest -q
 ```
 
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, version registry bootstrap and lineage, separate promotion approval, eligibility rejection, candidate integrity and TOCTOU checks, atomic activation, health verification, native rollback, manual rollback, audit records, previous-version retention, and Phase 1–6 regression behavior.
+The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, version registry bootstrap and lineage, separate promotion approval, eligibility rejection, candidate integrity and TOCTOU checks, atomic activation, health verification, native rollback, manual rollback, audit records, previous-version retention, governed component and capability registries, deterministic architecture manifests, dependency affected-subgraphs, protected-core rejection, compatibility checks, capability-regression detection, structural candidate isolation, metamorphosis approval separation, Phase 7 handoff, and Phase 1–7 regression behavior.
 
 ## Flexibility Engine
 
@@ -174,6 +175,27 @@ evo --rollback VERSION_ID --rollback-reason "Post-promotion regression" --worksp
 
 > **Only an explicitly approved, benchmark-proven, integrity-verified candidate may become active. Every promotion remains reversible.**
 
-## Next milestone: broader controlled evolution
+## Governed Metamorphosis Engine
 
-Phase 8 may extend promotion policy and retention governance. Phase 7 does not implement autonomous promotion, autonomous approval, deployment, Git merging, production mutation outside the atomic version pointer, or Metamorphosis.
+Phase 8 adds a **Governed Metamorphosis Engine** for bounded structural change. Metamorphosis means changing the declared composition, dependencies, configuration, or capability registry—not unrestricted source rewriting or autonomous self-modification. Every proposal contains a current and proposed architecture manifest, affected components, dependency and capability changes, migration steps, compatibility requirements, benchmark requirements, risks, and a reversible rollback plan.
+
+Only these structural change types are accepted: `ADD_COMPONENT`, `REMOVE_COMPONENT`, `REPLACE_COMPONENT`, `UPGRADE_COMPONENT`, `ADD_CAPABILITY`, `REMOVE_CAPABILITY`, `REWIRE_DEPENDENCY`, and `CHANGE_CONFIGURATION`. The engine computes a reverse dependency affected subgraph and validates required interfaces, dependencies, required capabilities, configuration shape, database/event compatibility fields, and security-policy compatibility. The architecture manifest is content-hashed and persisted in SQLite with component and capability registries.
+
+The protected core is explicit and code-enforced. Governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, and promotion authorization are immutable from the metamorphosis path. Attempts to remove, replace, rewire, disable, or modify those boundaries fail closed before sandbox execution. Structural candidates are manifest/configuration-only; no generated code is executed and no production source is rewritten.
+
+Approval is deliberately separated into three independent gates. Evolution proposal approval authorizes the ordinary Phase 5 evolution sandbox. Metamorphosis approval authorizes only the structural candidate path. Promotion approval remains a separate Phase 7 decision. A metamorphosis approval never implies evolution approval or production promotion, and no engine autonomously grants any of these approvals.
+
+Structural experimentation reuses the existing `SandboxEngine`, including its outside-source-root candidate directories, read-only baseline, namespace isolation, sanitized environment, fixed test runner, timeout handling, cleanup, and production immutability checks. Comparative evaluation reuses the existing `BenchmarkEngine` and evidence tables. Only a structurally compatible candidate with `BETTER` evidence can be handed to the existing `PromotionEngine`; activation still requires its separate human approval, atomic active-pointer switch, health verification, and native rollback. There is no parallel promotion or rollback system.
+
+Phase 8 inspection commands are:
+
+```bash
+evo --list-components --workspace ./workspace --source-root .
+evo --show-architecture --workspace ./workspace --source-root .
+evo --analyze-metamorphosis "add capability for structured context" --workspace ./workspace --source-root .
+evo --list-metamorphosis --workspace ./workspace --source-root .
+evo --show-metamorphosis METAMORPHOSIS_ID --workspace ./workspace --source-root .
+evo --approve-metamorphosis METAMORPHOSIS_ID --proposal-reason "Authorize structural experimentation" --workspace ./workspace --source-root .
+```
+
+> **Metamorphosis may propose and test bounded structural alternatives; it cannot approve itself, mutate production, disable governance, bypass verification, deploy autonomously, self-replicate, or rewrite arbitrary source.**

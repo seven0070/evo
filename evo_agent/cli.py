@@ -9,6 +9,7 @@ from .experience import ExperienceEngine
 from .evolver import Evolver
 from .kernel import AgentKernel
 from .model_adapter import OpenAICompatibleAdapter, RuleBasedAdapter
+from .metamorphosis import MetamorphosisEngine
 from .promotion import PromotionEngine
 from .models import ToolCall
 from .sandbox import SandboxEngine
@@ -54,6 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--promote", metavar="PROMOTION_ID", help="Activate an explicitly approved candidate")
     parser.add_argument("--rollback", metavar="VERSION_ID", help="Rollback the active version to the previous known-good version")
     parser.add_argument("--rollback-reason", default="", help="Reason recorded for rollback")
+    parser.add_argument("--list-components", action="store_true", help="List registered architecture components")
+    parser.add_argument("--list-capabilities", action="store_true", help="List registered architecture capabilities")
+    parser.add_argument("--show-architecture", action="store_true", help="Show the current architecture manifest")
+    parser.add_argument("--analyze-metamorphosis", action="store_true", help="Create and validate a governed structural proposal")
+    parser.add_argument("--list-metamorphosis", action="store_true", help="List governed metamorphosis proposals and experiments")
+    parser.add_argument("--show-metamorphosis", metavar="METAMORPHOSIS_ID", help="Show one governed metamorphosis proposal and experiments")
+    parser.add_argument("--approve-metamorphosis", metavar="METAMORPHOSIS_ID", help="Record explicit metamorphosis approval")
     return parser
 
 
@@ -67,13 +75,36 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     experiences = ExperienceEngine(store)
     evolver = Evolver(store, experiences)
-    if args.list_experiences:
+    metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis) else None
+    if args.list_components:
+        print_json([component.to_dict() for component in metamorphosis.list_components()])
+    elif args.list_capabilities:
+        print_json([capability.to_dict() for capability in metamorphosis.list_capabilities()])
+    elif args.show_architecture:
+        print_json(metamorphosis.get_architecture().to_dict())
+    elif args.analyze_metamorphosis:
+        change = metamorphosis.identify_structural_opportunity(args.request or "add capability for structured context")
+        proposal = metamorphosis.generate_proposal(change, "Explore a bounded structural improvement without changing protected controls")
+        valid, errors = metamorphosis.validate_proposal(proposal)
+        result = proposal.to_dict()
+        result["valid"] = valid
+        result["validation_errors"] = errors
+        print_json(result)
+    elif args.list_metamorphosis:
+        print_json({"proposals": [proposal.to_dict() for proposal in metamorphosis.list_proposals()], "experiments": [experiment.to_dict() for experiment in metamorphosis.list_experiments()]})
+    elif args.show_metamorphosis:
+        proposal = metamorphosis.get_proposal(args.show_metamorphosis)
+        experiments = [experiment.to_dict() for experiment in metamorphosis.list_experiments() if experiment.proposal_id == args.show_metamorphosis]
+        print_json({"proposal": proposal.to_dict() if proposal else None, "experiments": experiments})
+    elif args.approve_metamorphosis:
+        print_json(metamorphosis.approve_proposal(args.approve_metamorphosis, args.proposal_reason).to_dict())
+    elif args.list_experiences:
         records = [item.to_dict() for item in experiences.retrieve(task_type=args.task_type, outcome=args.outcome, strategy=args.strategy, tool=args.tool, limit=20)]
         print_json(records)
     elif args.show_experience:

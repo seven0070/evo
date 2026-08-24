@@ -121,6 +121,56 @@ class ComparisonClass(str, Enum):
     INCONCLUSIVE = "inconclusive"
 
 
+class StructuralChangeType(str, Enum):
+    ADD_COMPONENT = "add_component"
+    REMOVE_COMPONENT = "remove_component"
+    REPLACE_COMPONENT = "replace_component"
+    UPGRADE_COMPONENT = "upgrade_component"
+    ADD_CAPABILITY = "add_capability"
+    REMOVE_CAPABILITY = "remove_capability"
+    REWIRE_DEPENDENCY = "rewire_dependency"
+    CHANGE_CONFIGURATION = "change_configuration"
+
+
+class MetamorphosisStatus(str, Enum):
+    PROPOSED = "proposed"
+    VALIDATED = "validated"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    SANDBOXED = "sandboxed"
+    COMPATIBLE = "compatible"
+    BENCHMARKED = "benchmarked"
+    EVALUATED = "evaluated"
+    BETTER = "better"
+    PENDING_PROMOTION = "pending_promotion"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+    INCOMPATIBLE = "incompatible"
+    WORSE = "worse"
+    INCONCLUSIVE = "inconclusive"
+    ROLLED_BACK = "rolled_back"
+
+
+class CompatibilityStatus(str, Enum):
+    COMPATIBLE = "compatible"
+    INCOMPATIBLE = "incompatible"
+    INCONCLUSIVE = "inconclusive"
+
+
+class ComponentStatus(str, Enum):
+    ACTIVE = "active"
+    CANDIDATE = "candidate"
+    DEPRECATED = "deprecated"
+    REMOVED = "removed"
+
+
+class CapabilityStatus(str, Enum):
+    ACTIVE = "active"
+    CANDIDATE = "candidate"
+    DEPRECATED = "deprecated"
+    REMOVED = "removed"
+
+
 class EventType(str, Enum):
     TASK_CREATED = "task_created"
     PLAN_CREATED = "plan_created"
@@ -180,6 +230,20 @@ class EventType(str, Enum):
     ROLLBACK_CHECKPOINT_RESTORED = "rollback_checkpoint_restored"
     ROLLBACK_VERIFIED = "rollback_verified"
     ROLLBACK_COMPLETED = "rollback_completed"
+    METAMORPHOSIS_PROPOSED = "metamorphosis_proposed"
+    METAMORPHOSIS_VALIDATED = "metamorphosis_validated"
+    METAMORPHOSIS_REJECTED = "metamorphosis_rejected"
+    METAMORPHOSIS_APPROVED = "metamorphosis_approved"
+    ARCHITECTURE_ANALYZED = "architecture_analyzed"
+    COMPATIBILITY_CHECKED = "compatibility_checked"
+    MIGRATION_PLANNED = "migration_planned"
+    STRUCTURAL_CANDIDATE_CREATED = "structural_candidate_created"
+    STRUCTURAL_CANDIDATE_TESTED = "structural_candidate_tested"
+    CAPABILITY_REGRESSION_DETECTED = "capability_regression_detected"
+    STRUCTURAL_REGRESSION_DETECTED = "structural_regression_detected"
+    METAMORPHOSIS_EVALUATED = "metamorphosis_evaluated"
+    METAMORPHOSIS_PROMOTED = "metamorphosis_promoted"
+    METAMORPHOSIS_ROLLED_BACK = "metamorphosis_rolled_back"
     BENCHMARK_CREATED = "benchmark_created"
     BENCHMARK_VALIDATED = "benchmark_validated"
     BENCHMARK_STARTED = "benchmark_started"

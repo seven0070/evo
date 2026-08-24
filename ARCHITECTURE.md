@@ -204,6 +204,50 @@ Checkpoint -> Stage -> Integrity Check -> Atomic Activate
 
 > **Only an explicitly approved, benchmark-proven, integrity-verified candidate may become active. Every promotion remains reversible.**
 
-## Deferred evolution system
+## Governed Metamorphosis Engine
 
-Future phases may improve promotion policy and retention governance, but no later layer may bypass explicit approval, integrity verification, immutable activation, health verification, or native rollback. Metamorphosis remains deferred.
+Phase 8 adds a governed structural-change layer above the existing Evolver, Sandbox, Benchmark, and Promotion subsystems. It models the current architecture as a persisted `ArchitectureManifest` containing component records, capability records, dependency edges, interface declarations, protected-component declarations, configuration, and a content integrity hash. `ComponentRegistry` and `CapabilityRegistry` persist the active and candidate registry state in the same SQLite store; they do not create a second control plane.
+
+Metamorphosis accepts only eight enumerated change types: add/remove/replace/upgrade component, add/remove capability, rewire dependency, and change configuration. A `MetamorphosisProposal` is descriptive and proposal-only. It includes current and proposed manifests, affected components, dependency/capability deltas, deterministic risk class, reversible migration and rollback steps, compatibility requirements, benchmark requirements, evidence rationale, and an explicit status. Arbitrary source rewriting, generated-code execution, self-replication, production mutation, or unsupported change types are outside the contract.
+
+The dependency graph is analyzed in reverse from the declared affected roots so that direct dependents are included in the affected subgraph. Compatibility is deterministic and fail-closed. The engine checks required components and capabilities, dependency availability, interface declarations, configuration shape, database schema compatibility fields, event compatibility fields, protected-core equality, and security-policy compatibility. Removing a required capability or introducing an unavailable dependency is incompatible and cannot reach the sandbox.
+
+The protected core is represented both as explicit component records and as a hard-coded authority boundary. Governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, and promotion authorization cannot be removed, replaced, rewired, disabled, or modified through metamorphosis. The engine compares protected declarations and protected component integrity hashes before any candidate is created.
+
+```text
+Architecture Manifest + Registries
+              |
+              v
+       Structural Opportunity
+              |
+              v
+       Metamorphosis Proposal
+              |
+              v
+  Deterministic Compatibility Gates
+              |
+        explicit metamorphosis approval
+              |
+              v
+  Existing SandboxEngine (manifest/config only)
+              |
+              v
+  Existing BenchmarkEngine + Evidence
+              |
+        BETTER + structural gates
+              |
+              v
+  Existing PromotionEngine
+        + separate promotion approval
+              |
+              v
+     Atomic activation + native rollback
+```
+
+The approval states are intentionally independent. Evolution approval authorizes the ordinary Phase 5 proposal path. Metamorphosis approval authorizes only structural experimentation. Promotion approval remains a separate Phase 7 decision. None of these approvals is inferred from another, and no state transition can autonomously approve, promote, deploy, or mutate production.
+
+Structural candidates are created through a thin adapter around the existing `SandboxEngine`. This reuses its unique directories outside the production source root, read-only baseline, candidate copy, namespace isolation, sanitized environment, fixed runner, timeout handling, cleanup, and production immutability checks. The adapter writes only structured architecture/configuration manifests; it does not execute generated code or alter production source. Comparative evaluation is delegated to the existing `BenchmarkEngine`; any capability or structural safety regression forces a non-`BETTER` result. Only a `BETTER` structural experiment may be handed to `PromotionEngine`, which retains its own integrity checks, explicit human approval, atomic active symlink switch, health verification, and native rollback.
+
+Metamorphosis events—including proposal, validation, compatibility analysis, structural candidate creation, capability regression, evaluation, promotion handoff, and rollback—are written to the append-only event stream. The CLI exposes component and architecture inspection plus metamorphosis proposal inspection and approval; downstream sandbox, benchmark, promotion, and rollback commands remain the existing commands rather than parallel implementations.
+
+> **Metamorphosis changes declared structure under governance; it never changes who governs, verifies, isolates, approves, promotes, audits, or rolls back the agent.**
