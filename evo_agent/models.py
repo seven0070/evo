@@ -127,6 +127,18 @@ class EventType(str, Enum):
     SANDBOX_CLEANUP_STARTED = "sandbox_cleanup_started"
     SANDBOX_DESTROYED = "sandbox_destroyed"
     SANDBOX_ABORTED = "sandbox_aborted"
+    BENCHMARK_CREATED = "benchmark_created"
+    BENCHMARK_VALIDATED = "benchmark_validated"
+    BENCHMARK_STARTED = "benchmark_started"
+    TRIAL_STARTED = "trial_started"
+    TRIAL_COMPLETED = "trial_completed"
+    BASELINE_COMPLETED = "baseline_completed"
+    CANDIDATE_COMPLETED = "candidate_completed"
+    REGRESSION_DETECTED = "regression_detected"
+    SAFETY_REGRESSION_DETECTED = "safety_regression_detected"
+    BENCHMARK_COMPLETED = "benchmark_completed"
+    EVIDENCE_GENERATED = "evidence_generated"
+    EVOLUTION_DECISION_MADE = "evolution_decision_made"
 
 
 @dataclass

@@ -351,7 +351,7 @@ class SandboxEngine:
         self.store.save_experiment(experiment)
         return experiment
 
-    def run_experiment(self, proposal_id: str, command: Iterable[str] = ("python3", "-m", "pytest", "-q", "test_sandbox_controlled.py")) -> EvolutionExperiment:
+    def run_experiment(self, proposal_id: str, command: Iterable[str] = ("python3", "-m", "pytest", "-q", "test_sandbox_controlled.py"), retain_sandbox: bool = False) -> EvolutionExperiment:
         production_hash_before = self._manifest_hash(self.source_root)
         experiment, proposal, baseline_dir, candidate_dir = self.create_sandbox(proposal_id)
         try:
@@ -378,7 +378,8 @@ class SandboxEngine:
             self.store.save_experiment(experiment)
             return experiment
         finally:
-            self.destroy_sandbox(experiment)
+            if not retain_sandbox:
+                self.destroy_sandbox(experiment)
 
     def list_experiments(self, limit: int = 50) -> list[EvolutionExperiment]:
         return [self._experiment_from_record(record) for record in self.store.find_experiments(limit=limit)]

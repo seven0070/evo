@@ -66,6 +66,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 | `cli.py` | Local command-line entry point and proposal/experience inspection |
 | `evolver.py` | Evidence analysis, proposal generation, validation, persistence, and recorded review |
 | `sandbox.py` | Proposal-gated isolated candidate experiments, bounded execution, comparison, and cleanup |
+| `benchmark.py` | Versioned benchmark trials, metrics, regression/safety gates, and evidence decisions |
 
 ## Verification
 
@@ -73,7 +74,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 python3 -m pytest -q
 ```
 
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, and Phase 1–4 regression behavior.
+The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, and Phase 1–5 regression behavior.
 
 ## Flexibility Engine
 
@@ -130,6 +131,26 @@ evo --show-experiment EXPERIMENT_ID --source-root . --sandbox-root ../evo-sandbo
 
 > `PASSED` means the candidate test command passed in isolation. It does not mean the candidate is better, approved for production, promoted, or deployed.
 
-## Next milestone: benchmark and promotion governance
+## Evolution Benchmark and Comparative Evaluation
 
-Later phases may add reproducible benchmark suites, richer candidate patch mechanisms, version registration, explicit promotion gates, and rollback governance. No Phase 5 experiment can modify production, promote a candidate, deploy a change, or perform Metamorphosis.
+The repository now includes a deterministic `BenchmarkEngine` that evaluates an eligible, retained sandbox experiment against its baseline. It requires an approved proposal, a valid passed sandbox experiment, candidate metadata, and available baseline/candidate directories. It uses the same versioned benchmark, task cases, inputs, fixed runner, timeout, trial count, evaluation rules, and safety policy for both sides.
+
+The initial benchmark suite is intentionally small and repeatable. It checks isolated execution, candidate configuration presence, and verification-preserving behavior. Repeated trials record success, verification, score, timeout, output, errors, duration, step/recovery fields, version, deterministic seed, environment policy, and benchmark version. Aggregated metrics include success rate, verification rate, failure rate, timeout rate, mean score, duration, steps, retries, replans, strategy changes, recovery, and human interventions.
+
+The comparison policy is deterministic and conservative. `BETTER` requires the configured target metric to improve by the configured delta, verification to remain above its minimum, and no functional, verification, timeout, efficiency, or safety regression. `NO_CHANGE` means the target metric is within tolerance. `WORSE` is a hard result for regressions, target decline, insufficient verification, or safety-gate failure. `INCONCLUSIVE` is used for ineligible experiments or insufficient evidence. This phase reports descriptive statistics only and does not claim statistical significance.
+
+CLI commands are:
+
+```bash
+evo --list-benchmarks --workspace ./workspace --source-root .
+evo --run-benchmark BENCHMARK_ID --experiment EXPERIMENT_ID --workspace ./workspace --source-root .
+evo --show-evidence EVIDENCE_ID --workspace ./workspace --source-root .
+```
+
+Evidence is persisted in the existing SQLite database using `benchmarks`, `benchmark_trials`, and `evolution_evidence` tables. Every decision includes machine-readable metrics, regression and safety results, a human-readable explanation, version information, benchmark configuration, trial count, seed, timeout, and sandbox policy.
+
+> **Sandbox asks whether a candidate can execute safely. Benchmark asks whether it performs better. Promotion is a later phase.**
+
+## Next milestone: controlled promotion and rollback
+
+Phase 7 may consume evidence packages for explicit human-reviewed promotion and rollback. Phase 6 does not modify production, merge Git history, deploy, approve autonomously, or promote any candidate.

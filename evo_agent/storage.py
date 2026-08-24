@@ -109,6 +109,44 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome);
                 CREATE INDEX IF NOT EXISTS idx_experiences_strategy ON experiences(strategy);
                 CREATE INDEX IF NOT EXISTS idx_experiences_version ON experiences(agent_version);
+                CREATE TABLE IF NOT EXISTS benchmarks (
+                    benchmark_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    benchmark_version TEXT NOT NULL,
+                    trial_count INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS benchmark_trials (
+                    trial_id TEXT PRIMARY KEY,
+                    benchmark_id TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    task_case_id TEXT NOT NULL,
+                    trial_number INTEGER NOT NULL,
+                    success INTEGER NOT NULL,
+                    verified INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    timeout INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_trials_benchmark ON benchmark_trials(benchmark_id);
+                CREATE INDEX IF NOT EXISTS idx_trials_experiment ON benchmark_trials(experiment_id);
+                CREATE TABLE IF NOT EXISTS evolution_evidence (
+                    evidence_id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    proposal_id TEXT NOT NULL,
+                    benchmark_id TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    baseline_version TEXT NOT NULL,
+                    candidate_version TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_evidence_experiment ON evolution_evidence(experiment_id);
+                CREATE INDEX IF NOT EXISTS idx_evidence_decision ON evolution_evidence(decision);
                 """
             )
 
@@ -258,6 +296,74 @@ class SQLiteStore:
     def find_experiments(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM evolution_experiments ORDER BY start_time DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_benchmark(self, benchmark: Any) -> None:
+        payload = benchmark.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO benchmarks(
+                    benchmark_id, name, version, benchmark_version, trial_count, payload, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (benchmark.benchmark_id, benchmark.name, benchmark.version, benchmark.benchmark_version, benchmark.trial_count, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
+            )
+
+    def benchmark_by_id(self, benchmark_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM benchmarks WHERE benchmark_id = ?", (benchmark_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_benchmarks(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM benchmarks ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_benchmark_trial(self, trial: Any) -> None:
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO benchmark_trials(
+                    trial_id, benchmark_id, experiment_id, side, task_case_id, trial_number,
+                    success, verified, score, timeout, payload, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (trial.trial_id, trial.benchmark_id, trial.experiment_id, trial.side, trial.task_case_id, trial.trial_number, int(trial.success), int(trial.verified), trial.score, int(trial.timeout), json.dumps(trial.to_dict()), trial.start_time),
+            )
+
+    def find_benchmark_trials(self, benchmark_id: str | None = None, experiment_id: str | None = None) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if benchmark_id:
+            clauses.append("benchmark_id = ?")
+            values.append(benchmark_id)
+        if experiment_id:
+            clauses.append("experiment_id = ?")
+            values.append(experiment_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM benchmark_trials {where} ORDER BY created_at", values).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_evolution_evidence(self, evidence: Any) -> None:
+        payload = evidence.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO evolution_evidence(
+                    evidence_id, experiment_id, proposal_id, benchmark_id, decision,
+                    baseline_version, candidate_version, payload, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (evidence.evidence_id, evidence.experiment_id, evidence.proposal_id, evidence.benchmark_id, evidence.decision.value, evidence.baseline_version, evidence.candidate_version, json.dumps(payload), evidence.created_at),
+            )
+
+    def evidence_by_id(self, evidence_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_evidence WHERE evidence_id = ?", (evidence_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_evidence(self, experiment_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if experiment_id:
+                rows = db.execute("SELECT * FROM evolution_evidence WHERE experiment_id = ? ORDER BY created_at DESC LIMIT ?", (experiment_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM evolution_evidence ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
     def proposal_by_id(self, proposal_id: str) -> dict[str, Any] | None:

@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .benchmark import BenchmarkEngine
 from .experience import ExperienceEngine
 from .evolver import Evolver
 from .kernel import AgentKernel
@@ -38,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-experiments", action="store_true", help="List sandbox experiments")
     parser.add_argument("--show-experiment", metavar="EXPERIMENT_ID", help="Show one sandbox experiment")
     parser.add_argument("--sandbox-proposal", metavar="PROPOSAL_ID", help="Run an approved proposal in an isolated sandbox")
+    parser.add_argument("--retain-sandbox", action="store_true", help="Retain a passed sandbox experiment for benchmark evaluation")
+    parser.add_argument("--list-benchmarks", action="store_true", help="List deterministic benchmark definitions")
+    parser.add_argument("--run-benchmark", metavar="BENCHMARK_ID", help="Run a benchmark against an eligible sandbox experiment")
+    parser.add_argument("--experiment", metavar="EXPERIMENT_ID", help="Sandbox experiment to benchmark")
+    parser.add_argument("--show-evidence", metavar="EVIDENCE_ID", help="Show one comparative evaluation evidence package")
     return parser
 
 
@@ -51,7 +57,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -86,7 +92,23 @@ def inspect_command(args: argparse.Namespace) -> bool:
         print_json(experiment.to_dict() if experiment else {"error": "experiment not found", "experiment_id": args.show_experiment})
     elif args.sandbox_proposal:
         sandbox = SandboxEngine(store, Path(args.source_root), Path(args.sandbox_root).expanduser().resolve() if args.sandbox_root else None)
-        print_json(sandbox.run_experiment(args.sandbox_proposal).to_dict())
+        print_json(sandbox.run_experiment(args.sandbox_proposal, retain_sandbox=args.retain_sandbox).to_dict())
+    elif args.list_benchmarks:
+        benchmark_engine = BenchmarkEngine(store, Path(args.source_root))
+        if not benchmark_engine.list_benchmarks():
+            benchmark_engine.save_benchmark(benchmark_engine.default_benchmark())
+        print_json([benchmark.to_dict() for benchmark in benchmark_engine.list_benchmarks(limit=50)])
+    elif args.run_benchmark:
+        if not args.experiment:
+            print_json({"error": "--experiment is required with --run-benchmark"})
+        else:
+            benchmark_engine = BenchmarkEngine(store, Path(args.source_root))
+            if not benchmark_engine.load_benchmark(args.run_benchmark):
+                benchmark_engine.save_benchmark(benchmark_engine.default_benchmark(args.run_benchmark))
+            print_json(benchmark_engine.run(args.run_benchmark, args.experiment).to_dict())
+    elif args.show_evidence:
+        record = store.evidence_by_id(args.show_evidence)
+        print_json(record or {"error": "evidence not found", "evidence_id": args.show_evidence})
     return True
 
 

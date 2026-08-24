@@ -140,6 +140,37 @@ Fixed tests    Structured change + fixed tests
 
 > **Candidate may experiment. Production remains untouched.**
 
+## Evolution Benchmark and Comparative Evaluation
+
+The `BenchmarkEngine` evaluates only an eligible sandbox experiment: an approved proposal, a valid experiment, candidate metadata, and completed sandbox execution. It loads a versioned deterministic benchmark, validates task cases and probes, prepares the same cases for both baseline and candidate, runs repeated trials with the same inputs, timeout, fixed runner, verification rules, and environment policy, aggregates transparent metrics, detects regressions, evaluates hard safety gates, and persists an `EvolutionEvidence` package.
+
+The initial benchmark suite is deliberately small and deterministic. It covers an isolated environment probe, candidate configuration presence, and verification-preserving behavior. The benchmark representation includes benchmark ID, name, version, task cases, success criteria, metrics, trial count, timeout, deterministic seed, and benchmark version. Each trial records side, version, task case, timing, success, verification, score, timeout, output, errors, and controlled-resource metadata.
+
+The decision policy is deterministic and conservative. `BETTER` requires the configured target metric to improve by the required delta, complete verification to remain above its minimum, and no functional, verification, timeout, efficiency, or safety regression to be present. `NO_CHANGE` means the target metric is within tolerance. `WORSE` is used for regressions, target decline, insufficient verification, or any safety-gate failure. `INCONCLUSIVE` is used when the experiment is ineligible or the evidence cannot support a deterministic decision. No statistical significance is claimed; this phase reports descriptive count, mean, rate, and difference metrics only.
+
+Safety is a hard gate. The benchmark records production immutability, candidate isolation, denied network policy, absence of host secret variables, fixed runner use, and candidate safety status. Any failed safety condition prevents `BETTER`. Evidence includes machine-readable metrics and regression objects plus human-readable decision reasons and reproducibility metadata: benchmark and evaluator versions, trial count, seed, versions, timeout, evaluation rules, source commit where available, and sandbox policy.
+
+```text
+Sandbox Experiment
+        |
+        v
+Same Benchmark + Same Trials
+        |
+        +--> Baseline Metrics
+        +--> Candidate Metrics
+        |
+        v
+Regression + Safety Gates
+        |
+        v
+Evidence Package -> BETTER / NO_CHANGE / WORSE / INCONCLUSIVE
+        |
+        v
+STOP — no promotion
+```
+
+> **Sandbox asks whether a candidate can execute safely. Benchmark asks whether it performs better. Promotion is a later phase.**
+
 ## Deferred evolution system
 
-The future benchmark and promotion phases may compare candidate metrics across reproducible task suites, require explicit approval, register versions, and retain rollback targets. Candidate code and configuration must never receive broader permissions than the active agent.
+The future promotion phase may consume evidence packages for explicit human-reviewed promotion and rollback. Candidate code and configuration must never receive broader permissions than the active agent, and benchmark decisions remain evidence rather than production authority.
