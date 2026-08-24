@@ -8,7 +8,8 @@ from .experience import ExperienceEngine
 from .evolver import Evolver
 from .kernel import AgentKernel
 from .model_adapter import OpenAICompatibleAdapter, RuleBasedAdapter
-from .models import ProposalStatus, ToolCall
+from .models import ToolCall
+from .sandbox import SandboxEngine
 from .storage import SQLiteStore
 
 
@@ -16,6 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="evo", description="Run and inspect the local-first permissioned AI agent")
     parser.add_argument("request", nargs="?", help="Goal for the agent")
     parser.add_argument("--workspace", default="./workspace", help="Allowlisted workspace directory")
+    parser.add_argument("--source-root", default=".", help="Production source root used only as a read-only sandbox baseline")
+    parser.add_argument("--sandbox-root", default=None, help="Optional directory outside the production source root for experiments")
     parser.add_argument("--model", default="offline", help="offline or an OpenAI-compatible model ID")
     parser.add_argument("--base-url", default=None, help="Optional OpenAI-compatible API base URL")
     parser.add_argument("--json", action="store_true", help="Print structured JSON output")
@@ -32,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--approve-proposal", metavar="PROPOSAL_ID", help="Record approval for a proposal for a future sandbox phase")
     parser.add_argument("--reject-proposal", metavar="PROPOSAL_ID", help="Record rejection for a proposal")
     parser.add_argument("--proposal-reason", default="", help="Reason recorded with proposal approval or rejection")
+    parser.add_argument("--list-experiments", action="store_true", help="List sandbox experiments")
+    parser.add_argument("--show-experiment", metavar="EXPERIMENT_ID", help="Show one sandbox experiment")
+    parser.add_argument("--sandbox-proposal", metavar="PROPOSAL_ID", help="Run an approved proposal in an isolated sandbox")
     return parser
 
 
@@ -45,9 +51,10 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal):
         return False
-    store = SQLiteStore(Path(args.workspace).expanduser().resolve() / ".evo" / "agent.sqlite3")
+    workspace = Path(args.workspace).expanduser().resolve()
+    store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     experiences = ExperienceEngine(store)
     evolver = Evolver(store, experiences)
     if args.list_experiences:
@@ -70,6 +77,16 @@ def inspect_command(args: argparse.Namespace) -> bool:
         print_json(evolver.approve(args.approve_proposal, args.proposal_reason).to_dict())
     elif args.reject_proposal:
         print_json(evolver.reject(args.reject_proposal, args.proposal_reason).to_dict())
+    elif args.list_experiments:
+        sandbox = SandboxEngine(store, Path(args.source_root), Path(args.sandbox_root).expanduser().resolve() if args.sandbox_root else None)
+        print_json([experiment.to_dict() for experiment in sandbox.list_experiments(limit=50)])
+    elif args.show_experiment:
+        sandbox = SandboxEngine(store, Path(args.source_root), Path(args.sandbox_root).expanduser().resolve() if args.sandbox_root else None)
+        experiment = sandbox.get_experiment(args.show_experiment)
+        print_json(experiment.to_dict() if experiment else {"error": "experiment not found", "experiment_id": args.show_experiment})
+    elif args.sandbox_proposal:
+        sandbox = SandboxEngine(store, Path(args.source_root), Path(args.sandbox_root).expanduser().resolve() if args.sandbox_root else None)
+        print_json(sandbox.run_experiment(args.sandbox_proposal).to_dict())
     return True
 
 

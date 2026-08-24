@@ -65,6 +65,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 | `verifier.py` | Deterministic postcondition checks |
 | `cli.py` | Local command-line entry point and proposal/experience inspection |
 | `evolver.py` | Evidence analysis, proposal generation, validation, persistence, and recorded review |
+| `sandbox.py` | Proposal-gated isolated candidate experiments, bounded execution, comparison, and cleanup |
 
 ## Verification
 
@@ -72,7 +73,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 python3 -m pytest -q
 ```
 
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, and Phase 1–3 regression behavior.
+The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, and Phase 1–4 regression behavior.
 
 ## Flexibility Engine
 
@@ -111,6 +112,24 @@ evo --reject-proposal PROPOSAL_ID --proposal-reason "Insufficient evidence" --wo
 
 > **No proposal becomes an agent modification without passing the future controlled evolution pipeline.**
 
-## Next milestone: isolated sandbox evaluation
+## Isolated Evolution Sandbox
 
-The next milestone is an isolated sandbox that can evaluate an approved proposal without touching the production kernel or workspace. Later phases may add reproducible benchmarks, promotion gates, version registration, and rollback governance. Every candidate capability must remain permission-constrained, evidence-based, explicitly approved, and reversible.
+The repository now includes a proposal-gated `SandboxEngine`. It independently verifies that a proposal is `APPROVED`, creates a unique experiment outside the production source root, snapshots a read-only baseline, creates a separate candidate copy, applies only a validated structured configuration change, runs a fixed pytest command under bounded isolation, captures output and errors, compares candidate and baseline results, persists the experiment, and cleans up the candidate directory.
+
+The sandbox uses an unprivileged user/mount/PID/network namespace where available, a read-only production bind mount, a sanitized environment, no host API keys or credential variables, a denied-by-default network namespace, a fixed test runner, a process timeout, and process-group termination. It excludes `.git`, runtime databases, checkpoints, caches, and workspace state from candidate copies. Production immutability is checked by a before/after manifest hash as an additional invariant.
+
+Only these structured targets are initially supported: strategy selection, strategy parameters, tool selection, retry/recovery configuration, planning configuration, and prompt/configuration parameters. Protected or unsupported targets fail closed. The candidate writes `evolution_config.json`; it does not execute generated code or rewrite arbitrary source files.
+
+Sandbox commands are:
+
+```bash
+evo --sandbox-proposal PROPOSAL_ID --source-root . --sandbox-root ../evo-sandboxes --workspace ./workspace
+evo --list-experiments --source-root . --sandbox-root ../evo-sandboxes --workspace ./workspace
+evo --show-experiment EXPERIMENT_ID --source-root . --sandbox-root ../evo-sandboxes --workspace ./workspace
+```
+
+> `PASSED` means the candidate test command passed in isolation. It does not mean the candidate is better, approved for production, promoted, or deployed.
+
+## Next milestone: benchmark and promotion governance
+
+Later phases may add reproducible benchmark suites, richer candidate patch mechanisms, version registration, explicit promotion gates, and rollback governance. No Phase 5 experiment can modify production, promote a candidate, deploy a change, or perform Metamorphosis.

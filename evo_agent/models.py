@@ -56,6 +56,34 @@ class ProposalRisk(str, Enum):
     PROTECTED = "protected"
 
 
+class CandidateStatus(str, Enum):
+    CREATED = "created"
+    PREPARED = "prepared"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    ABORTED = "aborted"
+    DESTROYED = "destroyed"
+
+
+class ExperimentStatus(str, Enum):
+    CREATED = "created"
+    PREPARED = "prepared"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    ABORTED = "aborted"
+    DESTROYED = "destroyed"
+
+
+class ComparisonClass(str, Enum):
+    BETTER = "better"
+    NO_CHANGE = "no_change"
+    WORSE = "worse"
+    INCONCLUSIVE = "inconclusive"
+
+
 class EventType(str, Enum):
     TASK_CREATED = "task_created"
     PLAN_CREATED = "plan_created"
@@ -87,6 +115,18 @@ class EventType(str, Enum):
     PROPOSAL_VALIDATED = "proposal_validated"
     PROPOSAL_REJECTED = "proposal_rejected"
     PROPOSAL_APPROVED = "proposal_approved"
+    SANDBOX_CREATED = "sandbox_created"
+    BASELINE_SNAPSHOT_CREATED = "baseline_snapshot_created"
+    CANDIDATE_CREATED = "candidate_created"
+    PROPOSAL_APPLIED = "proposal_applied"
+    CANDIDATE_STARTED = "candidate_started"
+    CANDIDATE_TEST_STARTED = "candidate_test_started"
+    CANDIDATE_TEST_COMPLETED = "candidate_test_completed"
+    CANDIDATE_FAILED = "candidate_failed"
+    CANDIDATE_PASSED = "candidate_passed"
+    SANDBOX_CLEANUP_STARTED = "sandbox_cleanup_started"
+    SANDBOX_DESTROYED = "sandbox_destroyed"
+    SANDBOX_ABORTED = "sandbox_aborted"
 
 
 @dataclass

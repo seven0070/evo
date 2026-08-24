@@ -90,6 +90,21 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_proposals_status ON evolution_proposals(status);
                 CREATE INDEX IF NOT EXISTS idx_proposals_target ON evolution_proposals(target_component);
+                CREATE TABLE IF NOT EXISTS evolution_experiments (
+                    experiment_id TEXT PRIMARY KEY,
+                    proposal_id TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    baseline_version TEXT NOT NULL,
+                    candidate_version TEXT NOT NULL,
+                    sandbox_location TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    cleanup_status TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_experiments_proposal ON evolution_experiments(proposal_id);
+                CREATE INDEX IF NOT EXISTS idx_experiments_status ON evolution_experiments(status);
                 CREATE INDEX IF NOT EXISTS idx_experiences_task_type ON experiences(task_type);
                 CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome);
                 CREATE INDEX IF NOT EXISTS idx_experiences_strategy ON experiences(strategy);
@@ -210,6 +225,40 @@ class SQLiteStore:
                     json.dumps(payload),
                 ),
             )
+
+    def save_experiment(self, experiment: Any) -> None:
+        payload = experiment.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO evolution_experiments(
+                    experiment_id, proposal_id, candidate_id, status, baseline_version,
+                    candidate_version, sandbox_location, start_time, end_time,
+                    cleanup_status, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    experiment.experiment_id,
+                    experiment.proposal_id,
+                    experiment.candidate_id,
+                    experiment.status.value,
+                    experiment.baseline_version,
+                    experiment.candidate_version,
+                    experiment.sandbox_location,
+                    experiment.start_time,
+                    experiment.end_time,
+                    experiment.cleanup_status,
+                    json.dumps(payload),
+                ),
+            )
+
+    def experiment_by_id(self, experiment_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_experiments WHERE experiment_id = ?", (experiment_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_experiments(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM evolution_experiments ORDER BY start_time DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
     def proposal_by_id(self, proposal_id: str) -> dict[str, Any] | None:
         with self._connect() as db:

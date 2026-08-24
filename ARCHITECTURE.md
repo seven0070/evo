@@ -112,6 +112,34 @@ Experience + Evaluation
 
 > **No proposal becomes an agent modification without passing the future controlled evolution pipeline.**
 
+## Isolated Evolution Sandbox
+
+The `SandboxEngine` is the first controlled execution stage after human approval. It independently loads the proposal from SQLite and permits entry only when status is `APPROVED`, the proposal is valid, the risk is not `PROTECTED`, and the target belongs to the explicitly supported evolvable-component set. Pending, rejected, missing, invalid, protected, or unsupported proposals fail closed.
+
+Each experiment receives a unique directory outside the production source root with separate `baseline`, `candidate`, `logs`, `results`, and `metadata` areas. The production source is copied into a read-only baseline and a separate candidate directory; production databases, memory, checkpoints, credentials, and Git metadata are excluded from the copies. Candidate changes are represented as validated `evolution_config.json` data. The Phase 5 sandbox does not rewrite arbitrary source code or execute generated code.
+
+Candidate tests run through a fixed pytest command inside an unprivileged user, mount, network, and PID namespace. The production source is bind-mounted read-only inside the child namespace, the network namespace is private, the environment is sanitized, host secret variables are not passed through, output and errors are captured, and the process group is terminated on timeout. Experiment results include baseline and candidate execution records, comparison classification, logs, isolation policy, network policy, cleanup status, and version metadata.
+
+The sandbox distinguishes successful candidate execution from proven improvement. `PASSED` means only that the candidate test command completed successfully; it is not promotion or production approval. Every experiment is persisted before cleanup, and cleanup is recorded explicitly. No automatic promotion, deployment, production mutation, branch merge, or Metamorphosis exists in this phase.
+
+```text
+Approved Proposal
+       |
+       v
+  Isolated Experiment
+   /              \\
+Baseline        Candidate
+   |              |
+Fixed tests    Structured change + fixed tests
+   \\            /
+      Comparison
+          |
+          v
+ Persist -> Cleanup -> STOP
+```
+
+> **Candidate may experiment. Production remains untouched.**
+
 ## Deferred evolution system
 
-The future sandbox phase should create candidate versions in isolated directories, run reproducible benchmark tasks, compare candidate metrics with the active baseline, require explicit promotion approval, register the new version, and retain a rollback target. Candidate code and configuration must never receive broader permissions than the active agent.
+The future benchmark and promotion phases may compare candidate metrics across reproducible task suites, require explicit approval, register versions, and retain rollback targets. Candidate code and configuration must never receive broader permissions than the active agent.
