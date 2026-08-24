@@ -199,3 +199,35 @@ evo --approve-metamorphosis METAMORPHOSIS_ID --proposal-reason "Authorize struct
 ```
 
 > **Metamorphosis may propose and test bounded structural alternatives; it cannot approve itself, mutate production, disable governance, bypass verification, deploy autonomously, self-replicate, or rewrite arbitrary source.**
+
+
+## Governed Evolution Orchestrator
+
+Phase 9 adds the **Governed Evolution Orchestrator**, a persistent conductor over the existing Experience, Evaluation, Flexibility, Evolver, Metamorphosis, Sandbox, Benchmark, Promotion, and Rollback engines. It observes persisted experience, detects evidence-backed opportunities, classifies them deterministically, selects the smallest effective path, and records every lifecycle decision. The orchestrator coordinates specialized authorities; it does not replace or override them.
+
+The routing policy is conservative. A context-specific failure is routed to runtime-only Flexibility first. Repeated evidence can route to the proposal-only Controlled Evolver. An architectural, component, or capability limitation can route to the Phase 8 Metamorphosis Engine. Uncertain evidence becomes `INCONCLUSIVE`, and a non-justified change becomes `NO_CHANGE`; neither path creates a proposal.
+
+Each opportunity becomes a persistent `EvolutionWorkItem` with source evidence, source and architecture versions, selected path, proposal/experiment/benchmark/evidence/promotion lineage, attempt count, cooldown, state, and last error. Valid state transitions are enforced in code. No work item can jump from proposal, benchmark, or evidence directly to production. Only the existing Phase 7 PromotionEngine can activate a candidate, and it still requires its independent promotion approval, integrity checks, health verification, and native rollback.
+
+The orchestrator uses the existing SQLite database for `evolution_opportunities`, `evolution_work_items`, `orchestration_events`, `approval_requests`, `experiment_queue`, `promotion_queue`, and `evolution_cooldowns`. Approval requests distinguish evolution approval, metamorphosis approval, and promotion approval. The orchestrator may create and persist requests, but it cannot approve them itself. Promotion queue admission occurs only after `BETTER` evidence and a separate human promotion approval are recorded.
+
+Execution is bounded by a conservative `OrchestrationPolicy`, including maximum work items, experiments, promotions, failed attempts, same-opportunity attempts, and cooldown intervals. `evo --run-orchestrator` performs one observe/detect/classify/route/process cycle and stops. It does not start an uncontrolled daemon or infinite self-improvement loop. A file-backed exclusive lock serializes concurrent orchestrator processes, while version and architecture revalidation blocks stale work before sandbox or promotion execution.
+
+Restart recovery reloads work items, queue records, experiments, evidence, promotion records, and the actual active version. Interrupted sandbox or benchmark work is never blindly retried; incomplete state is safely marked failed or inconclusive unless an authoritative persisted result permits resumption. Interrupted promotion state is reconciled through Phase 7’s actual active-version and rollback authority.
+
+Phase 9 commands are:
+
+```bash
+evo --list-opportunities --workspace ./workspace --source-root .
+evo --show-opportunity OPPORTUNITY_ID --workspace ./workspace --source-root .
+evo --list-work-items --workspace ./workspace --source-root .
+evo --show-work-item WORK_ITEM_ID --workspace ./workspace --source-root .
+evo --list-approval-requests --workspace ./workspace --source-root .
+evo --run-orchestrator --workspace ./workspace --source-root .
+evo --resume-work-item WORK_ITEM_ID --workspace ./workspace --source-root .
+evo --approve-orchestration WORK_ITEM_ID --approval-type evolution_approval --approval-decision approve --proposal-reason "Authorize bounded evaluation" --approval-actor human --workspace ./workspace --source-root .
+```
+
+> **Orchestration coordinates evolution. Evolution improves existing behavior. Metamorphosis changes declared structure. Governance controls what may change.**
+
+The protected-core boundary remains immutable: governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, and promotion authorization cannot be modified, disabled, bypassed, or routed around by the orchestrator. No autonomous approval, promotion, deployment, arbitrary generated-code execution, production mutation, or uncontrolled self-modification is introduced.

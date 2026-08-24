@@ -282,6 +282,102 @@ class SQLiteStore:
                     payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_metamorphosis_experiment_proposal ON metamorphosis_experiments(proposal_id);
+                CREATE TABLE IF NOT EXISTS evolution_opportunities (
+                    opportunity_id TEXT PRIMARY KEY,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    recommended_change_type TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_opportunities_status ON evolution_opportunities(status);
+                CREATE TABLE IF NOT EXISTS evolution_work_items (
+                    work_item_id TEXT PRIMARY KEY,
+                    opportunity_id TEXT NOT NULL,
+                    change_type TEXT NOT NULL,
+                    current_state TEXT NOT NULL,
+                    target_component TEXT NOT NULL,
+                    target_capability TEXT,
+                    proposal_id TEXT,
+                    experiment_id TEXT,
+                    benchmark_id TEXT,
+                    evidence_id TEXT,
+                    promotion_id TEXT,
+                    current_version TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    candidate_version TEXT,
+                    attempt_count INTEGER NOT NULL,
+                    cooldown_until TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_work_items_state ON evolution_work_items(current_state);
+                CREATE INDEX IF NOT EXISTS idx_work_items_opportunity ON evolution_work_items(opportunity_id);
+                CREATE TABLE IF NOT EXISTS orchestration_events (
+                    orchestration_event_id TEXT PRIMARY KEY,
+                    work_item_id TEXT NOT NULL,
+                    opportunity_id TEXT NOT NULL,
+                    event_name TEXT NOT NULL,
+                    previous_state TEXT,
+                    current_state TEXT NOT NULL,
+                    change_type TEXT NOT NULL,
+                    component TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_orchestration_events_work_item ON orchestration_events(work_item_id);
+                CREATE TABLE IF NOT EXISTS approval_requests (
+                    approval_request_id TEXT PRIMARY KEY,
+                    work_item_id TEXT NOT NULL,
+                    approval_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+                CREATE TABLE IF NOT EXISTS experiment_queue (
+                    queue_id TEXT PRIMARY KEY,
+                    work_item_id TEXT NOT NULL,
+                    engine TEXT NOT NULL,
+                    experiment_id TEXT,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_experiment_queue_status ON experiment_queue(status);
+                CREATE TABLE IF NOT EXISTS promotion_queue (
+                    queue_id TEXT PRIMARY KEY,
+                    work_item_id TEXT NOT NULL,
+                    promotion_id TEXT,
+                    candidate_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_promotion_queue_status ON promotion_queue(status);
+                CREATE TABLE IF NOT EXISTS evolution_cooldowns (
+                    opportunity_key TEXT PRIMARY KEY,
+                    opportunity_id TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    last_attempt TEXT NOT NULL,
+                    last_result TEXT NOT NULL,
+                    cooldown_until TEXT,
+                    payload TEXT NOT NULL
+                );
                 """
             )
 
@@ -577,6 +673,135 @@ class SQLiteStore:
     def find_metamorphosis_experiments(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM metamorphosis_experiments ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_opportunity(self, opportunity: Any) -> None:
+        payload = opportunity.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO evolution_opportunities(opportunity_id, fingerprint, status, recommended_change_type, confidence, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (opportunity.opportunity_id, opportunity.fingerprint, opportunity.status.value, opportunity.recommended_change_type.value, opportunity.confidence, opportunity.created_at, opportunity.updated_at, json.dumps(payload)))
+
+    def opportunity_by_id(self, opportunity_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_opportunities WHERE opportunity_id = ?", (opportunity_id,)).fetchone()
+        return dict(row) if row else None
+
+    def opportunity_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_opportunities WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        return dict(row) if row else None
+
+    def find_opportunities(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if status:
+                rows = db.execute("SELECT * FROM evolution_opportunities WHERE status = ? ORDER BY created_at DESC LIMIT ?", (status, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM evolution_opportunities ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_work_item(self, work_item: Any) -> None:
+        payload = work_item.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO evolution_work_items(work_item_id, opportunity_id, change_type, current_state, target_component, target_capability, proposal_id, experiment_id, benchmark_id, evidence_id, promotion_id, current_version, architecture_version, candidate_version, attempt_count, cooldown_until, last_error, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (work_item.work_item_id, work_item.opportunity_id, work_item.change_type.value, work_item.current_state.value, work_item.target_component, work_item.target_capability, work_item.proposal_id, work_item.experiment_id, work_item.benchmark_id, work_item.evidence_id, work_item.promotion_id, work_item.current_version, work_item.architecture_version, work_item.candidate_version, work_item.attempt_count, work_item.cooldown_until, work_item.last_error, work_item.created_at, work_item.updated_at, json.dumps(payload)))
+
+    def work_item_by_id(self, work_item_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_work_items WHERE work_item_id = ?", (work_item_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_work_items(self, state: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if state:
+                rows = db.execute("SELECT * FROM evolution_work_items WHERE current_state = ? ORDER BY updated_at DESC LIMIT ?", (state, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM evolution_work_items ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_orchestration_event(self, event: Any) -> None:
+        payload = event.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO orchestration_events(orchestration_event_id, work_item_id, opportunity_id, event_name, previous_state, current_state, change_type, component, version, actor, reason, result, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (event.event_id, event.work_item_id, event.opportunity_id, event.event_name, event.previous_state, event.current_state, event.change_type, event.component, event.version, event.actor, event.reason, event.result, event.created_at, json.dumps(payload)))
+
+    def find_orchestration_events(self, work_item_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if work_item_id:
+                rows = db.execute("SELECT * FROM orchestration_events WHERE work_item_id = ? ORDER BY created_at LIMIT ?", (work_item_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM orchestration_events ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_approval_request(self, request: Any) -> None:
+        payload = request.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO approval_requests(approval_request_id, work_item_id, approval_type, status, actor, reason, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (request.approval_request_id, request.work_item_id, request.approval_type.value, request.status, request.actor, request.reason, request.created_at, request.updated_at, json.dumps(payload)))
+
+    def approval_request_by_id(self, request_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM approval_requests WHERE approval_request_id = ?", (request_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_approval_requests(self, work_item_id: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if work_item_id:
+            clauses.append("work_item_id = ?")
+            values.append(work_item_id)
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM approval_requests {where} ORDER BY created_at DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_experiment_queue_item(self, item: Any) -> None:
+        payload = item.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO experiment_queue(queue_id, work_item_id, engine, experiment_id, status, attempt_count, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (item.queue_id, item.work_item_id, item.engine, item.experiment_id, item.status.value, item.attempt_count, item.created_at, item.updated_at, json.dumps(payload)))
+
+    def experiment_queue_by_id(self, queue_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM experiment_queue WHERE queue_id = ?", (queue_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_experiment_queue(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if status:
+                rows = db.execute("SELECT * FROM experiment_queue WHERE status = ? ORDER BY created_at LIMIT ?", (status, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM experiment_queue ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_promotion_queue_item(self, item: Any) -> None:
+        payload = item.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO promotion_queue(queue_id, work_item_id, promotion_id, candidate_version, status, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (item.queue_id, item.work_item_id, item.promotion_id, item.candidate_version, item.status.value, item.created_at, item.updated_at, json.dumps(payload)))
+
+    def promotion_queue_by_id(self, queue_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM promotion_queue WHERE queue_id = ?", (queue_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_promotion_queue(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if status:
+                rows = db.execute("SELECT * FROM promotion_queue WHERE status = ? ORDER BY created_at LIMIT ?", (status, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM promotion_queue ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_cooldown(self, cooldown: Any) -> None:
+        payload = cooldown.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO evolution_cooldowns(opportunity_key, opportunity_id, attempt_count, last_attempt, last_result, cooldown_until, payload) VALUES (?, ?, ?, ?, ?, ?, ?)", (cooldown.opportunity_key, cooldown.opportunity_id, cooldown.attempt_count, cooldown.last_attempt, cooldown.last_result, cooldown.cooldown_until, json.dumps(payload)))
+
+    def cooldown_by_key(self, opportunity_key: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_cooldowns WHERE opportunity_key = ?", (opportunity_key,)).fetchone()
+        return dict(row) if row else None
+
+    def find_cooldowns(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM evolution_cooldowns ORDER BY last_attempt DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
     def save_rollback_record(self, rollback: Any) -> None:

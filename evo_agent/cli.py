@@ -10,6 +10,7 @@ from .evolver import Evolver
 from .kernel import AgentKernel
 from .model_adapter import OpenAICompatibleAdapter, RuleBasedAdapter
 from .metamorphosis import MetamorphosisEngine
+from .orchestrator import ApprovalType, EvolutionOrchestrator, OrchestrationPolicy
 from .promotion import PromotionEngine
 from .models import ToolCall
 from .sandbox import SandboxEngine
@@ -62,6 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-metamorphosis", action="store_true", help="List governed metamorphosis proposals and experiments")
     parser.add_argument("--show-metamorphosis", metavar="METAMORPHOSIS_ID", help="Show one governed metamorphosis proposal and experiments")
     parser.add_argument("--approve-metamorphosis", metavar="METAMORPHOSIS_ID", help="Record explicit metamorphosis approval")
+    parser.add_argument("--list-opportunities", action="store_true", help="List detected evolution opportunities")
+    parser.add_argument("--show-opportunity", metavar="OPPORTUNITY_ID", help="Show one evolution opportunity")
+    parser.add_argument("--list-work-items", action="store_true", help="List persistent orchestration work items")
+    parser.add_argument("--show-work-item", metavar="WORK_ITEM_ID", help="Show one orchestration work item")
+    parser.add_argument("--list-approval-requests", action="store_true", help="List pending and completed orchestration approvals")
+    parser.add_argument("--approve-orchestration", metavar="WORK_ITEM_ID", help="Record a human decision for an orchestration approval")
+    parser.add_argument("--approval-type", choices=[item.value for item in ApprovalType], default=ApprovalType.EVOLUTION.value, help="Approval gate addressed by --approve-orchestration")
+    parser.add_argument("--approval-decision", choices=["approve", "reject"], default="approve", help="Human decision for --approve-orchestration")
+    parser.add_argument("--approval-actor", default="human", help="Human actor recorded with orchestration approval")
+    parser.add_argument("--run-orchestrator", action="store_true", help="Run one bounded orchestration cycle")
+    parser.add_argument("--resume-work-item", metavar="WORK_ITEM_ID", help="Safely resume one persisted work item")
     return parser
 
 
@@ -75,14 +87,36 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     experiences = ExperienceEngine(store)
     evolver = Evolver(store, experiences)
-    metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis) else None
-    if args.list_components:
+    metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
+    orchestrator = EvolutionOrchestrator(store, Path(args.source_root), policy=OrchestrationPolicy()) if metamorphosis else None
+    if args.list_opportunities:
+        print_json([opportunity.to_dict() for opportunity in orchestrator.list_opportunities()])
+    elif args.show_opportunity:
+        opportunity = orchestrator.get_opportunity(args.show_opportunity)
+        print_json(opportunity.to_dict() if opportunity else {"error": "opportunity not found", "opportunity_id": args.show_opportunity})
+    elif args.list_work_items:
+        print_json([item.to_dict() for item in orchestrator.list_work_items()])
+    elif args.show_work_item:
+        item = orchestrator.get_work_item(args.show_work_item)
+        payload = {"work_item": item.to_dict() if item else None, "events": store.find_orchestration_events(args.show_work_item)}
+        print_json(payload)
+    elif args.list_approval_requests:
+        print_json([request.to_dict() for request in orchestrator.list_approval_requests()])
+    elif args.approve_orchestration:
+        decision = args.approval_decision == "approve"
+        print_json(orchestrator.manage_approval(args.approve_orchestration, args.approval_type, decision, args.proposal_reason, actor=args.approval_actor).to_dict())
+    elif args.run_orchestrator:
+        print_json(orchestrator.run_cycle().to_dict())
+    elif args.resume_work_item:
+        recovered = orchestrator.resume(args.resume_work_item)
+        print_json(recovered.to_dict() if recovered else {"error": "work item not found", "work_item_id": args.resume_work_item})
+    elif args.list_components:
         print_json([component.to_dict() for component in metamorphosis.list_components()])
     elif args.list_capabilities:
         print_json([capability.to_dict() for capability in metamorphosis.list_capabilities()])

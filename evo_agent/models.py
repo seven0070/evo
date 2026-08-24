@@ -171,6 +171,72 @@ class CapabilityStatus(str, Enum):
     REMOVED = "removed"
 
 
+class OrchestrationPath(str, Enum):
+    NO_CHANGE = "no_change"
+    FLEXIBILITY = "flexibility"
+    EVOLUTION = "evolution"
+    METAMORPHOSIS = "metamorphosis"
+    INCONCLUSIVE = "inconclusive"
+
+
+class OpportunityStatus(str, Enum):
+    DETECTED = "detected"
+    ANALYZING = "analyzing"
+    CLASSIFIED = "classified"
+    IGNORED = "ignored"
+    QUEUED = "queued"
+    PROPOSED = "proposed"
+    COMPLETED = "completed"
+
+
+class WorkItemState(str, Enum):
+    DETECTED = "detected"
+    ANALYZING = "analyzing"
+    CLASSIFIED = "classified"
+    QUEUED = "queued"
+    PROPOSED = "proposed"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    SANDBOXING = "sandboxing"
+    BENCHMARKING = "benchmarking"
+    EVALUATING = "evaluating"
+    DECIDED = "decided"
+    BETTER = "better"
+    AWAITING_PROMOTION_APPROVAL = "awaiting_promotion_approval"
+    PROMOTION_APPROVED = "promotion_approved"
+    PROMOTING = "promoting"
+    HEALTH_CHECK = "health_check"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    INCONCLUSIVE = "inconclusive"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+    BLOCKED = "blocked"
+    CANCELLED = "cancelled"
+
+
+class ApprovalType(str, Enum):
+    EVOLUTION = "evolution_approval"
+    METAMORPHOSIS = "metamorphosis_approval"
+    PROMOTION = "promotion_approval"
+
+
+class QueueItemStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+
+class DeduplicationStatus(str, Enum):
+    NEW = "new"
+    DUPLICATE = "duplicate"
+    SIMILAR = "similar"
+    SUPERSEDED = "superseded"
+
+
 class EventType(str, Enum):
     TASK_CREATED = "task_created"
     PLAN_CREATED = "plan_created"
@@ -256,6 +322,23 @@ class EventType(str, Enum):
     BENCHMARK_COMPLETED = "benchmark_completed"
     EVIDENCE_GENERATED = "evidence_generated"
     EVOLUTION_DECISION_MADE = "evolution_decision_made"
+    OPPORTUNITY_DETECTED = "opportunity_detected"
+    OPPORTUNITY_CLASSIFIED = "opportunity_classified"
+    CHANGE_PATH_SELECTED = "change_path_selected"
+    WORK_ITEM_CREATED = "work_item_created"
+    APPROVAL_RECEIVED = "approval_received"
+    APPROVAL_REJECTED = "approval_rejected"
+    EXPERIMENT_QUEUED = "experiment_queued"
+    EXPERIMENT_STARTED = "experiment_started"
+    EXPERIMENT_COMPLETED = "experiment_completed"
+    BENCHMARK_QUEUED = "benchmark_queued"
+    EVIDENCE_RECEIVED = "evidence_received"
+    DECISION_RECEIVED = "decision_received"
+    PROMOTION_QUEUED = "promotion_queued"
+    WORK_ITEM_COMPLETED = "work_item_completed"
+    WORK_ITEM_FAILED = "work_item_failed"
+    WORK_ITEM_RESUMED = "work_item_resumed"
+    WORK_ITEM_CANCELLED = "work_item_cancelled"
 
 
 @dataclass

@@ -251,3 +251,74 @@ Structural candidates are created through a thin adapter around the existing `Sa
 Metamorphosis events—including proposal, validation, compatibility analysis, structural candidate creation, capability regression, evaluation, promotion handoff, and rollback—are written to the append-only event stream. The CLI exposes component and architecture inspection plus metamorphosis proposal inspection and approval; downstream sandbox, benchmark, promotion, and rollback commands remain the existing commands rather than parallel implementations.
 
 > **Metamorphosis changes declared structure under governance; it never changes who governs, verifies, isolates, approves, promotes, audits, or rolls back the agent.**
+
+
+## Governed Evolution Orchestrator
+
+Phase 9 introduces `EvolutionOrchestrator` as a lifecycle-control layer above the existing Phase 1–8 engines. Its responsibility is to answer **which existing mechanism should handle an evidence-backed opportunity**. The detector and classifier are deterministic and rule-first; the orchestrator does not use an unrestricted model decision to select a more powerful change path.
+
+```text
+Observe -> Experience -> Evaluation -> OpportunityDetector
+                                      |
+                                      v
+                               ChangeClassifier
+                         /          |           \
+                 Flexibility    Evolver    Metamorphosis
+                         \          |           /
+                                      v
+                              approval request
+                                      |
+                                      v
+                         existing SandboxEngine
+                                      |
+                                      v
+                   existing BenchmarkEngine + Evidence
+                                      |
+                           Decision: reject / better
+                                      |
+                                      v
+                    separate Promotion approval -> Phase 7
+                                      |
+                          health verification / rollback
+```
+
+The smallest-effective-change policy is ordered `FLEXIBILITY`, `EVOLUTION`, then `METAMORPHOSIS`. Flexibility remains runtime-only and may produce a new Experience. Evolution continues to use the proposal-only `Evolver`, its existing approval and Phase 5 sandbox contract, and its existing benchmark/evidence path. Metamorphosis continues to use Phase 8’s compatibility and manifest-only structural adapter. No path is permitted to bypass the verifier, security policy, approval authority, sandbox, benchmark, evidence, integrity, health verification, promotion, or rollback authorities.
+
+### Persistent lifecycle
+
+`EvolutionOpportunity` stores source experience/evaluation identifiers, problem, frequency, severity, affected task types/components/capabilities, evidence strength, recommended path, confidence, status, architecture version, and a deterministic fingerprint. The fingerprint covers the target/problem/evidence/selected path/version context. An equivalent active opportunity is not recreated.
+
+`EvolutionWorkItem` stores the selected path, source lineage, source and architecture versions, proposal/experiment/benchmark/evidence/promotion identifiers, candidate version, attempt count, cooldown, state, timestamps, and error information. The explicit state machine is:
+
+| State group | States and boundary |
+|---|---|
+| Intake | `DETECTED -> ANALYZING -> CLASSIFIED -> QUEUED` |
+| Proposal | `QUEUED -> PROPOSED -> AWAITING_APPROVAL -> APPROVED` |
+| Experiment | `APPROVED -> SANDBOXING -> BENCHMARKING -> EVALUATING -> DECIDED` |
+| Positive result | `DECIDED -> BETTER -> AWAITING_PROMOTION_APPROVAL -> PROMOTION_APPROVED -> PROMOTING -> HEALTH_CHECK -> COMPLETED` |
+| Safe terminal outcomes | `REJECTED`, `INCONCLUSIVE`, `FAILED`, `ROLLED_BACK`, `BLOCKED`, `CANCELLED` |
+
+Transitions are persisted and invalid transitions fail. Direct paths from `PROPOSED`, `BENCHMARKING`, `BETTER`, or `AWAITING_APPROVAL` to production are not represented in the transition table.
+
+### Approval and execution queues
+
+The SQLite store contains separate approval, experiment, and promotion queue records. Approval requests explicitly identify `EVOLUTION`, `METAMORPHOSIS`, or `PROMOTION`; one approval never implies another. The orchestrator can create requests and record an external human decision, but autonomous actors are rejected by code. Experiment queue entries are admitted only for explicitly approved work and execute through the existing bounded sandbox. Promotion queue entries are admitted only after valid `BETTER` evidence, safety/integrity eligibility, and separate human promotion approval; activation still occurs only through `PromotionEngine`.
+
+### Recovery and concurrency
+
+Every transition writes a structured orchestration audit event containing timestamp, work item, opportunity, prior/current states, path, component, version, actor, reason, and result. On restart, persisted work and queue records are rehydrated. An interrupted sandbox or benchmark is not blindly retried: a persisted authoritative result may advance the item, otherwise it is marked safely inconclusive or failed. Interrupted promotion is reconciled against the actual active version and the existing Phase 7 promotion/rollback records.
+
+A process lock serializes orchestrator cycles and prevents conflicting work-item mutations across processes. Version and architecture hashes are revalidated immediately before experiment and promotion execution. A mismatch blocks the work item and requires revalidation. Cooldown records and configurable attempt ceilings prevent repeated failure loops; a single failure cannot autonomously escalate a problem into structural change.
+
+### Bounded autonomy
+
+`run_cycle()` performs one bounded cycle: observe persisted experience, detect and deduplicate opportunities, classify and route new work, process only already-authorized experiments, collect pending evidence, record decisions, and stop. Conservative limits cover work items, experiments, promotions, failed attempts, same-opportunity attempts, stale items, and cooldown intervals. There is no default continuous daemon and no autonomous approval, promotion, production mutation, governance change, arbitrary generated-code execution, or protected-core modification.
+
+```text
+Orchestration = coordinates evolution
+Evolution     = improves existing behavior
+Metamorphosis = changes declared structure
+Governance    = controls what may change
+```
+
+The orchestrator’s protected-core policy is intentionally redundant with the underlying engines. It rejects opportunities targeting governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, or promotion authorization. The downstream Evolver, MetamorphosisEngine, SandboxEngine, BenchmarkEngine, and PromotionEngine independently retain their own fail-closed checks.
