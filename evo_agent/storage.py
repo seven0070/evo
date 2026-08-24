@@ -246,6 +246,19 @@ class SQLiteStore:
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS intelligence_tools (
+                    tool_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    risk_level TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_intelligence_tools_name ON intelligence_tools(name);
+                CREATE INDEX IF NOT EXISTS idx_intelligence_tools_status ON intelligence_tools(status);
                 CREATE TABLE IF NOT EXISTS architecture_versions (
                     architecture_version TEXT PRIMARY KEY,
                     agent_version TEXT NOT NULL,
@@ -619,6 +632,11 @@ class SQLiteStore:
             rows = db.execute("SELECT * FROM events WHERE task_id = ? ORDER BY created_at", (task_id,)).fetchall()
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
 
+    def count_events(self, event_type: str) -> int:
+        with self._connect() as db:
+            row = db.execute("SELECT COUNT(*) AS count FROM events WHERE event_type = ?", (event_type,)).fetchone()
+        return int(row["count"]) if row else 0
+
     def add_memory(self, kind: str, content: str, created_at: str) -> None:
         with self._connect() as db:
             db.execute("INSERT INTO memories(kind, content, created_at) VALUES (?, ?, ?)", (kind, content, created_at))
@@ -962,6 +980,21 @@ class SQLiteStore:
     def find_capabilities(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM capabilities ORDER BY name LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_intelligence_tool(self, tool: Any) -> None:
+        payload = tool.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO intelligence_tools(tool_id, name, version, provider, risk_level, status, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (tool.tool_id, tool.name, tool.version, tool.provider, tool.risk_level.value, tool.status.value, json.dumps(payload), tool.created_at, tool.updated_at))
+
+    def intelligence_tool_by_id(self, tool_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM intelligence_tools WHERE tool_id = ?", (tool_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_intelligence_tools(self, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM intelligence_tools ORDER BY name, tool_id LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
     def save_architecture(self, architecture: Any) -> None:

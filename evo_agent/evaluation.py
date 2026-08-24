@@ -27,6 +27,7 @@ class EvaluationResult:
     human_interventions: int
     evaluator_version: str
     explanation: list[str]
+    capability_metrics: dict[str, Any] = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -92,4 +93,5 @@ class EvaluationEngine:
             human_interventions=human_interventions,
             evaluator_version=EVALUATOR_VERSION,
             explanation=explanation,
+            capability_metrics={"selection_count": len(experience.capability_selection), "satisfied_count": sum(1 for item in experience.capability_selection if item.get("availability") == "capability_available"), "gap_count": sum(1 for item in experience.capability_selection if item.get("availability") not in {"capability_available", "capability_partial"}), "selected_tools": [item.get("selection", {}).get("selected_tool", {}).get("name") for item in experience.capability_selection if item.get("selection", {}).get("selected_tool")]},
         )

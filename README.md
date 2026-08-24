@@ -294,3 +294,36 @@ evo --memory-integrity --workspace ./workspace
 The memory subsystem has no second database, vector-database requirement, unrestricted context dump, autonomous daemon, executable memory, or governance authority. Integrity validation fails safely on missing schema, malformed payloads, missing provenance, or invalid records rather than silently rebuilding corrupted data.
 
 > **Memory retains information. Knowledge is validated or conservatively derived information. Experience records outcomes. Learning identifies useful patterns. Evolution changes the agent only through the governed pipeline.**
+
+## Capability and Tool Intelligence Layer
+
+Phase 12 adds a structured **Capability & Tool Intelligence Layer** above the existing Kernel. A capability describes **what Evo can accomplish**; a tool describes **how that capability can be performed**; selection describes **which currently registered method is appropriate**; governance determines **whether it is allowed**; and the Kernel remains responsible for **how execution actually occurs**.
+
+The layer reuses the existing Phase 8 structural capability registry and the existing Kernel `ToolRegistry`. It adds rich, provenance-bearing capability and tool descriptors, deterministic taxonomy categories, explicit `CapabilityRequirement` records, compatibility checks, health and reliability tracking, bounded discovery caching, explainable selection results, fallback ranking, capability and tool dependency graphs, and advisory capability composition. User/provider/evolution metadata is inspectable but cannot authorize execution or become policy.
+
+Capability discovery evaluates availability, lifecycle state, declared dependencies, environment, architecture version, input/output compatibility, health, resource descriptions, and the existing security policy. Tool selection is deterministic and risk-aware. Historical Phase 11 memory may influence ranking through prior tool outcomes, procedures, failures, environment, and verification evidence, but current availability, permissions, approvals, timeouts, resource ceilings, verification, and Kernel authority always win. The registry records source, source version, lineage, agent version, and registry version; stale or incompatible records are rejected or downgraded rather than silently reused.
+
+The existing Kernel remains the only execution authority. Phase 12 never executes a registry entry directly, installs external plugins, downloads code, grants permissions, approves risky actions, disables timeouts, changes governance, modifies protected components or production, or promotes evolution. Before execution, Kernel-owned planning applies the existing policy and approval chain after Phase 12 schema and selection evidence. Malformed inputs or outputs become rejected/failed evidence and cannot silently enter cognition as trusted facts. Every discovery, candidate, selection, rejection, permission assessment, execution lifecycle, fallback, health change, capability satisfaction, and capability gap is recorded using the existing SQLite event stream.
+
+When a selected tool fails, the bounded `FallbackEngine` identifies compatible alternatives and supplies them to the existing Flexibility Engine for a bounded replan. It does not create an execution loop or bypass retry/replan limits. Genuine ordinary capability gaps are evidence for the existing Phase 9 EvolutionOrchestrator; structural gaps are routed to the existing Phase 8 MetamorphosisEngine. Phase 12 creates neither proposal nor approval, and does not directly mutate the architecture.
+
+Phase 12 inspection commands are:
+
+```bash
+evo --list-capabilities --workspace ./workspace
+evo --show-capability CAPABILITY_ID --workspace ./workspace
+evo --find-capability "report generation" --workspace ./workspace
+evo --list-tools --workspace ./workspace
+evo --show-tool TOOL_ID --workspace ./workspace
+evo --find-tools "text processing" --workspace ./workspace
+evo --analyze-capability-gap "vision processing" --workspace ./workspace
+evo --analyze-tool-selection "generate a verified report" --workspace ./workspace
+evo --capability-stats --workspace ./workspace
+evo --tool-health --workspace ./workspace
+```
+
+Capability and tool descriptors are persisted in the same `<workspace>/.evo/agent.sqlite3` database. Restart recovery preserves versions, provenance, lifecycle state, health counters, reliability, and selection behavior. A bounded in-memory discovery cache is keyed by requirement, registry inputs, architecture, and environment, has a TTL and maximum size, and revalidates candidates on reuse.
+
+> **Capability intelligence recommends. Governance authorizes. The Kernel executes. Verification decides whether the capability was actually satisfied.**
+
+The initial implementation intentionally does not add a vector database or LLM semantic selector, arbitrary external plugin installation, a continuous capability daemon, or automatic capability promotion. Provider/model capability descriptors can be added later behind the existing adapter and governed registries.

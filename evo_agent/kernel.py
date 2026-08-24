@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import time
 from typing import Any
 
 from .checkpoints import CheckpointManager
@@ -49,6 +50,8 @@ class AgentKernel:
         self.max_steps = max_steps
         self.max_retries = max_retries
         self.max_adaptations = max_adaptations
+        from .capability import CapabilityIntelligence
+        self.capability_intelligence = CapabilityIntelligence(self.store, self.workspace, self.tools, self.policy)
 
     def run(self, request: str) -> TaskOutcome:
         goal = Goal(request)
@@ -73,6 +76,11 @@ class AgentKernel:
             context.assessment = self.flexibility.assess(goal, context)
             historical = self.experience_engine.retrieve(goal=goal.text, limit=5)
             context.constraints["historical_experiences"] = [item.to_dict() for item in historical]
+            capability_analysis = self.capability_intelligence.analyze_goal(goal.text, architecture_version=self._architecture_version())
+            context.constraints["capability_analysis"] = [item.to_dict() for item in capability_analysis]
+            for item in capability_analysis:
+                record(EventType.CAPABILITY_SELECTED, {"analysis": item.to_dict(), "selected_tool": item.selection.selected_tool.name if item.selection.selected_tool else None})
+
             if historical:
                 record(EventType.EXPERIENCE_RETRIEVED, {"count": len(historical), "experience_ids": [item.experience_id for item in historical]})
             record(EventType.PLAN_CREATED, {"checkpoint": str(checkpoint), "assessment": context.assessment.to_dict(), "memories": memories, "historical_experiences": context.constraints["historical_experiences"]})
@@ -106,6 +114,7 @@ class AgentKernel:
                 spec = self.tools.get(step.tool_name)
                 call = ToolCall(task_id=goal.task_id, step_id=step.step_id, tool_name=step.tool_name, arguments=step.arguments, risk=spec.risk)
                 record(EventType.TOOL_REQUESTED, {"step": executed_steps, "tool": call.tool_name, "arguments": call.arguments, "risk": call.risk.value, "strategy": strategy.name})
+                record(EventType.TOOL_PERMISSION_CHECKED, {"tool": call.tool_name, "declared_permissions": getattr(spec, "permissions", []), "approval_required": self.policy.requires_approval(call), "authority": "Kernel SecurityPolicy"})
                 if self.policy.requires_approval(call):
                     reason = f"'{call.tool_name}' is classified as {call.risk.value}-risk"
                     record(EventType.APPROVAL_REQUESTED, {"tool": call.tool_name, "reason": reason})
@@ -120,10 +129,26 @@ class AgentKernel:
                 retries = 0
                 step_finished = False
                 while not step_finished:
-                    result = self.tools.execute(call)
+                    input_errors = self.capability_intelligence.tools.validate_input(call.tool_name, call.arguments)
+                    if input_errors:
+                        record(EventType.TOOL_REJECTED, {"tool": call.tool_name, "reason": "; ".join(input_errors), "stage": "input_schema"})
+                        result = ToolResult(call.call_id, call.tool_name, False, error="Tool input rejected: " + "; ".join(input_errors))
+                    else:
+                        record(EventType.TOOL_EXECUTION_STARTED, {"tool": call.tool_name, "step": executed_steps})
+                        started_tool = time.monotonic()
+                        result = self.tools.execute(call)
+                        if result.success:
+                            output_errors = self.capability_intelligence.tools.validate_output(call.tool_name, result.output)
+                            if output_errors:
+                                result.success = False
+                                result.error = "Tool output rejected: " + "; ".join(output_errors)
+                                result.metadata["output_schema_errors"] = output_errors
+                        self.capability_intelligence.record_tool_outcome(call.tool_name, result.success, time.monotonic() - started_tool, "timeout" in (result.error or "").lower(), result.error or "", goal.task_id)
                     if result.success:
+                        record(EventType.TOOL_EXECUTION_COMPLETED, {"tool": call.tool_name, "output_size": len(result.output)})
                         record(EventType.TOOL_COMPLETED, {"tool": result.tool_name, "output": result.output, "metadata": result.metadata})
                     else:
+                        record(EventType.TOOL_EXECUTION_FAILED, {"tool": result.tool_name, "error": result.error, "metadata": result.metadata})
                         record(EventType.TOOL_FAILED, {"tool": result.tool_name, "error": result.error, "output": result.output})
                         record(EventType.STRATEGY_FAILED, {"strategy": strategy.name, "step": step.description, "error": result.error})
                     verification = self.verifier.verify(step, result)
@@ -136,6 +161,8 @@ class AgentKernel:
                         continue
 
                     context.failures.append({"step": step.description, "tool": step.tool_name, "error": result.error, "verification": verification.summary})
+                    fallback = self.capability_intelligence.fallback_for(goal.text, step, [step.tool_name] if step.tool_name else [], self._architecture_version())
+                    context.constraints["capability_fallbacks"] = [item.to_dict() for item in fallback]
                     decision = self.flexibility.recommend_next_action(context, step, result)
                     record(EventType.ADAPTATION_TRIGGERED, {"decision": decision.to_dict(), "failure": context.failures[-1], "attempt": context.attempt})
                     if decision.action == "retry" and retries < self.max_retries:
@@ -176,6 +203,9 @@ class AgentKernel:
         record(EventType.TASK_COMPLETED, {"status": TaskStatus.SUCCEEDED.value, "summary": summary, "strategy": strategy.name, "adaptations": adaptations})
         return self._finalize(TaskOutcome(goal.task_id, TaskStatus.SUCCEEDED, summary, completed, events), record)
 
+    def _architecture_version(self) -> str:
+        return ""
+
     def _finalize(self, outcome: TaskOutcome, record: Callable[[EventType, dict[str, Any]], None]) -> TaskOutcome:
         try:
             experience = self.experience_engine.create(outcome, self.agent_version, self.model_identifier)
@@ -185,6 +215,13 @@ class AgentKernel:
             evaluation = self.evaluation_engine.evaluate(experience)
             self.store.save_evaluation(evaluation)
             self.store.update_experience_evaluation(experience.experience_id, evaluation.evaluation_id, evaluation.to_dict())
+            from .memory import MemoryManager
+            memory = MemoryManager(self.store, self.workspace)
+            memory.capture_experience(experience)
+            memory.capture_evaluation(evaluation)
+            for event in outcome.events:
+                if event.event_type in {EventType.TOOL_COMPLETED, EventType.TOOL_FAILED}:
+                    memory.capture_observation({"observation_id": event.event_id, "task_id": outcome.task_id, "tool": event.payload.get("tool"), "output": event.payload.get("output", ""), "errors": event.payload.get("error", ""), "status": "succeeded" if event.event_type is EventType.TOOL_COMPLETED else "failed"})
             record(EventType.EVALUATION_COMPLETED, {"evaluation_id": evaluation.evaluation_id, "experience_id": experience.experience_id, "success_score": evaluation.success_score, "evaluator_version": evaluation.evaluator_version})
         except Exception as exc:
             record(EventType.EVALUATION_FAILED, {"task_id": outcome.task_id, "error": str(exc)})

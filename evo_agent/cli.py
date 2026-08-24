@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .benchmark import BenchmarkEngine
+from .capability import CapabilityIntelligence, CapabilityRequirement, Provenance as CapabilityProvenance, ProvenanceSource as CapabilityProvenanceSource
 from .cognitive import CognitiveOrchestrator, CognitiveOutcome
 from .experience import ExperienceEngine
 from .evolver import Evolver
@@ -16,6 +17,8 @@ from .orchestrator import ApprovalType, EvolutionOrchestrator, OrchestrationPoli
 from .promotion import PromotionEngine
 from .models import ToolCall
 from .sandbox import SandboxEngine
+from .security import SecurityPolicy
+from .tools import ToolRegistry
 from .storage import SQLiteStore
 
 
@@ -96,6 +99,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive-memory", metavar="MEMORY_ID", help="Archive a non-user memory explicitly")
     parser.add_argument("--restore-memory", metavar="MEMORY_ID", help="Restore an archived or expired memory")
     parser.add_argument("--delete-user-memory", metavar="MEMORY_ID", help="Explicitly archive user-owned memory")
+    parser.add_argument("--show-capability", metavar="CAPABILITY_ID", help="Show one rich Phase 12 capability")
+    parser.add_argument("--find-capability", metavar="QUERY", help="Find rich capabilities by name or description")
+    parser.add_argument("--list-tools", action="store_true", help="List rich Phase 12 tool descriptors")
+    parser.add_argument("--show-tool", metavar="TOOL_ID", help="Show one rich Phase 12 tool descriptor")
+    parser.add_argument("--find-tools", metavar="QUERY", help="Find rich tools by name, description, or capability")
+    parser.add_argument("--analyze-capability-gap", metavar="CAPABILITY", help="Analyze availability of one capability requirement")
+    parser.add_argument("--analyze-tool-selection", metavar="GOAL", help="Analyze deterministic capability/tool selection for a goal")
+    parser.add_argument("--capability-stats", action="store_true", help="Show Phase 12 capability and tool statistics")
+    parser.add_argument("--tool-health", action="store_true", help="Show Phase 12 tool health records")
     return parser
 
 
@@ -109,11 +121,15 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     memory = MemoryManager(store, workspace)
+    capability_intelligence = None
+    if args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.list_capabilities:
+        policy = SecurityPolicy(workspace)
+        capability_intelligence = CapabilityIntelligence(store, workspace, ToolRegistry(policy), policy, memory)
     experiences = ExperienceEngine(store)
     evolver = Evolver(store, experiences)
     metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
@@ -123,7 +139,30 @@ def inspect_command(args: argparse.Namespace) -> bool:
         adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
         kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
         cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator)
-    if args.clarify_goal:
+    if args.show_capability:
+        item = capability_intelligence.capabilities.get_capability(args.show_capability)
+        print_json(item.to_dict() if item else {"error": "capability not found", "capability_id": args.show_capability})
+    elif args.find_capability:
+        print_json([item.to_dict() for item in capability_intelligence.capabilities.find_capabilities(args.find_capability)])
+    elif args.list_tools:
+        print_json([item.to_dict() for item in capability_intelligence.tools.list_tools()])
+    elif args.show_tool:
+        item = capability_intelligence.tools.get_tool(args.show_tool)
+        print_json(item.to_dict() if item else {"error": "tool not found", "tool_id": args.show_tool})
+    elif args.find_tools:
+        print_json([item.to_dict() for item in capability_intelligence.tools.find_tools(args.find_tools)])
+    elif args.analyze_capability_gap:
+        capability_name = args.analyze_capability_gap.strip().lower().replace(" ", "_")
+        requirement = CapabilityRequirement(f"cli_{capability_name}", capability_name, f"CLI capability-gap analysis for {args.analyze_capability_gap}", provenance=CapabilityProvenance(CapabilityProvenanceSource.SYSTEM, "cli"))
+        analysis = capability_intelligence.analyze_requirement(requirement, capability_intelligence.build_context(args.analyze_capability_gap, requirements=[requirement]))
+        print_json(analysis.to_dict())
+    elif args.analyze_tool_selection:
+        print_json([item.to_dict() for item in capability_intelligence.analyze_goal(args.analyze_tool_selection)])
+    elif args.capability_stats:
+        print_json(capability_intelligence.statistics())
+    elif args.tool_health:
+        print_json([{"tool_id": item.tool_id, "tool": item.name, "version": item.version, "status": item.status.value, "health": item.health.to_dict(), "reliability": item.reliability} for item in capability_intelligence.tools.list_tools()])
+    elif args.clarify_goal:
         if not args.clarification:
             print_json({"error": "--clarification is required with --clarify-goal"})
         else:
@@ -196,7 +235,7 @@ def inspect_command(args: argparse.Namespace) -> bool:
     elif args.list_components:
         print_json([component.to_dict() for component in metamorphosis.list_components()])
     elif args.list_capabilities:
-        print_json([capability.to_dict() for capability in metamorphosis.list_capabilities()])
+        print_json([capability.to_dict() for capability in capability_intelligence.capabilities.list_capabilities()])
     elif args.show_architecture:
         print_json(metamorphosis.get_architecture().to_dict())
     elif args.analyze_metamorphosis:

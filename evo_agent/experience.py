@@ -34,6 +34,7 @@ class Experience:
     model_identifier: str
     evaluation_id: str | None = None
     evaluation_result: dict[str, Any] | None = None
+    capability_selection: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -70,6 +71,8 @@ class ExperienceEngine:
         verification = verification_events[-1].payload if verification_events else {"success": False, "summary": "No verification event recorded"}
         timestamp = task_created.created_at if task_created else datetime.now(timezone.utc).isoformat()
         duration_ms = self._duration_ms(events)
+        capability_selection = [event.payload.get("analysis", event.payload) for event in events if event.event_type is EventType.CAPABILITY_SELECTED]
+        capability_events = {EventType.CAPABILITY_SELECTED, EventType.CAPABILITY_REQUIRED, EventType.CAPABILITY_GAP_DETECTED, EventType.TOOL_SELECTED, EventType.TOOL_REJECTED, EventType.TOOL_FALLBACK, EventType.TOOL_HEALTH_CHANGED}
         return Experience(
             experience_id=f"exp_{outcome.task_id}",
             task_id=outcome.task_id,
@@ -78,7 +81,7 @@ class ExperienceEngine:
             task_complexity=str(assessment.get("complexity", "unknown")),
             selected_strategy=selected_strategy,
             selected_tools=selected_tools,
-            execution_steps=[event.payload for event in events if event.event_type in {EventType.TOOL_REQUESTED, EventType.TOOL_COMPLETED, EventType.TOOL_FAILED, EventType.VERIFICATION}],
+            execution_steps=[event.payload for event in events if event.event_type in {EventType.TOOL_REQUESTED, EventType.TOOL_COMPLETED, EventType.TOOL_FAILED, EventType.VERIFICATION} | capability_events],
             observations=observations,
             failures=[event.payload for event in events if event.event_type in {EventType.TOOL_FAILED, EventType.STRATEGY_FAILED}],
             recovery_attempts=[event.payload for event in events if event.event_type in {EventType.RECOVERY_ATTEMPTED, EventType.RECOVERY}],
@@ -86,11 +89,12 @@ class ExperienceEngine:
             verification_result=verification,
             final_outcome=self._outcome(outcome),
             duration_ms=duration_ms,
-            resource_information={"event_count": len(events), "step_count": outcome.steps_completed},
+            resource_information={"event_count": len(events), "step_count": outcome.steps_completed, "capability_selection_count": len(capability_selection), "capability_gap_count": sum(1 for event in events if event.event_type is EventType.CAPABILITY_GAP_DETECTED)},
             approval_events=[event.payload for event in events if event.event_type in {EventType.APPROVAL_REQUESTED, EventType.APPROVAL_GRANTED, EventType.APPROVAL_DENIED}],
             timestamp=timestamp,
             agent_version=agent_version,
             model_identifier=model_identifier,
+            capability_selection=capability_selection,
         )
 
     def persist(self, experience: Experience) -> None:

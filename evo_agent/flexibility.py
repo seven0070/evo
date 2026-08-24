@@ -126,7 +126,7 @@ class PlanFirstStrategy(Strategy):
 
     @staticmethod
     def _context_text(context: FlexibilityContext) -> str:
-        return f"strategy=plan-first; attempt={context.attempt}; failures={context.failures}; observations={context.observations}"
+        return f"strategy=plan-first; attempt={context.attempt}; failures={context.failures}; observations={context.observations}; capability_fallbacks={context.constraints.get('capability_fallbacks', [])}"
 
 
 class RecoveryStrategy(Strategy):
@@ -146,7 +146,7 @@ class RecoveryStrategy(Strategy):
 
     @staticmethod
     def _context_text(context: FlexibilityContext) -> str:
-        return f"strategy=recovery; attempt={context.attempt}; diagnose failure before proposing a different plan; failures={context.failures}"
+        return f"strategy=recovery; attempt={context.attempt}; diagnose failure before proposing a different plan; failures={context.failures}; capability_fallbacks={context.constraints.get('capability_fallbacks', [])}"
 
 
 class ApprovalAwareStrategy(PlanFirstStrategy):
@@ -214,7 +214,7 @@ class FlexibilityEngine:
             return self.strategies["direct"]
         return self.strategies["plan-first"]
 
-    def select_tools(self, goal: Goal) -> list[ToolRecommendation]:
+    def select_tools(self, goal: Goal, context: FlexibilityContext | None = None) -> list[ToolRecommendation]:
         text = goal.text.lower()
         recommendations: list[ToolRecommendation] = []
         for schema in self.registry.schemas():
@@ -243,6 +243,11 @@ class FlexibilityEngine:
                 score += 1
             if score:
                 recommendations.append(ToolRecommendation(name, score, "; ".join(reason_parts) or "description matched goal"))
+        if context:
+            for fallback in context.constraints.get("capability_fallbacks", []):
+                selected = fallback.get("selected_tool") if isinstance(fallback, dict) else None
+                if selected and all(item.tool_name != selected.get("name") for item in recommendations):
+                    recommendations.append(ToolRecommendation(selected["name"], 6, "bounded capability-intelligence fallback after a prior failure; Kernel policy still applies"))
         return sorted(recommendations, key=lambda item: (-item.score, item.tool_name))
 
     def adapt(self, context: FlexibilityContext, failed_step: PlanStep, result: ToolResult) -> AdaptationDecision:

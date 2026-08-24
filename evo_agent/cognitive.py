@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .experience import ExperienceEngine
+from .capability import CapabilityAnalysis, CapabilityAvailability, CapabilityIntelligence
 from .flexibility import FlexibilityContext
 from .kernel import AgentKernel
 from .memory import CognitiveMemoryContext, MemoryManager, MemoryType, RetrievalQuery
@@ -250,6 +251,8 @@ class CognitivePlan:
     created_at: str = field(default_factory=utc_now)
     memory_evidence_ids: list[str] = field(default_factory=list)
     memory_warnings: list[str] = field(default_factory=list)
+    capability_requirements: list[dict[str, Any]] = field(default_factory=list)
+    capability_selection: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -820,6 +823,8 @@ class CognitiveOrchestrator:
         self.persistence = CognitivePersistence(self.store)
         self.experiences = ExperienceEngine(self.store)
         self.memory = MemoryManager(self.store, self.workspace, max_memories=self.policy["max_context_size"] // 1200, max_memory_bytes=self.policy["max_context_size"])
+        self.capability_intelligence: CapabilityIntelligence | None = None
+        self._capability_analyses: list[CapabilityAnalysis] = []
         self._memory_context: CognitiveMemoryContext | None = None
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
@@ -863,16 +868,32 @@ class CognitiveOrchestrator:
         self._memory_context = self.memory.cognitive_context(RetrievalQuery(goal=goal.normalized_goal, max_memories=self.policy["max_context_size"] // 1200, max_memory_bytes=self.policy["max_context_size"], architecture_version=self._architecture_version()))
         plans = self.planner.generate(goal, graph, self._architecture_version(), self._memory_context)
         plan = self.reasoner.select_plan(plans, self._available_tools())
+        self._capability_analyses = self._analyze_capabilities(goal, graph)
+        plan.capability_requirements = [item.requirement.to_dict() for item in self._capability_analyses]
+        plan.capability_selection = [item.selection.to_dict() for item in self._capability_analyses]
+        selected = [item.selection.selected_tool.name for item in self._capability_analyses if item.selection.selected_tool]
+        if selected:
+            plan.rationale += f" Capability intelligence selected {len(selected)} compatible tool method(s) through the existing authority chain."
         self.memory.add_working(json.dumps(plan.to_dict(), sort_keys=True), "Current selected plan", importance=0.9, critical=True, source_id=goal.goal_id)
         self.context.current_intent = intent
         self.context.task_graph = graph
         self.context.current_plan = plan
-        self._persist(goal, intent, graph, plans, state, [], decisions)
+        self._persist(goal, intent, graph, [plan], state, [], decisions)
         gaps: list[CapabilityGap] = []
         for node in graph.nodes:
             gap = self.gap_detector.check(goal.goal_id, node, self._available_capabilities())
             if gap:
                 gaps.append(gap)
+        existing_capabilities = {self._capability_family(item.capability) for item in gaps}
+        assessment_map = {CapabilityAvailability.UNKNOWN: CapabilityAssessment.UNKNOWN, CapabilityAvailability.UNAVAILABLE: CapabilityAssessment.UNAVAILABLE, CapabilityAvailability.PARTIAL: CapabilityAssessment.INCOMPATIBLE, CapabilityAvailability.INCOMPATIBLE: CapabilityAssessment.INCOMPATIBLE, CapabilityAvailability.BLOCKED: CapabilityAssessment.RESTRICTED}
+        for analysis in self._capability_analyses:
+            if analysis.availability is CapabilityAvailability.AVAILABLE:
+                continue
+            family = self._capability_family(analysis.requirement.capability_id)
+            if family in existing_capabilities:
+                continue
+            gaps.append(CapabilityGap(goal.goal_id, "capability-" + analysis.requirement.requirement_id, family, assessment_map.get(analysis.availability, CapabilityAssessment.UNKNOWN), "; ".join(analysis.reasons), analysis.structural))
+            existing_capabilities.add(family)
         if gaps:
             for gap in gaps:
                 gap.opportunity_id = self._route_capability_gap(goal, gap)
@@ -1031,11 +1052,14 @@ class CognitiveOrchestrator:
 
     def _ask_flexibility(self, goal: CognitiveGoal, node: CognitiveTask, outcome: TaskOutcome, state: CognitiveStateRecord) -> Any | None:
         try:
-            flexibility = getattr(self._get_kernel(), "flexibility", None)
+            kernel = self._get_kernel()
+            flexibility = getattr(kernel, "flexibility", None)
             if flexibility is None:
                 return None
             historical = self.memory.retrieve(RetrievalQuery(goal=goal.normalized_goal, subtask=node.description, failure=outcome.error or outcome.summary, max_memories=4, max_memory_bytes=4000))
-            context = FlexibilityContext(Goal(goal.original_text), failures=[{"task": node.description, "error": outcome.error or outcome.summary}], attempt=state.replan_count, constraints={"historical_memories": [item.to_dict() for item in historical]})
+            capability_engine = self._get_capability_intelligence()
+            fallback = capability_engine.fallback_for(goal.normalized_goal, node, [node.tool_name] if node.tool_name else [], self._architecture_version())
+            context = FlexibilityContext(Goal(goal.original_text), failures=[{"task": node.description, "error": outcome.error or outcome.summary}], attempt=state.replan_count, constraints={"historical_memories": [item.to_dict() for item in historical], "capability_fallbacks": [item.to_dict() for item in fallback], "capability_requirements": [item.to_dict() for item in capability_engine.requirements_for(goal.normalized_goal, node)]})
             failed_step = PlanStep(node.task_id, node.description, node.tool_name, {}, node.risk, "kernel verification")
             result = ToolResult(new_id("call"), node.tool_name or "unknown", False, error=outcome.error or outcome.summary)
             return flexibility.recommend_next_action(context, failed_step, result)
@@ -1118,8 +1142,13 @@ class CognitiveOrchestrator:
         report = verification or VerificationReport(goal.goal_id, outcome, outcome is CognitiveOutcome.SUCCESS, outcome.value, [], 0, len(failures), 0)
         events.append(Event(goal.goal_id, EventType.VERIFICATION, {"success": report.success, "summary": report.summary, "checks": report.checks}))
         events.append(Event(goal.goal_id, EventType.TASK_COMPLETED, {"status": status.value, "summary": report.summary}))
+        for analysis in self._capability_analyses:
+            selected_event = Event(goal.goal_id, EventType.CAPABILITY_SELECTED, {"analysis": analysis.to_dict(), "requirement_id": analysis.requirement.requirement_id})
+            events.append(selected_event)
+            self.store.append_event(selected_event)
         task_outcome = TaskOutcome(goal.goal_id, status, report.summary, report.completed_count, events, None if report.success else report.summary)
         experience = self.experiences.create(task_outcome, __version__, "cognitive")
+        experience.capability_selection = [analysis.to_dict() for analysis in self._capability_analyses]
         self.experiences.persist(experience)
         evaluation = self.evolution.evaluations.evaluate(experience)
         try:
@@ -1149,6 +1178,28 @@ class CognitiveOrchestrator:
                     proposal.status = MetamorphosisStatus.PENDING_APPROVAL
                     self.store.save_metamorphosis_proposal(proposal)
         return opportunity.opportunity_id
+
+    def _get_capability_intelligence(self) -> CapabilityIntelligence:
+        kernel = self._get_kernel()
+        if self.capability_intelligence is None or self.capability_intelligence.tools.runtime_registry is not getattr(kernel, "tools", None):
+            self.capability_intelligence = CapabilityIntelligence(self.store, self.workspace, getattr(kernel, "tools", None), getattr(kernel, "policy", None), self.memory, __version__)
+        return self.capability_intelligence
+
+    def _analyze_capabilities(self, goal: CognitiveGoal, graph: TaskGraph) -> list[CapabilityAnalysis]:
+        engine = self._get_capability_intelligence()
+        analyses: list[CapabilityAnalysis] = []
+        seen: set[str] = set()
+        for node in graph.nodes:
+            for requirement in engine.requirements_for(goal.normalized_goal, node):
+                if requirement.capability_id in seen:
+                    continue
+                seen.add(requirement.capability_id)
+                analyses.append(engine.analyze_requirement(requirement, engine.build_context(goal.normalized_goal, node, [requirement]), self._architecture_version()))
+        return analyses
+
+    @staticmethod
+    def _capability_family(name: str) -> str:
+        return {"media": "multimedia_generation", "shell_execution": "shell", "filesystem_read": "filesystem", "filesystem_write": "filesystem", "file_discovery": "filesystem", "text_processing": "filesystem", "report_generation": "filesystem"}.get(name, name)
 
     def _available_capabilities(self) -> list[str]:
         try:

@@ -474,3 +474,95 @@ Task -> Cognition -> Kernel execution -> Observation -> Verification
 ```
 
 The memory layer does not create a second evolution system. It supplies bounded historical evidence to the existing Cognitive and Phase 9 paths; only the existing sandbox, benchmark, promotion, health verification, and rollback authorities can evaluate or activate governed changes.
+
+
+## Capability and Tool Intelligence Layer
+
+Phase 12 introduces `CapabilityIntelligence` as an advisory intelligence layer between Cognitive planning and the existing AgentKernel. It does not replace the structural Phase 8 registry, the runtime Phase 1 `ToolRegistry`, or any governance authority. The layer answers the structured questions of what capability is required, which registered tools can provide it, whether each candidate is compatible and healthy, and which permitted method is the deterministic best candidate.
+
+```text
+Natural-language goal
+        |
+        v
+Cognitive requirements / TaskGraph
+        |
+        v
+CapabilityRequirement
+        |
+        v
+Capability registry + CapabilityGraph
+        |
+        v
+Tool discovery -> compatibility -> policy description
+        |
+        v
+Deterministic ToolSelection + bounded fallback
+        |
+        v
+Existing SecurityPolicy -> approval -> AgentKernel
+        |
+        v
+ToolRegistry execution -> observation -> Verifier
+        |
+        v
+Experience / Evaluation -> Phase 11 Memory
+        |
+        +--> Phase 9 Evolution evidence
+        +--> Phase 8 Metamorphosis evidence
+```
+
+### Capability and tool models
+
+A `Capability` describes an outcome or function, such as `filesystem_read`, `text_processing`, `report_generation`, `verification`, or `memory_retrieval`. It carries category, version, lifecycle, provider, implementation, dependencies, constraints, environment requirements, reliability, risk, availability, compatibility, and provenance. A `Tool` describes an implementation method and carries capability mappings, input/output schemas, declared permissions, risk, timeout and resource descriptions, environment requirements, health counters, reliability, lifecycle, version, provider, implementation reference, and provenance. Tool metadata is descriptive only; it cannot authorize the tool.
+
+The Phase 12 registry facade extends the existing persisted structural capability registry with rich inspection and lifecycle operations. Runtime tool descriptors are persisted in the same SQLite store, alongside existing tasks, events, memory, experience, evaluation, evolution, metamorphosis, sandbox, benchmark, promotion, and rollback records. Built-in descriptors are synchronized from the existing runtime `ToolRegistry`; advisory descriptors for planning, verification, and memory retrieval are explicitly non-executable.
+
+### Requirements, discovery, and compatibility
+
+Cognitive subtasks are converted into `CapabilityRequirement` records with an ID, capability, explanation, priority, input/output requirements, constraints, provenance, and status. `ToolDiscoveryEngine` considers only registered descriptors and filters by capability mapping, lifecycle, availability, declared dependencies, input/output schemas, environment, architecture version, health, and the current policy description. A bounded TTL cache is keyed by requirement, registry inputs, environment, and architecture version; cache hits are revalidated, and cache size is capped.
+
+`CompatibilityEngine` returns `COMPATIBLE`, `PARTIAL`, `INCOMPATIBLE`, or `UNKNOWN` with structured checks and reasons. The compatibility result covers capability mapping, schemas, environment, architecture, dependencies, and current tool health. Resource limits and timeouts remain descriptions evaluated by intelligence; enforcement remains with the existing Kernel and SecurityPolicy. The capability and tool graphs expose deterministic dependency order and fail closed on missing dependencies and cycles. Composite capabilities preserve component provenance and remain advisory until the governed evolution pipeline makes any permanent change.
+
+### Selection, health, and fallback
+
+`ToolSelectionEngine` ranks compatible candidates deterministically using compatibility, reliability, health, historical Phase 11 evidence, and risk. Results include all candidates, scores, rejection reasons, policy/approval metadata, compatibility checks, concise rationale, and memory evidence IDs. Safety and current policy dominate reliability: a high-risk tool may be selected as a recommendation, but its `approval_required` result is visible and the Kernel must still receive explicit approval before execution.
+
+Health records preserve success, failure, timeout, last-success, last-failure, average-duration, and recent-failure data. Repeated failures transition a tool through degraded/failed health; explicit disable/deprecate operations make it unavailable without deleting historical records. `FallbackEngine` excludes failed tools, ranks at most a configured number of alternatives, and passes alternatives to the existing FlexibilityEngine for bounded replanning. It never retries indefinitely, executes a registry handler, or changes retry/replan limits.
+
+### Kernel and evidence boundaries
+
+Cognitive plans now persist capability requirements and selection evidence. The Kernel records capability analysis, permission checks, and tool execution lifecycle events, validates planned input schemas before execution, and rejects malformed outputs before they become trusted verification evidence. The actual call still follows the existing `SecurityPolicy`, approval callback, runtime `ToolRegistry`, timeout, checkpoint, observation, and `Verifier` path. Phase 12 has no `execute`, `approve`, `promote`, or governance mutation API.
+
+Experience records include capability selection and candidate evidence, while Evaluation records expose selection count, satisfied requirements, gaps, and selected tools in addition to the existing deterministic performance metrics. Phase 11 memory stores capability/tool context and historical outcomes as evidence. It may influence ranking but cannot override current permissions, approvals, availability, compatibility, verification, governance, or user instructions.
+
+A missing capability is classified as `AVAILABLE`, `UNAVAILABLE`, `PARTIAL`, `INCOMPATIBLE`, `BLOCKED`, or `UNKNOWN`. The layer reports evidence to the existing Cognitive gap detector and Phase 9 EvolutionOrchestrator. A structural classification is routed to the existing Phase 8 MetamorphosisEngine. The capability layer does not generate, approve, sandbox, benchmark, promote, or roll back a proposal.
+
+### Environment, provenance, and security
+
+Runtime context contains only relevant non-secret properties such as operating system, Python runtime, workspace classification, dependency declarations, and policy metadata. Capability and tool records preserve registry version, agent version, architecture/source version, provider, source, source version, actor, and lineage. Old architecture records are not silently considered compatible. Tool metadata containing instructions such as permission overrides remains inert data and is never interpreted as authorization.
+
+The immutable authority chain is:
+
+```text
+CapabilityIntelligence recommendation
+              |
+              v
+Existing governance and SecurityPolicy
+              |
+              v
+Existing approval authority
+              |
+              v
+AgentKernel execution
+              |
+              v
+Existing observation and Verifier
+```
+
+The Phase 12 layer cannot bypass the Kernel, grant permissions, approve risky actions, disable timeouts or resource limits, modify protected components or production, install external code, execute downloaded code, approve evolution/metamorphosis/promotion, turn memory into policy, or create an uncontrolled loop. Production immutability and protected-core enforcement remain the responsibility of the existing governed downstream systems and are independently verified.
+
+### CLI and observability
+
+The CLI exposes rich capability and tool listing, detail, search, capability-gap analysis, tool-selection analysis, capability statistics, and tool-health inspection through `--list-capabilities`, `--show-capability`, `--find-capability`, `--list-tools`, `--show-tool`, `--find-tools`, `--analyze-capability-gap`, `--analyze-tool-selection`, `--capability-stats`, and `--tool-health`. All decisions are structured and inspectable through the existing SQLite event stream, with no hidden chain-of-thought or secret provider data.
+
+> **Capability = what Evo can accomplish. Tool = how it can accomplish it. Selection = which registered method is appropriate. Governance = whether it is allowed. Kernel = how execution actually occurs.**

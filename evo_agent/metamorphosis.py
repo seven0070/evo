@@ -193,11 +193,39 @@ class CapabilityRegistry:
         self.store.save_capability(capability)
         return capability
 
-    def list(self) -> list[CapabilityRecord]:
+    def list(self, limit: int = 100) -> list[CapabilityRecord]:
         records = []
-        for row in self.store.find_capabilities():
+        for row in self.store.find_capabilities(limit=limit):
             records.append(CapabilityRecord(row["capability_id"], row["name"], row["provider_component"], row["version"], json.loads(row["dependencies"]), json.loads(row["permissions_required"]), row["risk_class"], CapabilityStatus(row["status"]), json.loads(row["metadata"]), row["created_at"]))
         return records
+
+    def get(self, capability_id: str) -> CapabilityRecord | None:
+        row = self.store.capability_by_id(capability_id)
+        if not row:
+            return next((item for item in self.list() if item.name == capability_id), None)
+        return CapabilityRecord(row["capability_id"], row["name"], row["provider_component"], row["version"], json.loads(row["dependencies"]), json.loads(row["permissions_required"]), row["risk_class"], CapabilityStatus(row["status"]), json.loads(row["metadata"]), row["created_at"])
+
+    def update(self, capability: CapabilityRecord) -> CapabilityRecord:
+        self.store.save_capability(capability)
+        return capability
+
+    def deprecate(self, capability_id: str) -> CapabilityRecord:
+        capability = self.get(capability_id)
+        if not capability:
+            raise KeyError(capability_id)
+        capability.status = CapabilityStatus.DEPRECATED
+        return self.update(capability)
+
+    def disable(self, capability_id: str) -> CapabilityRecord:
+        capability = self.get(capability_id)
+        if not capability:
+            raise KeyError(capability_id)
+        capability.status = CapabilityStatus.REMOVED
+        return self.update(capability)
+
+    def find(self, query: str, limit: int = 100) -> list[CapabilityRecord]:
+        tokens = set(query.lower().split())
+        return [item for item in self.list(limit=1000) if tokens & set((item.name + " " + item.provider_component + " " + " ".join(item.dependencies)).lower().split())][:limit]
 
 
 class MetamorphosisEngine:
