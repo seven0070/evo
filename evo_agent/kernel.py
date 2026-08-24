@@ -5,13 +5,16 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoints import CheckpointManager
-from .flexibility import FlexibilityContext, FlexibilityEngine, Strategy
+from .evaluation import EvaluationEngine
+from .experience import ExperienceEngine
+from .flexibility import FlexibilityContext, FlexibilityEngine
 from .model_adapter import ModelAdapter
 from .models import Event, EventType, Goal, Plan, PlanStep, TaskOutcome, TaskStatus, ToolCall, utc_now
 from .security import SecurityPolicy
 from .storage import SQLiteStore
 from .tools import ToolRegistry
 from .verifier import Verifier
+from .version import __version__
 
 ApprovalCallback = Callable[[ToolCall, str], bool]
 
@@ -27,6 +30,7 @@ class AgentKernel:
         max_retries: int = 1,
         max_adaptations: int = 1,
         flexibility: FlexibilityEngine | None = None,
+        agent_version: str = __version__,
     ):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
@@ -37,6 +41,10 @@ class AgentKernel:
         self.verifier = Verifier(self.policy)
         self.checkpoints = CheckpointManager(self.workspace, self.store)
         self.flexibility = flexibility or FlexibilityEngine(model, self.tools)
+        self.experience_engine = ExperienceEngine(self.store)
+        self.evaluation_engine = EvaluationEngine()
+        self.agent_version = agent_version
+        self.model_identifier = str(getattr(model, "model", model.__class__.__name__))
         self.approval_callback = approval_callback or (lambda call, reason: False)
         self.max_steps = max_steps
         self.max_retries = max_retries
@@ -63,12 +71,16 @@ class AgentKernel:
                 constraints={"tool_schemas": self.tools.schemas(), "max_steps": self.max_steps, "max_retries": self.max_retries},
             )
             context.assessment = self.flexibility.assess(goal, context)
-            record(EventType.PLAN_CREATED, {"checkpoint": str(checkpoint), "assessment": context.assessment.to_dict(), "memories": memories})
+            historical = self.experience_engine.retrieve(goal=goal.text, limit=5)
+            context.constraints["historical_experiences"] = [item.to_dict() for item in historical]
+            if historical:
+                record(EventType.EXPERIENCE_RETRIEVED, {"count": len(historical), "experience_ids": [item.experience_id for item in historical]})
+            record(EventType.PLAN_CREATED, {"checkpoint": str(checkpoint), "assessment": context.assessment.to_dict(), "memories": memories, "historical_experiences": context.constraints["historical_experiences"]})
             recommendations = self.flexibility.select_tools(goal)
             for recommendation in recommendations:
                 record(EventType.TOOL_RECOMMENDED, recommendation.to_dict())
             strategy = self.flexibility.select_strategy(context.assessment, context)
-            record(EventType.STRATEGY_SELECTED, {"strategy": strategy.describe(), "assessment": context.assessment.to_dict()})
+            record(EventType.STRATEGY_SELECTED, {"strategy": strategy.describe(), "assessment": context.assessment.to_dict(), "historical_experience_count": len(historical)})
             plan = self.flexibility.plan(strategy, context)
             context.current_plan = plan
             record(EventType.PLAN_CREATED, {"strategy": strategy.name, "rationale": plan.rationale, "steps": [step.__dict__ for step in plan.steps]})
@@ -76,7 +88,7 @@ class AgentKernel:
             message = f"Planning failed: {exc}"
             self.store.update_task(goal.task_id, TaskStatus.FAILED, message)
             record(EventType.TASK_COMPLETED, {"status": TaskStatus.FAILED.value, "error": message})
-            return TaskOutcome(goal.task_id, TaskStatus.FAILED, message, 0, events, message)
+            return self._finalize(TaskOutcome(goal.task_id, TaskStatus.FAILED, message, 0, events, message), record)
 
         self.store.update_task(goal.task_id, TaskStatus.RUNNING)
         queue = list(plan.steps)
@@ -101,7 +113,7 @@ class AgentKernel:
                         record(EventType.APPROVAL_DENIED, {"tool": call.tool_name, "reason": reason})
                         message = f"Task blocked: approval denied for {call.tool_name}"
                         self.store.update_task(goal.task_id, TaskStatus.BLOCKED, message)
-                        return TaskOutcome(goal.task_id, TaskStatus.BLOCKED, message, completed, events, message)
+                        return self._finalize(TaskOutcome(goal.task_id, TaskStatus.BLOCKED, message, completed, events, message), record)
                     call.approved = True
                     record(EventType.APPROVAL_GRANTED, {"tool": call.tool_name})
 
@@ -150,16 +162,30 @@ class AgentKernel:
                     message = f"Task failed at step {executed_steps}: {verification.summary}"
                     self.store.update_task(goal.task_id, TaskStatus.FAILED, message)
                     record(EventType.TASK_COMPLETED, {"status": TaskStatus.FAILED.value, "error": message})
-                    return TaskOutcome(goal.task_id, TaskStatus.FAILED, message, completed, events, message)
+                    return self._finalize(TaskOutcome(goal.task_id, TaskStatus.FAILED, message, completed, events, message), record)
             except Exception as exc:
                 message = f"Execution failed at step {executed_steps}: {exc}"
                 record(EventType.TOOL_FAILED, {"step": executed_steps, "error": str(exc)})
                 self.store.update_task(goal.task_id, TaskStatus.FAILED, message)
                 record(EventType.TASK_COMPLETED, {"status": TaskStatus.FAILED.value, "error": message})
-                return TaskOutcome(goal.task_id, TaskStatus.FAILED, message, completed, events, message)
+                return self._finalize(TaskOutcome(goal.task_id, TaskStatus.FAILED, message, completed, events, message), record)
 
         summary = f"Completed {completed} step(s) after {adaptations} adaptation(s)"
         self.store.update_task(goal.task_id, TaskStatus.SUCCEEDED, summary)
         self.store.add_memory("experience", f"Goal: {goal.text}; outcome: {summary}; strategy: {strategy.name}", utc_now())
         record(EventType.TASK_COMPLETED, {"status": TaskStatus.SUCCEEDED.value, "summary": summary, "strategy": strategy.name, "adaptations": adaptations})
-        return TaskOutcome(goal.task_id, TaskStatus.SUCCEEDED, summary, completed, events)
+        return self._finalize(TaskOutcome(goal.task_id, TaskStatus.SUCCEEDED, summary, completed, events), record)
+
+    def _finalize(self, outcome: TaskOutcome, record: Callable[[EventType, dict[str, Any]], None]) -> TaskOutcome:
+        try:
+            experience = self.experience_engine.create(outcome, self.agent_version, self.model_identifier)
+            self.experience_engine.persist(experience)
+            record(EventType.EXPERIENCE_CREATED, {"experience_id": experience.experience_id, "outcome": experience.final_outcome.value, "agent_version": experience.agent_version})
+            record(EventType.EVALUATION_STARTED, {"experience_id": experience.experience_id})
+            evaluation = self.evaluation_engine.evaluate(experience)
+            self.store.save_evaluation(evaluation)
+            self.store.update_experience_evaluation(experience.experience_id, evaluation.evaluation_id, evaluation.to_dict())
+            record(EventType.EVALUATION_COMPLETED, {"evaluation_id": evaluation.evaluation_id, "experience_id": experience.experience_id, "success_score": evaluation.success_score, "evaluator_version": evaluation.evaluator_version})
+        except Exception as exc:
+            record(EventType.EVALUATION_FAILED, {"task_id": outcome.task_id, "error": str(exc)})
+        return outcome

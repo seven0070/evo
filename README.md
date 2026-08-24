@@ -81,6 +81,18 @@ When an execution fails, the engine can diagnose the failure context, switch to 
 
 > **Flexibility = runtime adaptation. Evolution = long-term controlled improvement.**
 
+## Experience and Evaluation Foundation
+
+The repository includes a deterministic Experience Engine and Evaluation Engine. After an observable task outcome exists, the Experience Engine extracts the goal, task type, complexity, strategy, tools, execution events, observations, failures, recovery attempts, strategy changes, verification result, approvals, outcome, duration, agent version, and model identifier into one structured record. The record is stored in the existing SQLite database; no second database is introduced.
+
+The Evaluation Engine is separate from the Verifier. The **Verifier** answers whether the requested result actually happened. The **Evaluator** measures how well the agent performed using an explainable `evaluation-v1` score: task outcome contributes 40 points, verification contributes 30, reliability contributes 20, and efficiency contributes 10. Failed outcomes receive no efficiency credit. Recovery, replanning, retries, strategy changes, approval interventions, and failed tools are recorded as explicit metrics.
+
+Experiences can be retrieved by task type, outcome, strategy, tool, failure text, agent version, or recency. Retrieved historical failures may influence runtime strategy selection, but they cannot override workspace restrictions, shell allowlists, approvals, timeouts, retry limits, checkpoints, rollback, or verification.
+
+The CLI supports `--list-experiences`, `--show-experience EXPERIENCE_ID`, and `--show-evaluation EVALUATION_ID`. Experience and evaluation records are evidence for a future Evolver; they do not modify the agent or create permanent capabilities.
+
+> **Verifier = did it actually succeed? Evaluator = how well did it perform?**
+
 ## Next milestone: controlled evolution
 
-Only after the MVP has broader end-to-end coverage should the project add an experience recorder, benchmark datasets, an evaluator, an evolution proposal format, isolated candidate workspaces, promotion gates, version registry, and rollback governance. Every candidate capability should be reproducible, benchmarked against a baseline, explicitly approved for promotion, and reversible.
+The next milestone is controlled evolution: benchmark datasets, an evolution proposal format, isolated candidate workspaces, promotion gates, version registry, and rollback governance. Every candidate capability should be reproducible, benchmarked against the current baseline, explicitly approved for promotion, and reversible.

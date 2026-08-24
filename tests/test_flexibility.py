@@ -57,6 +57,14 @@ def test_strategy_selection_direct_plan_first_recovery_and_approval(tmp_path: Pa
     assert engine.select_strategy(failed_context.assessment, failed_context).name == "recovery"
 
 
+def test_historical_failure_influences_strategy_without_bypassing_policy(tmp_path: Path):
+    engine = make_engine(tmp_path)
+    context = FlexibilityContext(Goal("list files"), constraints={"historical_experiences": [{"final_outcome": "failure"}]})
+    assessment = engine.assess(context.goal, context)
+    context.assessment = assessment
+    assert engine.select_strategy(assessment, context).name == "plan-first"
+
+
 def test_tool_recommendation_uses_registry(tmp_path: Path):
     engine = make_engine(tmp_path)
     recommendations = engine.select_tools(Goal("list the files in the workspace"))

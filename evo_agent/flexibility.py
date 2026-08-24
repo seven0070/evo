@@ -206,6 +206,10 @@ class FlexibilityEngine:
             return self.strategies["recovery"]
         if assessment.risk in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
             return self.strategies["approval-aware"]
+        historical = context.constraints.get("historical_experiences", [])
+        prior_failures = [item for item in historical if item.get("final_outcome") in {"failure", "blocked", "timeout", "aborted"}]
+        if prior_failures and assessment.expected_steps <= 1:
+            return self.strategies["plan-first"]
         if self.strategies["direct"].applicable(assessment, context):
             return self.strategies["direct"]
         return self.strategies["plan-first"]

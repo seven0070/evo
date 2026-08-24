@@ -33,6 +33,15 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class OutcomeType(str, Enum):
+    SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILURE = "failure"
+    ABORTED = "aborted"
+    TIMEOUT = "timeout"
+    BLOCKED = "blocked"
+
+
 class EventType(str, Enum):
     TASK_CREATED = "task_created"
     PLAN_CREATED = "plan_created"
@@ -52,6 +61,11 @@ class EventType(str, Enum):
     STRATEGY_CHANGED = "strategy_changed"
     REPLAN_TRIGGERED = "replan_triggered"
     RECOVERY_ATTEMPTED = "recovery_attempted"
+    EXPERIENCE_CREATED = "experience_created"
+    EXPERIENCE_RETRIEVED = "experience_retrieved"
+    EVALUATION_STARTED = "evaluation_started"
+    EVALUATION_COMPLETED = "evaluation_completed"
+    EVALUATION_FAILED = "evaluation_failed"
 
 
 @dataclass

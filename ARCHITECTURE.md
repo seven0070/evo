@@ -63,6 +63,29 @@ Goal
 
 The Flexibility Engine cannot modify source code, mutate the repository, create permanent capabilities, promote itself, or declare task success. Those responsibilities belong to a future controlled Evolver and must remain isolated from runtime adaptation.
 
+## Experience and Evaluation Foundation
+
+After the kernel has an observable outcome, `ExperienceEngine` extracts a structured record from the existing task events. It stores the original goal, task type, complexity, strategy, tools, execution steps, observations, failures, recovery attempts, strategy changes, verification result, outcome, approvals, duration, agent version, and model identifier. The record is persisted in the existing SQLite database.
+
+`EvaluationEngine` is separate from `Verifier`. The verifier remains authoritative about whether the requested result happened. The evaluator measures performance using deterministic `evaluation-v1` scoring and records explicit success, verification, efficiency, recovery, reliability, retry, replan, strategy-change, and human-intervention metrics. Re-evaluating the same experience with the same evaluator version produces the same result.
+
+Experiences can be retrieved using structured SQLite filters. The Flexibility Engine may receive relevant historical experiences as context and use prior failures to choose a more deliberate runtime strategy. Historical evidence never changes permission policy or bypasses execution controls.
+
+```text
+Execute -> Observe -> Verify -> Outcome
+                              |
+                              v
+                        Experience
+                              |
+                              v
+                         Evaluator
+                              |
+                              v
+                    Performance Evidence
+```
+
+> **Verifier: did it actually succeed? Evaluator: how well did it perform?**
+
 ## Deferred evolution system
 
 The next milestone should not edit the running kernel in place. It should create candidate versions in isolated directories, run reproducible benchmark tasks, compare candidate metrics with the active baseline, require explicit promotion approval, register the new version, and retain a rollback target. Candidate code and configuration must never receive broader permissions than the active agent.
