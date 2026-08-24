@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 
 from .experience import ExperienceEngine
+from .evolver import Evolver
 from .kernel import AgentKernel
 from .model_adapter import OpenAICompatibleAdapter, RuleBasedAdapter
-from .models import ToolCall
+from .models import ProposalStatus, ToolCall
 from .storage import SQLiteStore
 
 
@@ -25,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outcome", help="Filter experiences by outcome")
     parser.add_argument("--strategy", help="Filter experiences by strategy")
     parser.add_argument("--tool", help="Filter experiences by tool")
+    parser.add_argument("--analyze-evolution", action="store_true", help="Analyze historical evidence and persist proposals")
+    parser.add_argument("--list-proposals", action="store_true", help="List evolution proposals")
+    parser.add_argument("--show-proposal", metavar="PROPOSAL_ID", help="Show one evolution proposal")
+    parser.add_argument("--approve-proposal", metavar="PROPOSAL_ID", help="Record approval for a proposal for a future sandbox phase")
+    parser.add_argument("--reject-proposal", metavar="PROPOSAL_ID", help="Record rejection for a proposal")
+    parser.add_argument("--proposal-reason", default="", help="Reason recorded with proposal approval or rejection")
     return parser
 
 
@@ -38,10 +45,11 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal):
         return False
     store = SQLiteStore(Path(args.workspace).expanduser().resolve() / ".evo" / "agent.sqlite3")
     experiences = ExperienceEngine(store)
+    evolver = Evolver(store, experiences)
     if args.list_experiences:
         records = [item.to_dict() for item in experiences.retrieve(task_type=args.task_type, outcome=args.outcome, strategy=args.strategy, tool=args.tool, limit=20)]
         print_json(records)
@@ -51,6 +59,17 @@ def inspect_command(args: argparse.Namespace) -> bool:
     elif args.show_evaluation:
         record = store.evaluation_by_id(args.show_evaluation)
         print_json(record or {"error": "evaluation not found", "evaluation_id": args.show_evaluation})
+    elif args.analyze_evolution:
+        print_json([proposal.to_dict() for proposal in evolver.analyze_and_persist()])
+    elif args.list_proposals:
+        print_json([proposal.to_dict() for proposal in evolver.list_proposals(limit=50)])
+    elif args.show_proposal:
+        proposal = evolver.get_proposal(args.show_proposal)
+        print_json(proposal.to_dict() if proposal else {"error": "proposal not found", "proposal_id": args.show_proposal})
+    elif args.approve_proposal:
+        print_json(evolver.approve(args.approve_proposal, args.proposal_reason).to_dict())
+    elif args.reject_proposal:
+        print_json(evolver.reject(args.reject_proposal, args.proposal_reason).to_dict())
     return True
 
 

@@ -86,6 +86,32 @@ Execute -> Observe -> Verify -> Outcome
 
 > **Verifier: did it actually succeed? Evaluator: how well did it perform?**
 
+## Controlled Evolver
+
+The Controlled Evolver consumes accumulated `Experience` and `EvaluationResult` records and stops at a human-reviewable `EvolutionProposal`. Its pipeline is `analyze -> identify weakness/opportunity -> generate proposal -> validate proposal -> persist -> await human review`. It does not edit source code, execute generated code, mutate the production workspace, change permissions or governance, deploy, promote, merge branches, or perform Metamorphosis.
+
+A proposal records source experience and evaluation IDs, source agent version, target component, observed problem, evidence, proposed change, expected benefit, risks, affected capabilities, affected permissions, deterministic confidence, evaluation method, rollback plan, risk classification, status, approval decision, and Evolver version. Valid proposals move to `PENDING_REVIEW`; human review may record `APPROVED` for a future isolated sandbox or `REJECTED`. Approval does not apply the proposal.
+
+The first analysis rules detect repeated failures, low evaluation scores, inefficient successful executions, successful alternative strategies, and repeated tool failures. Confidence is calculated from evidence count, outcome consistency, and evidence diversity. Protected targets include permissions, security, approval, sandbox, rollback, verification, governance, kill-switch, and trust-boundary components; such proposals are rejected and never converted into executable modifications.
+
+```text
+Experience + Evaluation
+          |
+          v
+      Controlled Evolver
+          |
+          v
+  Evidence-backed Proposal
+          |
+          v
+     Human Approval
+          |
+          v
+  STOP — no modification
+```
+
+> **No proposal becomes an agent modification without passing the future controlled evolution pipeline.**
+
 ## Deferred evolution system
 
-The next milestone should not edit the running kernel in place. It should create candidate versions in isolated directories, run reproducible benchmark tasks, compare candidate metrics with the active baseline, require explicit promotion approval, register the new version, and retain a rollback target. Candidate code and configuration must never receive broader permissions than the active agent.
+The future sandbox phase should create candidate versions in isolated directories, run reproducible benchmark tasks, compare candidate metrics with the active baseline, require explicit promotion approval, register the new version, and retain a rollback target. Candidate code and configuration must never receive broader permissions than the active agent.

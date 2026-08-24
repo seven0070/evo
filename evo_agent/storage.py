@@ -75,6 +75,21 @@ class SQLiteStore:
                     payload TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS evolution_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    target_component TEXT NOT NULL,
+                    risk TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    agent_version TEXT NOT NULL,
+                    evolver_version TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    reviewed_at TEXT,
+                    approval_decision TEXT,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_proposals_status ON evolution_proposals(status);
+                CREATE INDEX IF NOT EXISTS idx_proposals_target ON evolution_proposals(target_component);
                 CREATE INDEX IF NOT EXISTS idx_experiences_task_type ON experiences(task_type);
                 CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome);
                 CREATE INDEX IF NOT EXISTS idx_experiences_strategy ON experiences(strategy);
@@ -171,6 +186,46 @@ class SQLiteStore:
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+
+    def save_proposal(self, proposal: Any) -> None:
+        payload = proposal.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO evolution_proposals(
+                    proposal_id, target_component, risk, status, agent_version,
+                    evolver_version, confidence, created_at, reviewed_at,
+                    approval_decision, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    proposal.proposal_id,
+                    proposal.target_component,
+                    proposal.risk.value,
+                    proposal.status.value,
+                    proposal.agent_version,
+                    proposal.evolver_version,
+                    proposal.confidence,
+                    proposal.created_at,
+                    proposal.reviewed_at,
+                    proposal.approval_decision,
+                    json.dumps(payload),
+                ),
+            )
+
+    def proposal_by_id(self, proposal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM evolution_proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_proposals(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        if status:
+            query = "SELECT * FROM evolution_proposals WHERE status = ? ORDER BY created_at DESC LIMIT ?"
+            values = (status, limit)
+        else:
+            query = "SELECT * FROM evolution_proposals ORDER BY created_at DESC LIMIT ?"
+            values = (limit,)
+        with self._connect() as db:
+            rows = db.execute(query, values).fetchall()
+        return [dict(row) for row in rows]
 
     def experience_by_id(self, experience_id: str) -> dict[str, Any] | None:
         with self._connect() as db:

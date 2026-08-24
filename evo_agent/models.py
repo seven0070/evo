@@ -42,6 +42,20 @@ class OutcomeType(str, Enum):
     BLOCKED = "blocked"
 
 
+class ProposalStatus(str, Enum):
+    GENERATED = "generated"
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ProposalRisk(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    PROTECTED = "protected"
+
+
 class EventType(str, Enum):
     TASK_CREATED = "task_created"
     PLAN_CREATED = "plan_created"
@@ -66,6 +80,13 @@ class EventType(str, Enum):
     EVALUATION_STARTED = "evaluation_started"
     EVALUATION_COMPLETED = "evaluation_completed"
     EVALUATION_FAILED = "evaluation_failed"
+    EVOLUTION_ANALYSIS_STARTED = "evolution_analysis_started"
+    WEAKNESS_DETECTED = "weakness_detected"
+    EVOLUTION_OPPORTUNITY_DETECTED = "evolution_opportunity_detected"
+    PROPOSAL_GENERATED = "proposal_generated"
+    PROPOSAL_VALIDATED = "proposal_validated"
+    PROPOSAL_REJECTED = "proposal_rejected"
+    PROPOSAL_APPROVED = "proposal_approved"
 
 
 @dataclass

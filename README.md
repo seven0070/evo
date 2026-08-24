@@ -63,7 +63,8 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 | `storage.py` | SQLite tasks, events, memories, and checkpoint metadata |
 | `checkpoints.py` | Snapshot and rollback operations |
 | `verifier.py` | Deterministic postcondition checks |
-| `cli.py` | Local command-line entry point |
+| `cli.py` | Local command-line entry point and proposal/experience inspection |
+| `evolver.py` | Evidence analysis, proposal generation, validation, persistence, and recorded review |
 
 ## Verification
 
@@ -71,7 +72,7 @@ The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint
 python3 -m pytest -q
 ```
 
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, and Phase 1 regression behavior.
+The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, and Phase 1–3 regression behavior.
 
 ## Flexibility Engine
 
@@ -93,6 +94,23 @@ The CLI supports `--list-experiences`, `--show-experience EXPERIENCE_ID`, and `-
 
 > **Verifier = did it actually succeed? Evaluator = how well did it perform?**
 
-## Next milestone: controlled evolution
+## Controlled Evolver
 
-The next milestone is controlled evolution: benchmark datasets, an evolution proposal format, isolated candidate workspaces, promotion gates, version registry, and rollback governance. Every candidate capability should be reproducible, benchmarked against the current baseline, explicitly approved for promotion, and reversible.
+The repository now includes a proposal-only Controlled Evolver. It analyzes actual historical experiences and evaluations to detect repeated failures, low-performing strategies, inefficient execution, successful alternatives, and recurring tool problems. It generates evidence-backed, risk-classified `EvolutionProposal` records with source IDs, observed problems, bounded proposed changes, expected benefits, risks, measurable evaluation methods, and rollback plans.
+
+The proposal lifecycle is `GENERATED -> PENDING_REVIEW -> APPROVED or REJECTED`. Approval only authorizes a proposal to proceed to a future isolated sandbox phase; it does not apply any change. Protected targets include permissions, security, approval gates, sandbox isolation, rollback, verification, governance, kill switches, and trust boundaries. The Evolver never executes generated code, modifies production files, edits its own source, changes permanent behavior, deploys, promotes, or merges branches.
+
+Proposal inspection and recorded review are available through the CLI:
+
+```bash
+evo --list-proposals --workspace ./workspace
+evo --show-proposal PROPOSAL_ID --workspace ./workspace
+evo --approve-proposal PROPOSAL_ID --proposal-reason "Authorize future sandbox evaluation" --workspace ./workspace
+evo --reject-proposal PROPOSAL_ID --proposal-reason "Insufficient evidence" --workspace ./workspace
+```
+
+> **No proposal becomes an agent modification without passing the future controlled evolution pipeline.**
+
+## Next milestone: isolated sandbox evaluation
+
+The next milestone is an isolated sandbox that can evaluate an approved proposal without touching the production kernel or workspace. Later phases may add reproducible benchmarks, promotion gates, version registration, and rollback governance. Every candidate capability must remain permission-constrained, evidence-based, explicitly approved, and reversible.
