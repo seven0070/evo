@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evo-agent"
+version = "0.1.0"
+description = "A local-first, permissioned, provider-neutral AI agent kernel."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+llm = ["openai>=1.50.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+evo = "evo_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["evo_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
