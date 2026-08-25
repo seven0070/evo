@@ -35,6 +35,12 @@ class Experience:
     evaluation_id: str | None = None
     evaluation_result: dict[str, Any] | None = None
     capability_selection: list[dict[str, Any]] = field(default_factory=list)
+    environment_id: str = ""
+    environment_version: str = ""
+    architecture_version: str = ""
+    relevant_environment_hash: str = ""
+    tool_environment: dict[str, Any] = field(default_factory=dict)
+    resource_conditions: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

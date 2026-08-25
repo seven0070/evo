@@ -632,6 +632,12 @@ class CompatibilityEngine:
         checks["environment"] = self._environment_compatible(tool.environment_requirements, environment)
         if not checks["environment"]:
             reasons.append("tool environment requirements are not satisfied")
+        network = environment.get("network_state", {}) if isinstance(environment, dict) else {}
+        if "network" in tool.permissions and network.get("allowed") is False:
+            checks["network_policy"] = False
+            reasons.append("current environment network policy does not permit this tool")
+        else:
+            checks["network_policy"] = True
         checks["version"] = not (tool.architecture_version and architecture_version and tool.architecture_version != architecture_version)
         if not checks["version"]:
             reasons.append("tool architecture version is stale")
@@ -994,9 +1000,10 @@ class CapabilityIntelligence:
     def _canonical_name(name: str) -> str:
         return {"filesystem_read": "filesystem", "workspace_read": "filesystem", "workspace_write": "filesystem", "shell": "shell_execution", "memory": "memory_retrieval", "multimedia_generation": "media"}.get(name, name)
 
-    def build_context(self, goal: str, task: Any | None = None, requirements: list[CapabilityRequirement] | None = None, permissions: dict[str, Any] | None = None, approvals: dict[str, Any] | None = None, resource_limits: dict[str, Any] | None = None) -> CapabilityContext:
-        environment = {"os": platform.system(), "runtime": platform.python_version(), "workspace": str(self.workspace) if self.workspace else "local", "dependencies": []}
-        return CapabilityContext(goal, str(getattr(task, "description", "") or ""), requirements or self.requirements_for(goal, task), environment, self.capabilities.list_capabilities(), self.tools.list_tools(), permissions or {}, approvals or {}, [], {}, resource_limits or {})
+    def build_context(self, goal: str, task: Any | None = None, requirements: list[CapabilityRequirement] | None = None, permissions: dict[str, Any] | None = None, approvals: dict[str, Any] | None = None, resource_limits: dict[str, Any] | None = None, environment: Any | None = None) -> CapabilityContext:
+        current = environment.to_dict() if hasattr(environment, "to_dict") else dict(environment or {})
+        environment_data = {"os": current.get("operating_system", current.get("os", platform.system())), "runtime": current.get("runtime", platform.python_version()), "workspace": current.get("workspace", str(self.workspace) if self.workspace else "local"), "dependencies": current.get("dependencies", []), "network_state": current.get("network_state", {}), "resource_state": current.get("resource_state", {}), "environment_id": current.get("environment_id", ""), "environment_version": current.get("environment_version", ""), "constraints": current.get("constraints", []), "permissions": current.get("permissions", {})}
+        return CapabilityContext(goal, str(getattr(task, "description", "") or ""), requirements or self.requirements_for(goal, task), environment_data, self.capabilities.list_capabilities(), self.tools.list_tools(), permissions or {}, approvals or {}, [], {}, resource_limits or {})
 
     def analyze_requirement(self, requirement: CapabilityRequirement, context: CapabilityContext, architecture_version: str = "") -> CapabilityAnalysis:
         capability = self.capabilities.get_capability(requirement.capability_id)

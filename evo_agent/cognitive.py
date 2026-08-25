@@ -14,6 +14,7 @@ from .capability import CapabilityAnalysis, CapabilityAvailability, CapabilityIn
 from .flexibility import FlexibilityContext
 from .kernel import AgentKernel
 from .memory import CognitiveMemoryContext, MemoryManager, MemoryType, RetrievalQuery
+from .world import WorldModelEngine, EnvironmentObserver, WorldRefreshEngine, PlanValidationStatus
 from .models import Event, EventType, Goal, OutcomeType, PlanStep, RiskLevel, TaskOutcome, TaskStatus, ToolResult, new_id, utc_now
 from .orchestrator import EvolutionOpportunity, EvolutionOrchestrator, OrchestrationPath
 from .storage import SQLiteStore
@@ -253,6 +254,11 @@ class CognitivePlan:
     memory_warnings: list[str] = field(default_factory=list)
     capability_requirements: list[dict[str, Any]] = field(default_factory=list)
     capability_selection: list[dict[str, Any]] = field(default_factory=list)
+    environment_id: str = ""
+    environment_version: str = ""
+    environment_hash: str = ""
+    environment_context: dict[str, Any] = field(default_factory=dict)
+    environment_observation_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -826,6 +832,7 @@ class CognitiveOrchestrator:
         self.capability_intelligence: CapabilityIntelligence | None = None
         self._capability_analyses: list[CapabilityAnalysis] = []
         self._memory_context: CognitiveMemoryContext | None = None
+        self.world_intelligence: WorldModelEngine | None = None
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)
@@ -866,11 +873,21 @@ class CognitiveOrchestrator:
         if graph_errors:
             return self._safe_failure(goal, intent, state, "; ".join(graph_errors), graph=graph)
         self._memory_context = self.memory.cognitive_context(RetrievalQuery(goal=goal.normalized_goal, max_memories=self.policy["max_context_size"] // 1200, max_memory_bytes=self.policy["max_context_size"], architecture_version=self._architecture_version()))
+        world = self._get_world_intelligence()
+        world_model = world.observe(goal.normalized_goal, task=graph.nodes[0] if graph.nodes else None)
+        environment_snapshot = world.create_snapshot(world_model)
+        world.save_observations(world_model)
+        environment_context = world.context_for_task(goal.normalized_goal, task=graph.nodes[0] if graph.nodes else None)
         plans = self.planner.generate(goal, graph, self._architecture_version(), self._memory_context)
         plan = self.reasoner.select_plan(plans, self._available_tools())
         self._capability_analyses = self._analyze_capabilities(goal, graph)
         plan.capability_requirements = [item.requirement.to_dict() for item in self._capability_analyses]
         plan.capability_selection = [item.selection.to_dict() for item in self._capability_analyses]
+        plan.environment_id = world_model.environment.environment_id
+        plan.environment_version = world_model.environment.environment_version
+        plan.environment_hash = environment_context.context_hash
+        plan.environment_context = environment_context.to_dict()
+        plan.environment_observation_ids = [item.observation_id for item in world_model.observations]
         selected = [item.selection.selected_tool.name for item in self._capability_analyses if item.selection.selected_tool]
         if selected:
             plan.rationale += f" Capability intelligence selected {len(selected)} compatible tool method(s) through the existing authority chain."
@@ -894,6 +911,15 @@ class CognitiveOrchestrator:
                 continue
             gaps.append(CapabilityGap(goal.goal_id, "capability-" + analysis.requirement.requirement_id, family, assessment_map.get(analysis.availability, CapabilityAssessment.UNKNOWN), "; ".join(analysis.reasons), analysis.structural))
             existing_capabilities.add(family)
+        plan_validation = world.validate_plan(plan, world_model)
+        decisions.append({"goal_id": goal.goal_id, "decision_type": "environment_plan_validation", "decision": plan_validation.status.value, "reason": "; ".join(plan_validation.reasons), "created_at": utc_now(), "payload": plan_validation.to_dict()})
+        if plan_validation.status in {PlanValidationStatus.INVALID, PlanValidationStatus.STALE} and not gaps:
+            state.state = CognitiveState.BLOCKED
+            state.last_error = "; ".join(plan_validation.reasons)
+            goal.status = state.state
+            self._persist(goal, intent, graph, [plan], state, [], decisions)
+            self.memory.end_task()
+            return CognitiveResult(goal, intent, plan, graph, state, CognitiveOutcome.BLOCKED, state.last_error, memory_context=self._memory_context)
         if gaps:
             for gap in gaps:
                 gap.opportunity_id = self._route_capability_gap(goal, gap)
@@ -956,6 +982,16 @@ class CognitiveOrchestrator:
             state.updated_at = utc_now()
             self._persist(goal, intent, graph, [plan], state, observations, [], None)
             return CognitiveResult(goal, intent, plan, graph, state, CognitiveOutcome.INCONCLUSIVE, state.last_error, observations=observations, failures=failures)
+        if plan:
+            world = self._get_world_intelligence()
+            current_world = world.observe(goal.normalized_goal)
+            validation = world.validate_plan(plan, current_world)
+            if validation.status is not PlanValidationStatus.VALID:
+                state.state = CognitiveState.FAILED
+                state.last_error = "; ".join(validation.reasons)
+                state.updated_at = utc_now()
+                self._persist(goal, intent, graph, [plan], state, observations, [{"goal_id": goal_id, "decision_type": "environment_plan_validation", "decision": validation.status.value, "reason": state.last_error, "created_at": utc_now(), "payload": validation.to_dict()}], None)
+                return CognitiveResult(goal, intent, plan, graph, state, CognitiveOutcome.INCONCLUSIVE, state.last_error, observations=observations, failures=failures)
         return self._execute(goal, intent, graph, plan, state, [], time.monotonic()) if plan else self._safe_failure(goal, intent, state, "Persisted plan is unavailable.", graph=graph)
 
     def _execute(self, goal: CognitiveGoal, intent: IntentModel, graph: TaskGraph, plan: CognitivePlan, state: CognitiveStateRecord, decisions: list[dict[str, Any]], started: float) -> CognitiveResult:
@@ -986,6 +1022,26 @@ class CognitiveOrchestrator:
             observation = self._observe(node, outcome)
             observations.append(observation)
             self.context.add_observation(observation)
+            world = self._get_world_intelligence()
+            current_world = world.update_after_action(goal=goal.normalized_goal)
+            environment_validation = world.validate_plan(plan, current_world)
+            if environment_validation.status is not PlanValidationStatus.VALID:
+                decisions.append({"goal_id": goal.goal_id, "decision_type": "environment_change", "task_id": node.task_id, "decision": environment_validation.status.value, "reason": "; ".join(environment_validation.reasons), "created_at": utc_now(), "payload": environment_validation.to_dict()})
+                if environment_validation.status is PlanValidationStatus.INVALID or state.replan_count >= self.policy["max_replans"]:
+                    state.state = CognitiveState.FAILED
+                    state.last_error = "; ".join(environment_validation.reasons)
+                    return self._finish(goal, intent, graph, plan, state, CognitiveOutcome.INCONCLUSIVE, state.last_error, observations, failures, decisions)
+                flex_outcome = TaskOutcome(new_id("environment"), TaskStatus.FAILED, "Environment changed: " + "; ".join(environment_validation.reasons), 0, [], "environment state changed")
+                flex_decision = self._ask_flexibility(goal, node, flex_outcome, state)
+                decisions.append({"goal_id": goal.goal_id, "decision_type": "environment_flexibility", "task_id": node.task_id, "decision": getattr(flex_decision, "action", "replan"), "reason": getattr(flex_decision, "reason", "Existing FlexibilityEngine considered the current environment change."), "created_at": utc_now()})
+                state.replan_count += 1
+                context = world.context_for_task(goal.normalized_goal, task=node)
+                plan.environment_id = current_world.environment.environment_id
+                plan.environment_version = current_world.environment.environment_version
+                plan.environment_hash = context.context_hash
+                plan.environment_context = context.to_dict()
+                plan.environment_observation_ids = [item.observation_id for item in current_world.observations]
+                self._persist(goal, intent, graph, [plan], state, observations, decisions)
             kernel_verified = any(event.event_type is EventType.VERIFICATION and bool(event.payload.get("success")) for event in outcome.events)
             if outcome.status is TaskStatus.SUCCEEDED and kernel_verified:
                 node.status = SubtaskStatus.SUCCEEDED
@@ -1149,11 +1205,25 @@ class CognitiveOrchestrator:
         task_outcome = TaskOutcome(goal.goal_id, status, report.summary, report.completed_count, events, None if report.success else report.summary)
         experience = self.experiences.create(task_outcome, __version__, "cognitive")
         experience.capability_selection = [analysis.to_dict() for analysis in self._capability_analyses]
+        try:
+            world_model = self._get_world_intelligence().current
+            if world_model:
+                experience.environment_id = world_model.environment.environment_id
+                experience.environment_version = world_model.environment.environment_version
+                experience.architecture_version = self._architecture_version()
+                experience.relevant_environment_hash = self.context.current_plan.environment_hash if self.context.current_plan else ""
+                experience.tool_environment = {item.get("name", ""): {"version": item.get("version"), "provider": item.get("provider"), "availability": item.get("availability"), "health": item.get("health", {}).get("status")} for item in world_model.environment.available_tools[:50]}
+                experience.resource_conditions = dict(world_model.environment.resource_state)
+        except Exception:
+            pass
         self.experiences.persist(experience)
         evaluation = self.evolution.evaluations.evaluate(experience)
         try:
             self.memory.capture_experience(experience)
             self.memory.capture_evaluation(evaluation)
+            world_model = self._get_world_intelligence().current
+            if world_model:
+                self.memory.capture_environment(world_model.environment, task_id=goal.goal_id, goal=goal.original_text, outcome=outcome.value)
             for observation in observations:
                 self.memory.capture_observation(observation)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -1179,6 +1249,13 @@ class CognitiveOrchestrator:
                     self.store.save_metamorphosis_proposal(proposal)
         return opportunity.opportunity_id
 
+    def _get_world_intelligence(self) -> WorldModelEngine:
+        if self.world_intelligence is None:
+            kernel = self._get_kernel()
+            observer = EnvironmentObserver(self.workspace, self.store, self._get_capability_intelligence(), getattr(kernel, "policy", None), __version__, self._architecture_version())
+            self.world_intelligence = WorldModelEngine(self.store, observer, WorldRefreshEngine(observer, self.store))
+        return self.world_intelligence
+
     def _get_capability_intelligence(self) -> CapabilityIntelligence:
         kernel = self._get_kernel()
         if self.capability_intelligence is None or self.capability_intelligence.tools.runtime_registry is not getattr(kernel, "tools", None):
@@ -1187,6 +1264,8 @@ class CognitiveOrchestrator:
 
     def _analyze_capabilities(self, goal: CognitiveGoal, graph: TaskGraph) -> list[CapabilityAnalysis]:
         engine = self._get_capability_intelligence()
+        world = self._get_world_intelligence()
+        environment_context = world.context_for_task(goal.normalized_goal, task=graph.nodes[0] if graph.nodes else None)
         analyses: list[CapabilityAnalysis] = []
         seen: set[str] = set()
         for node in graph.nodes:
@@ -1194,7 +1273,7 @@ class CognitiveOrchestrator:
                 if requirement.capability_id in seen:
                     continue
                 seen.add(requirement.capability_id)
-                analyses.append(engine.analyze_requirement(requirement, engine.build_context(goal.normalized_goal, node, [requirement]), self._architecture_version()))
+                analyses.append(engine.analyze_requirement(requirement, engine.build_context(goal.normalized_goal, node, [requirement], environment=environment_context), self._architecture_version()))
         return analyses
 
     @staticmethod

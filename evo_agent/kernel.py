@@ -52,6 +52,7 @@ class AgentKernel:
         self.max_adaptations = max_adaptations
         from .capability import CapabilityIntelligence
         self.capability_intelligence = CapabilityIntelligence(self.store, self.workspace, self.tools, self.policy)
+        self.world_intelligence = None
 
     def run(self, request: str) -> TaskOutcome:
         goal = Goal(request)
@@ -68,6 +69,11 @@ class AgentKernel:
         try:
             checkpoint = self.checkpoints.create(goal.task_id, "before-task")
             memories = self.store.recent_memories()
+            world = self._get_world_intelligence()
+            world_model = world.observe(goal.text)
+            world_snapshot = world.create_snapshot(world_model)
+            world.save_observations(world_model)
+            record(EventType.ENVIRONMENT_OBSERVED, {"environment_id": world_model.environment.environment_id, "environment_version": world_model.environment.environment_version, "snapshot_id": world_snapshot.snapshot_id})
             context = FlexibilityContext(
                 goal=goal,
                 permissions={"approval_required_for": [level.value for level in self.policy.approval_required_for]},
@@ -155,6 +161,11 @@ class AgentKernel:
                     context.observations.append(result.output[-1000:] if result.output else (result.error or "no output"))
                     context.verification_results.append({"step": step.description, "success": verification.success, "checks": verification.checks})
                     record(EventType.VERIFICATION, {"step": step.description, "success": verification.success, "summary": verification.summary, "checks": verification.checks})
+                    try:
+                        current_world = self._get_world_intelligence().update_after_action(goal=goal.text)
+                        record(EventType.WORLD_STATE_UPDATED, {"environment_id": current_world.environment.environment_id, "environment_version": current_world.environment.environment_version, "observation_count": len(current_world.observations)})
+                    except Exception as world_error:
+                        record(EventType.WORLD_SURPRISE, {"reason": "world observation failed safely", "error": type(world_error).__name__})
                     if verification.success:
                         completed += 1
                         step_finished = True
@@ -203,12 +214,25 @@ class AgentKernel:
         record(EventType.TASK_COMPLETED, {"status": TaskStatus.SUCCEEDED.value, "summary": summary, "strategy": strategy.name, "adaptations": adaptations})
         return self._finalize(TaskOutcome(goal.task_id, TaskStatus.SUCCEEDED, summary, completed, events), record)
 
+    def _get_world_intelligence(self) -> Any:
+        if self.world_intelligence is None:
+            from .world import EnvironmentObserver, WorldModelEngine, WorldRefreshEngine
+            observer = EnvironmentObserver(self.workspace, self.store, self.capability_intelligence, self.policy, self.agent_version, self._architecture_version())
+            self.world_intelligence = WorldModelEngine(self.store, observer, WorldRefreshEngine(observer, self.store))
+        return self.world_intelligence
+
     def _architecture_version(self) -> str:
         return ""
 
     def _finalize(self, outcome: TaskOutcome, record: Callable[[EventType, dict[str, Any]], None]) -> TaskOutcome:
         try:
             experience = self.experience_engine.create(outcome, self.agent_version, self.model_identifier)
+            world = self._get_world_intelligence()
+            if world.current:
+                experience.environment_id = world.current.environment.environment_id
+                experience.environment_version = world.current.environment.environment_version
+                experience.architecture_version = self._architecture_version()
+                experience.resource_conditions = dict(world.current.environment.resource_state)
             self.experience_engine.persist(experience)
             record(EventType.EXPERIENCE_CREATED, {"experience_id": experience.experience_id, "outcome": experience.final_outcome.value, "agent_version": experience.agent_version})
             record(EventType.EVALUATION_STARTED, {"experience_id": experience.experience_id})
@@ -219,6 +243,8 @@ class AgentKernel:
             memory = MemoryManager(self.store, self.workspace)
             memory.capture_experience(experience)
             memory.capture_evaluation(evaluation)
+            if world.current:
+                memory.capture_environment(world.current.environment, task_id=outcome.task_id, goal=experience.original_goal, outcome=experience.final_outcome.value)
             for event in outcome.events:
                 if event.event_type in {EventType.TOOL_COMPLETED, EventType.TOOL_FAILED}:
                     memory.capture_observation({"observation_id": event.event_id, "task_id": outcome.task_id, "tool": event.payload.get("tool"), "output": event.payload.get("output", ""), "errors": event.payload.get("error", ""), "status": "succeeded" if event.event_type is EventType.TOOL_COMPLETED else "failed"})

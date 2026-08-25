@@ -44,6 +44,10 @@ class EvaluationEngine:
         replan_count = sum(1 for item in experience.recovery_attempts if item.get("action") == "replan") + len([item for item in experience.strategy_changes if item.get("to")])
         strategy_changes = len(experience.strategy_changes)
         failed_tool_calls = len([item for item in experience.failures if item.get("tool") or item.get("step")])
+        failure_text = " ".join(str(item.get("error", "")) + " " + str(item.get("reason", "")) for item in experience.failures).lower()
+        environment_failure = any(token in failure_text for token in ("environment", "workspace unavailable", "filesystem", "provider unavailable", "network policy"))
+        resource_limitation = any(token in failure_text for token in ("resource limit", "timeout", "memory", "cpu", "disk"))
+        external_dependency_failure = any(token in failure_text for token in ("provider", "external dependency", "network"))
         verified = bool(experience.verification_result.get("success", False))
         human_interventions = len([item for item in experience.approval_events if item.get("reason")])
 
@@ -85,7 +89,7 @@ class EvaluationEngine:
             success_score=score,
             efficiency_metrics={"step_count": len(events), "duration_ms": experience.duration_ms, "tool_count": len(experience.selected_tools)},
             recovery_metrics={"attempt_count": len(experience.recovery_attempts), "recovery_succeeded": recovery_succeeded, "failed_tool_calls": failed_tool_calls},
-            reliability_metrics={"outcome": experience.final_outcome.value, "human_interventions": human_interventions, "approval_event_count": len(experience.approval_events)},
+            reliability_metrics={"outcome": experience.final_outcome.value, "human_interventions": human_interventions, "approval_event_count": len(experience.approval_events), "agent_failure": bool(failed_tool_calls == 0 and not environment_failure and not resource_limitation and not external_dependency_failure and experience.final_outcome not in {OutcomeType.SUCCESS, OutcomeType.PARTIAL_SUCCESS}), "tool_failure": failed_tool_calls > 0 and not environment_failure, "environment_failure": environment_failure, "resource_limitation": resource_limitation, "external_dependency_failure": external_dependency_failure},
             step_count=len(events),
             retry_count=retry_count,
             replan_count=replan_count,

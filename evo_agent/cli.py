@@ -20,6 +20,7 @@ from .sandbox import SandboxEngine
 from .security import SecurityPolicy
 from .tools import ToolRegistry
 from .storage import SQLiteStore
+from .world import EnvironmentObserver, WorldModelEngine, WorldRefreshEngine
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -108,6 +109,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analyze-tool-selection", metavar="GOAL", help="Analyze deterministic capability/tool selection for a goal")
     parser.add_argument("--capability-stats", action="store_true", help="Show Phase 12 capability and tool statistics")
     parser.add_argument("--tool-health", action="store_true", help="Show Phase 12 tool health records")
+    parser.add_argument("--show-environment", action="store_true", help="Observe and show the bounded current environment")
+    parser.add_argument("--environment-snapshot", action="store_true", help="Create or show the latest immutable environment snapshot")
+    parser.add_argument("--environment-diff", action="store_true", help="Compare the two latest environment snapshots")
+    parser.add_argument("--before-snapshot", default="", help="Older snapshot ID used with --environment-diff")
+    parser.add_argument("--after-snapshot", default="", help="Newer snapshot ID used with --environment-diff")
+    parser.add_argument("--show-world-state", action="store_true", help="Show task-bounded world state")
+    parser.add_argument("--show-observations", action="store_true", help="Show persisted world observations")
+    parser.add_argument("--show-environment-changes", action="store_true", help="Show persisted environment differences")
+    parser.add_argument("--refresh-environment", nargs="?", const="environment", default=None, metavar="KIND", help="Refresh a bounded environment subject")
+    parser.add_argument("--environment-stats", action="store_true", help="Show environment and world statistics")
     return parser
 
 
@@ -121,15 +132,22 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     memory = MemoryManager(store, workspace)
     capability_intelligence = None
-    if args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.list_capabilities:
+    if args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.list_capabilities or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats:
         policy = SecurityPolicy(workspace)
         capability_intelligence = CapabilityIntelligence(store, workspace, ToolRegistry(policy), policy, memory)
+    world = None
+    if args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats:
+        world_policy = SecurityPolicy(workspace)
+        if capability_intelligence is None:
+            capability_intelligence = CapabilityIntelligence(store, workspace, ToolRegistry(world_policy), world_policy, memory)
+        observer = EnvironmentObserver(workspace, store, capability_intelligence, world_policy)
+        world = WorldModelEngine(store, observer, WorldRefreshEngine(observer, store))
     experiences = ExperienceEngine(store)
     evolver = Evolver(store, experiences)
     metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
@@ -139,7 +157,37 @@ def inspect_command(args: argparse.Namespace) -> bool:
         adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
         kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
         cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator)
-    if args.show_capability:
+    if args.show_environment:
+        model = world.observe("CLI bounded environment inspection")
+        world.save_observations(model)
+        print_json(model.environment.to_dict())
+    elif args.environment_snapshot:
+        model = world.observe("CLI environment snapshot")
+        snapshot = world.create_snapshot(model)
+        world.save_observations(model)
+        print_json(snapshot.to_dict())
+    elif args.environment_diff:
+        snapshots = world.store.list_environment_snapshots(limit=2)
+        if args.before_snapshot and args.after_snapshot:
+            print_json(world.diff(args.before_snapshot, args.after_snapshot).to_dict())
+        elif len(snapshots) >= 2:
+            print_json(world.diff(snapshots[1].snapshot_id, snapshots[0].snapshot_id).to_dict())
+        else:
+            print_json({"error": "at least two valid environment snapshots are required"})
+    elif args.show_world_state:
+        model = world.current or world.observe("CLI world-state inspection")
+        print_json(model.to_dict())
+    elif args.show_observations:
+        print_json([item.to_dict() for item in world.observations(limit=200)])
+    elif args.show_environment_changes:
+        print_json(world.changes(limit=100))
+    elif args.refresh_environment is not None:
+        model = world.refresh(kind=args.refresh_environment, reason="CLI requested bounded refresh", goal="CLI environment refresh")
+        world.save_observations(model)
+        print_json(model.to_dict())
+    elif args.environment_stats:
+        print_json(world.stats())
+    elif args.show_capability:
         item = capability_intelligence.capabilities.get_capability(args.show_capability)
         print_json(item.to_dict() if item else {"error": "capability not found", "capability_id": args.show_capability})
     elif args.find_capability:

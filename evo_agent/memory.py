@@ -653,6 +653,14 @@ class MemoryManager:
         content = str(payload.get("output", "")) or str(payload.get("errors", ""))
         return self.store(self._record(MemoryType.EPISODIC, content[:4000], _summary(content), ProvenanceSource.OBSERVATION, str(payload.get("observation_id", new_memory_id())), ConfidenceLevel.MEDIUM, 0.6, 0.55, metadata={"task_id": payload.get("task_id"), "tool": payload.get("tool"), "status": payload.get("status")}))
 
+    def capture_environment(self, environment: Any, task_id: str = "", goal: str = "", outcome: str = "") -> MemoryRecord:
+        payload = environment.to_dict() if hasattr(environment, "to_dict") else dict(environment)
+        environment_id = str(payload.get("environment_id", "unknown"))
+        environment_version = str(payload.get("environment_version", "unknown"))
+        summary = f"Environment {environment_id} version {environment_version} observed for {goal or task_id}."
+        metadata = {"environment_id": environment_id, "environment_version": environment_version, "goal": goal, "task_id": task_id, "outcome": outcome, "resource_state": payload.get("resource_state", {}), "tool_state": [{key: item.get(key) for key in ("name", "version", "provider", "availability", "status") if key in item} for item in payload.get("available_tools", [])], "network_state": payload.get("network_state", {}), "filesystem_state": payload.get("filesystem_state", [])[:50]}
+        return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"environment:{environment_id}:{environment_version}", ConfidenceLevel.MEDIUM, 0.7, 0.65, architecture_version=payload.get("architecture_version", ""), metadata=metadata))
+
     def capture_user_memory(self, content: str, summary: str = "", key: str = "", source_id: str = "user", importance: float = 0.8, expiration: str | None = None) -> MemoryRecord:
         return self.store(self._record(MemoryType.USER, content, summary or _summary(content), ProvenanceSource.USER_INPUT, source_id, ConfidenceLevel.HIGH, 0.95, importance, expiration=expiration, key=key, metadata={"user_owned": True, "explicit_action_required": True}))
 

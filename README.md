@@ -327,3 +327,41 @@ Capability and tool descriptors are persisted in the same `<workspace>/.evo/agen
 > **Capability intelligence recommends. Governance authorizes. The Kernel executes. Verification decides whether the capability was actually satisfied.**
 
 The initial implementation intentionally does not add a vector database or LLM semantic selector, arbitrary external plugin installation, a continuous capability daemon, or automatic capability promotion. Provider/model capability descriptors can be added later behind the existing adapter and governed registries.
+
+
+## World and Environment Intelligence Layer
+
+Phase 13 adds a bounded **World & Environment Intelligence Layer**. Environment observation describes where Evo is operating and what the local execution context currently exposes. World state is the task-relevant state derived from those observations. Memory remains historical evidence, inference remains reasoning about evidence, Verification remains authoritative confirmation, Governance decides whether an action is permitted, and the Kernel remains the only execution authority.
+
+`EnvironmentState` records a stable environment identity and version together with operating system, architecture, runtime, Python and agent versions, architecture version, allowlisted workspace, bounded filesystem state, registered Phase 12 capabilities and tools, resource observations, policy-only network state, provider metadata without credentials, current-process scope, configuration policy, constraints, permissions, health, observations, provenance, and non-sensitive metadata. `EnvironmentObserver` collects only bounded local information: it never recursively scans the host, performs unrestricted network discovery, reads credentials, or treats file metadata as trusted file content.
+
+`WorldObservation` distinguishes `FACT`, `INFERENCE`, `ASSUMPTION`, and `UNKNOWN`, and carries source, timestamp, confidence, reliability, environment identity, provenance, trust level, expiry, and metadata. Observations have bounded freshness states: `FRESH`, `AGING`, `STALE`, `EXPIRED`, or `UNKNOWN`. Untrusted or expired observations are not silently promoted to current facts. `WorldAssumption` records statements that must be validated before critical execution, while `WorldConflictDetector` preserves conflicting historical and current evidence and reports that current authoritative state wins.
+
+Environment snapshots are immutable, provenance-bearing records with an observation hash, schema version, environment version, and integrity hash. The `EnvironmentDiffEngine` classifies added, removed, changed, unchanged, and unknown state. Corrupted snapshots fail closed and compare as `UNKNOWN`; they are not silently reconstructed. Filesystem observations are workspace-confined and bounded, and `FilesystemChangeDetector` reports relevant creation, deletion, and modification events.
+
+`EnvironmentContext` contains only task-relevant filesystem, capability, tool, resource, network, provider, constraint, permission, and observation data. Cognitive planning obtains this context before Phase 12 capability analysis and persists the environment identity, context hash, and observation IDs in the plan. Before a persisted plan resumes, the current environment is re-observed and the plan is rejected or marked for bounded replanning when relevant tools, capabilities, workspace state, runtime compatibility, or resource/policy assumptions have changed.
+
+The world layer observes resources and policy but cannot increase resource limits. `ResourceIntelligence` may recommend smaller bounded batches; the Kernel still enforces limits and timeouts. Provider state is metadata-only and `ProviderFailoverEngine` selects only explicitly authorized, available, healthy providers. Network state records policy-relevant restrictions only. No API keys, tokens, secrets, or inferred credentials are persisted.
+
+After meaningful Kernel actions, the current world is refreshed, observations and immutable snapshots are persisted, predicted consequences can be compared with actual observations, and surprises are recorded. Predictions never satisfy Verification. World evidence is captured through the existing Phase 11 MemoryManager as episodic historical evidence, and relevant environment identity is included in Experience and Evaluation. Current observations and current governance always outrank memory, inference, assumptions, and predictions.
+
+Phase 13 uses the existing SQLite database and audit event stream. Persistence includes environment snapshots, world observations, assumptions, conflicts, diffs, refresh requirements, and provider states. Restart recovery restores valid historical snapshots and observations, then revalidates current state rather than blindly trusting the last snapshot. Bounded refresh requests allow Cognitive or CLI callers to refresh only the necessary environment subject instead of rescanning everything.
+
+Phase 13 inspection commands are:
+
+```bash
+evo --show-environment --workspace ./workspace
+evo --environment-snapshot --workspace ./workspace
+evo --environment-diff --workspace ./workspace
+evo --show-world-state --workspace ./workspace
+evo --show-observations --workspace ./workspace
+evo --show-environment-changes --workspace ./workspace
+evo --refresh-environment --workspace ./workspace
+evo --environment-stats --workspace ./workspace
+```
+
+The World & Environment Intelligence Layer is observational and advisory. It cannot bypass permissions, grant permissions, approve actions, disable sandboxing, increase resource limits, disable timeouts, execute external code, interpret observed text as commands, modify protected core or production, override Governance, approve Evolution or Metamorphosis, promote changes, or replace the existing Verifier. Observed prompt-injection text is retained as observed content and never becomes an instruction.
+
+> **The World Layer observes current conditions. Memory preserves history. Capability intelligence recommends methods. Governance authorizes. The Kernel executes. Verification confirms what actually happened.**
+
+The initial implementation intentionally remains local-first. It does not add unrestricted external-world ingestion, a general AGI world model, autonomous continuous sensing, or persistent autonomous operation.

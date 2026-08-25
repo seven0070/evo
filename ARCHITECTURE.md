@@ -566,3 +566,53 @@ The Phase 12 layer cannot bypass the Kernel, grant permissions, approve risky ac
 The CLI exposes rich capability and tool listing, detail, search, capability-gap analysis, tool-selection analysis, capability statistics, and tool-health inspection through `--list-capabilities`, `--show-capability`, `--find-capability`, `--list-tools`, `--show-tool`, `--find-tools`, `--analyze-capability-gap`, `--analyze-tool-selection`, `--capability-stats`, and `--tool-health`. All decisions are structured and inspectable through the existing SQLite event stream, with no hidden chain-of-thought or secret provider data.
 
 > **Capability = what Evo can accomplish. Tool = how it can accomplish it. Selection = which registered method is appropriate. Governance = whether it is allowed. Kernel = how execution actually occurs.**
+
+
+## Phase 13 — World & Environment Intelligence Layer
+
+Phase 13 inserts a bounded observation and reasoning layer between Cognitive planning and Phase 12 capability/tool selection. It answers **where Evo is operating, what is currently present, what changed, and which task-relevant constraints apply** without becoming an unrestricted control system.
+
+`EnvironmentState` is the current local operating context. It reuses the existing Phase 12 registries and version structures and contains environment identity/version, platform/runtime metadata, the allowlisted workspace, bounded filesystem state, registered capability/tool state, resource observations, policy-only network state, provider metadata, current-process state, configuration policy, constraints, permissions, health, provenance, and observation references. `EnvironmentObserver` reads only required local information. It limits workspace entries and file hashes, excludes internal `.evo` state from task filesystem assumptions, does not scan the host recursively, does not perform arbitrary network discovery, and never collects credentials.
+
+`WorldModel` is task-bounded state derived from the current environment and `WorldObservation` records. A world observation is explicitly a `FACT`, `INFERENCE`, `ASSUMPTION`, or `UNKNOWN`, and includes source, time, confidence, reliability, environment identity, provenance, trust level, expiry, and metadata. `TRUSTED` and `VERIFIED` records are reserved for authoritative factual sources; observed file content remains data, including hostile prompt-like text. Freshness is explicit (`FRESH`, `AGING`, `STALE`, `EXPIRED`, or `UNKNOWN`) and is evaluated using observation-specific expiry. Historical memory never silently becomes current world fact.
+
+Snapshots are immutable records in the existing SQLite database. Each contains environment and architecture versions, an observation summary, provenance, observation hash, schema version, and immutable integrity hash. `EnvironmentDiffEngine` produces deterministic `ADDED`, `REMOVED`, `CHANGED`, `UNCHANGED`, or `UNKNOWN` entries. Invalid or corrupted snapshots fail closed and yield unknown integrity state; the system does not silently reconstruct security-relevant state. `WorldRefreshEngine` persists bounded refresh requirements and refreshes only the requested environment subject. `FilesystemChangeDetector`, `ResourceIntelligence`, `ProviderFailoverEngine`, and `EnvironmentCompatibilityEngine` are advisory helpers; they cannot widen workspace, network, provider, permission, or resource authority.
+
+The environment-aware cognitive path is:
+
+```text
+Goal
+  → Intent and requirements
+  → bounded EnvironmentObserver
+  → task-relevant EnvironmentContext
+  → Phase 12 capability requirements and tool selection
+  → existing Governance and approval checks
+  → existing AgentKernel
+  → existing Verifier
+  → WorldModel update and immutable snapshot
+  → Experience/Evaluation
+  → Phase 11 Memory
+```
+
+Cognitive plans persist environment ID, environment version, context hash, relevant context, and observation IDs. Before a persisted plan resumes, current environment state is re-observed. A plan is not executed when a selected tool disappears, a required capability is missing, or a relevant compatibility/constraint assumption fails. Task-relevant changes are passed through the existing bounded Flexibility path for revalidation and replanning; no second recovery loop is introduced. Direct Kernel flows also record environment observation and post-action world-state events, while all permissions, approvals, execution, timeouts, resource ceilings, and verification remain Kernel-owned.
+
+World predictions describe expected consequences only. After an action, the layer records actual observations and uses `WorldSurpriseDetector` to identify discrepancies. Predictions and inferences cannot satisfy verification. Current workspace state, current policy, current provider authorization, current capability/tool availability, and the existing Verifier outrank memory, assumptions, inferred state, and predicted state.
+
+Environmental evidence is stored through the existing Phase 11 `MemoryManager` as historical episodic evidence, with environment identity/version, bounded tool state, resource conditions, network policy, and relevant filesystem state. Experience records include environment ID/version, architecture version, relevant context hash, tool environment, and resource conditions. Evaluation classifies failures into agent, tool, environment, resource, and external-dependency categories where evidence supports the distinction. Current observations remain authoritative over historical memory.
+
+All Phase 13 events use the existing audit stream, including environment observation, snapshot creation, diff, change, resource/tool/capability/provider/health changes, world observation, world-state update, conflict, assumption creation/invalidation, refresh, surprise, prediction, and plan invalidation. Persistence consists of additional tables in the same SQLite store for snapshots, observations, assumptions, conflicts, diffs, refresh requirements, and provider states. Restart recovery loads only integrity-valid records and then re-observes current state before reusing assumptions or plans.
+
+The trust boundary is strict:
+
+| Layer | Authority |
+|---|---|
+| Environment Observer | Bounded observation only; it cannot authorize or execute. |
+| World Model | Task-relevant representation and inference; it cannot turn observations into commands. |
+| Phase 11 Memory | Historical evidence only; it cannot override current state or policy. |
+| Phase 12 Capability Intelligence | Advisory compatibility, selection, health, and fallback evidence. |
+| Governance/SecurityPolicy | Whether an action is allowed, including permission and approval. |
+| Agent Kernel | Sole tool execution, workspace confinement, limits, timeouts, and execution audit. |
+| Verifier | Sole authority for confirming requested outcomes. |
+| Phase 9/8 authorities | Governed evolution, metamorphosis, sandbox, benchmark, promotion, and rollback. |
+
+The World Layer cannot bypass permissions, grant permissions, approve actions, disable sandboxing or limits, execute external code, ingest arbitrary internet state, interpret observed text as instructions, modify protected core or production, approve Evolution or Metamorphosis, promote changes, or create persistent autonomous operation. It provides the environmental foundation required before any later autonomous-operation phase; Phase 14 functionality is intentionally not implemented.

@@ -259,6 +259,82 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_intelligence_tools_name ON intelligence_tools(name);
                 CREATE INDEX IF NOT EXISTS idx_intelligence_tools_status ON intelligence_tools(status);
+                CREATE TABLE IF NOT EXISTS environment_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    environment_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    environment_version TEXT NOT NULL,
+                    agent_version TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    observation_hash TEXT NOT NULL,
+                    observation_summary TEXT NOT NULL,
+                    provenance TEXT NOT NULL,
+                    schema_version TEXT NOT NULL,
+                    immutable_hash TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_environment_snapshots_environment ON environment_snapshots(environment_id, timestamp);
+                CREATE TABLE IF NOT EXISTS world_observations (
+                    observation_id TEXT PRIMARY KEY,
+                    environment_id TEXT NOT NULL,
+                    observation_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    reliability REAL NOT NULL,
+                    provenance TEXT NOT NULL,
+                    trust_level TEXT NOT NULL,
+                    expiry TEXT,
+                    metadata TEXT NOT NULL,
+                    observation_hash TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_world_observations_environment ON world_observations(environment_id, timestamp);
+                CREATE TABLE IF NOT EXISTS world_assumptions (
+                    assumption_id TEXT PRIMARY KEY,
+                    statement TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expiry TEXT,
+                    validation_state TEXT NOT NULL,
+                    environment_id TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS world_conflicts (
+                    conflict_id TEXT PRIMARY KEY,
+                    subject TEXT NOT NULL,
+                    current_value TEXT NOT NULL,
+                    historical_value TEXT NOT NULL,
+                    current_source TEXT NOT NULL,
+                    historical_source TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    resolution TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS environment_diffs (
+                    diff_id TEXT PRIMARY KEY,
+                    before_snapshot_id TEXT NOT NULL,
+                    after_snapshot_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS world_refresh_requirements (
+                    refresh_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    ttl_seconds INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS world_provider_states (
+                    provider_state_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS architecture_versions (
                     architecture_version TEXT PRIMARY KEY,
                     agent_version TEXT NOT NULL,
@@ -1446,3 +1522,122 @@ class SQLiteStore:
         with self._connect() as db:
             rows = db.execute(f"SELECT * FROM experiences {where} ORDER BY timestamp DESC LIMIT ?", (*values, limit)).fetchall()
         return [dict(row) for row in rows]
+
+    def save_environment_snapshot(self, snapshot: Any) -> None:
+        payload = snapshot.to_dict()
+        with self._connect() as db:
+            existing = db.execute("SELECT immutable_hash, observation_hash FROM environment_snapshots WHERE snapshot_id = ?", (snapshot.snapshot_id,)).fetchone()
+            if existing:
+                if existing["immutable_hash"] != snapshot.immutable_hash or existing["observation_hash"] != snapshot.observation_hash:
+                    raise ValueError("environment snapshots are immutable")
+                return
+            db.execute("INSERT INTO environment_snapshots(snapshot_id, environment_id, timestamp, environment_version, agent_version, architecture_version, observation_hash, observation_summary, provenance, schema_version, immutable_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (snapshot.snapshot_id, snapshot.environment_id, snapshot.timestamp, snapshot.environment_version, snapshot.agent_version, snapshot.architecture_version, snapshot.observation_hash, json.dumps(snapshot.observation_summary), json.dumps(snapshot.provenance), snapshot.schema_version, snapshot.immutable_hash))
+
+    def environment_snapshot_by_id(self, snapshot_id: str) -> Any | None:
+        from .world import EnvironmentSnapshot
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM environment_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+        if not row:
+            return None
+        try:
+            snapshot = EnvironmentSnapshot(row["snapshot_id"], row["environment_id"], row["timestamp"], row["environment_version"], row["agent_version"], row["architecture_version"], row["observation_hash"], json.loads(row["observation_summary"]), json.loads(row["provenance"]), row["schema_version"], row["immutable_hash"])
+            return snapshot if snapshot.verify() else None
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def list_environment_snapshots(self, limit: int = 100) -> list[Any]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM environment_snapshots ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+        result: list[Any] = []
+        for row in rows:
+            snapshot = self.environment_snapshot_by_id(row["snapshot_id"])
+            if snapshot:
+                result.append(snapshot)
+        return result
+
+    def save_world_observation(self, observation: Any) -> None:
+        payload = observation.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR IGNORE INTO world_observations(observation_id, environment_id, observation_type, source, timestamp, value, confidence, reliability, provenance, trust_level, expiry, metadata, observation_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (observation.observation_id, observation.environment_id, observation.type.value, observation.source.value, observation.timestamp, json.dumps(observation.value), observation.confidence, observation.reliability, json.dumps(observation.provenance), observation.trust_level.value, observation.expiry, json.dumps(observation.metadata), observation.observation_hash))
+
+    def list_world_observations(self, environment_id: str | None = None, limit: int = 1000) -> list[dict[str, Any]]:
+        query = "SELECT * FROM world_observations"
+        values: tuple[Any, ...] = ()
+        if environment_id:
+            query += " WHERE environment_id = ?"
+            values = (environment_id,)
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        values += (limit,)
+        with self._connect() as db:
+            rows = db.execute(query, values).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                result.append({"observation_id": row["observation_id"], "environment_id": row["environment_id"], "type": row["observation_type"], "source": row["source"], "timestamp": row["timestamp"], "value": json.loads(row["value"]), "confidence": row["confidence"], "reliability": row["reliability"], "provenance": json.loads(row["provenance"]), "trust_level": row["trust_level"], "expiry": row["expiry"], "metadata": json.loads(row["metadata"]), "observation_hash": row["observation_hash"]})
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return result
+
+    def save_world_assumption(self, assumption: Any) -> None:
+        payload = assumption.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO world_assumptions(assumption_id, statement, source, confidence, created_at, expiry, validation_state, environment_id, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (assumption.assumption_id, assumption.statement, payload["source"], assumption.confidence, assumption.created_at, assumption.expiry, payload["validation_state"], assumption.environment_id, json.dumps(assumption.metadata)))
+
+    def list_world_assumptions(self, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM world_assumptions ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "metadata": json.loads(row["metadata"])} for row in rows]
+
+    def save_world_conflict(self, conflict: Any) -> None:
+        payload = conflict.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR IGNORE INTO world_conflicts(conflict_id, subject, current_value, historical_value, current_source, historical_source, reason, created_at, resolution, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (conflict.conflict_id, conflict.subject, json.dumps(conflict.current_value), json.dumps(conflict.historical_value), payload["current_source"], payload["historical_source"], conflict.reason, conflict.created_at, conflict.resolution, json.dumps(conflict.metadata)))
+
+    def list_world_conflicts(self, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM world_conflicts ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                result.append({**dict(row), "current_value": json.loads(row["current_value"]), "historical_value": json.loads(row["historical_value"]), "metadata": json.loads(row["metadata"])})
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return result
+
+    def save_environment_diff(self, diff: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR IGNORE INTO environment_diffs(diff_id, before_snapshot_id, after_snapshot_id, created_at, payload) VALUES (?, ?, ?, ?, ?)", (diff.diff_id, diff.before_snapshot_id, diff.after_snapshot_id, diff.created_at, json.dumps(diff.to_dict())))
+
+    def list_environment_diffs(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM environment_diffs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_world_refresh(self, requirement: Any) -> None:
+        payload = requirement.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO world_refresh_requirements(refresh_id, kind, subject, reason, requested_at, ttl_seconds, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (requirement.refresh_id, requirement.kind, requirement.subject, requirement.reason, requirement.requested_at, requirement.ttl_seconds, requirement.status, json.dumps(requirement.metadata)))
+
+    def update_world_refresh(self, requirement: Any) -> None:
+        self.save_world_refresh(requirement)
+
+    def list_world_refresh(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = "SELECT * FROM world_refresh_requirements"
+        values: tuple[Any, ...] = ()
+        if status:
+            query += " WHERE status = ?"
+            values = (status,)
+        query += " ORDER BY requested_at DESC LIMIT ?"
+        values += (limit,)
+        with self._connect() as db:
+            rows = db.execute(query, values).fetchall()
+        return [{**dict(row), "metadata": json.loads(row["metadata"])} for row in rows]
+
+    def save_world_provider_state(self, provider: str, payload: dict[str, Any], observed_at: str | None = None) -> None:
+        with self._connect() as db:
+            db.execute("INSERT INTO world_provider_states(provider_state_id, provider, observed_at, payload) VALUES (?, ?, ?, ?)", (new_id("provider-state"), provider, observed_at or datetime.now(timezone.utc).isoformat(), json.dumps(payload)))
+
+    def list_world_provider_states(self, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM world_provider_states ORDER BY observed_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
