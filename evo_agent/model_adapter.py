@@ -29,6 +29,7 @@ class RuleBasedAdapter(ModelAdapter):
             steps.append(PlanStep(new_id("step"), "Inspect the workspace contents", "workspace_list", {"path": "."}, RiskLevel.LOW, "result is valid JSON"))
         if "read" in text and "file" in text:
             import re
+            # Preserve the user’s path casing; workspace files are case-sensitive on common local systems.
             match = re.search(r"(?:file|read)\s+([A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+)", goal.text, flags=re.IGNORECASE)
             path = match.group(1) if match else "README.md"
             steps.append(PlanStep(new_id("step"), "Read the requested workspace file", "workspace_read", {"path": path}, RiskLevel.LOW, "result is non-empty"))

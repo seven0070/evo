@@ -8,7 +8,8 @@ import sys
 import pytest
 
 from evo_agent import AgentRuntime, RuntimeState, RuntimeTaskStatus
-from evo_agent.models import Event, EventType
+from evo_agent.models import Event, EventType, Goal
+from evo_agent.model_adapter import RuleBasedAdapter
 from evo_agent.security import SecurityPolicy
 from evo_agent.storage import SQLiteStore
 from evo_agent.version import __version__
@@ -70,6 +71,12 @@ def test_runtime_fails_closed_before_using_corrupt_runtime_record(tmp_path: Path
     restarted = AgentRuntime(workspace)
     with pytest.raises(RuntimeError, match="integrity validation failed"):
         restarted.start()
+
+
+def test_offline_adapter_preserves_case_sensitive_workspace_paths():
+    plan = RuleBasedAdapter().create_plan(Goal("read file README.md"), [])
+    read_steps = [step for step in plan.steps if step.tool_name == "workspace_read"]
+    assert read_steps and read_steps[0].arguments["path"] == "README.md"
 
 
 def test_security_policy_remains_confined_and_allowlisted(tmp_path: Path):

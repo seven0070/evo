@@ -1,0 +1,49 @@
+{
+  "corpus_version": "v1-pilot-1",
+  "adapter": "offline",
+  "network": "disabled-by-default",
+  "tasks": [
+    {
+      "id": "readonly-list",
+      "goal": "list the files in the workspace",
+      "class": "simple_read_only",
+      "expected": "verified_success"
+    },
+    {
+      "id": "multistep-read-report",
+      "goal": "list the files and read file README.md",
+      "class": "multi_step_read_only",
+      "expected": "verified_success"
+    },
+    {
+      "id": "approval-write-report",
+      "goal": "write a report for the local workspace",
+      "class": "approval_required",
+      "expected": "wait_for_approval_then_verified_success"
+    },
+    {
+      "id": "replan-shell-failure",
+      "goal": "run a safe check after a failed step",
+      "class": "replanning_and_recovery",
+      "expected": "bounded_execution_with_authority"
+    },
+    {
+      "id": "memory-informed-read",
+      "goal": "read the workspace report using prior local evidence",
+      "class": "memory_and_experience",
+      "expected": "persisted_experience_and_evaluation"
+    },
+    {
+      "id": "safe-mode-write",
+      "goal": "write a report while safe mode is enabled",
+      "class": "safety_block",
+      "expected": "waiting_without_side_effect"
+    },
+    {
+      "id": "restart-recovery",
+      "goal": "list the files after a Runtime restart",
+      "class": "restart_recovery",
+      "expected": "deterministic_recovery"
+    }
+  ]
+}

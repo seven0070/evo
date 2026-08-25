@@ -689,6 +689,6 @@ git diff --check
 git diff --cached --check
 ```
 
-Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), and [`docs/RELEASE.md`](docs/RELEASE.md). These documents cover clean installation, configuration, CLI consistency, recovery, rollback, security boundaries, V1 limitations, and the release gate.
+Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), [`docs/PILOT.md`](docs/PILOT.md), and [`docs/RELEASE.md`](docs/RELEASE.md). These documents cover clean installation, configuration, CLI consistency, pilot operation, recovery, rollback, security boundaries, V1 limitations, and the release gate.
 
 The stable package version is **1.0.0**. Offline operation remains the default and requires no provider credentials or network access. No V1 operation can approve itself, promote itself, bypass Governance or Verification, mutate production, execute arbitrary generated code, acquire credentials, disable the kill switch, grant permissions, or create an uncontrolled planning loop.

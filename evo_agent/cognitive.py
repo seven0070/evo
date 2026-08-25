@@ -1158,6 +1158,10 @@ class CognitiveOrchestrator:
     def _run_kernel(self, node: CognitiveTask, goal: CognitiveGoal, recovery: bool = False) -> TaskOutcome:
         kernel = self._get_kernel()
         request = node.description
+        if node.tool_name == "workspace_list" and "read" in goal.original_text.lower() and "file" in goal.original_text.lower():
+            # Planning uses normalized text for deterministic intent matching, but the
+            # Kernel must receive the original path spelling for case-sensitive workspaces.
+            request = goal.original_text
         if node.tool_name == "workspace_read":
             if "report" in node.description.lower() or "output" in node.description.lower():
                 request = "read file report.txt"
