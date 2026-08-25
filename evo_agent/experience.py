@@ -48,6 +48,12 @@ class Experience:
     delegation_records: list[dict[str, Any]] = field(default_factory=list)
     specialist_evidence: list[dict[str, Any]] = field(default_factory=list)
     specialist_conflicts: list[dict[str, Any]] = field(default_factory=list)
+    model_selections: list[dict[str, Any]] = field(default_factory=list)
+    model_inferences: list[dict[str, Any]] = field(default_factory=list)
+    model_failures: list[dict[str, Any]] = field(default_factory=list)
+    model_fallbacks: list[dict[str, Any]] = field(default_factory=list)
+    learning_observations: list[dict[str, Any]] = field(default_factory=list)
+    learning_adjustments: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -95,6 +101,12 @@ class ExperienceEngine:
         delegation_records = [event.payload for event in events if event.event_type in {EventType.DELEGATION_STARTED, EventType.DELEGATION_COMPLETED, EventType.DELEGATION_FAILED}]
         specialist_evidence = [event.payload for event in events if event.event_type in {EventType.SPECIALIST_RESULT_COLLECTED, EventType.SPECIALIST_EVIDENCE_COLLECTED, EventType.SPECIALIST_EVIDENCE_VERIFIED}]
         specialist_conflicts = [event.payload for event in events if event.event_type in {EventType.SPECIALIST_CONFLICT_DETECTED, EventType.SPECIALIST_CONFLICT_RESOLVED}]
+        model_selections = [event.payload for event in events if event.event_type is EventType.MODEL_SELECTION_RECORDED]
+        model_inferences = [event.payload for event in events if event.event_type in {EventType.MODEL_INFERENCE_STARTED, EventType.MODEL_INFERENCE_COMPLETED, EventType.MODEL_INFERENCE_FAILED}]
+        model_failures = [event.payload for event in events if event.event_type in {EventType.MODEL_INFERENCE_FAILED, EventType.MODEL_REQUEST_BLOCKED}]
+        model_fallbacks = [event.payload for event in events if event.event_type is EventType.MODEL_FALLBACK_SELECTED]
+        learning_observations = [event.payload for event in events if event.event_type in {EventType.LEARNING_OBSERVATION_RECORDED, EventType.LEARNING_OUTCOME_RECORDED}]
+        learning_adjustments = [event.payload for event in events if event.event_type in {EventType.LEARNING_ADJUSTMENT_PROPOSED, EventType.LEARNING_ADJUSTMENT_APPLIED, EventType.LEARNING_ADJUSTMENT_ROLLED_BACK, EventType.LEARNING_ADJUSTMENT_BLOCKED}]
         return Experience(
             experience_id=f"exp_{outcome.task_id}",
             task_id=outcome.task_id,
@@ -120,6 +132,12 @@ class ExperienceEngine:
             delegation_records=delegation_records,
             specialist_evidence=specialist_evidence,
             specialist_conflicts=specialist_conflicts,
+            model_selections=model_selections,
+            model_inferences=model_inferences,
+            model_failures=model_failures,
+            model_fallbacks=model_fallbacks,
+            learning_observations=learning_observations,
+            learning_adjustments=learning_adjustments,
             timestamp=timestamp,
             agent_version=agent_version,
             model_identifier=model_identifier,

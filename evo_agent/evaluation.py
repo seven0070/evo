@@ -28,6 +28,7 @@ class EvaluationResult:
     evaluator_version: str
     explanation: list[str]
     capability_metrics: dict[str, Any] = None
+    model_metrics: dict[str, Any] = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -52,6 +53,11 @@ class EvaluationEngine:
         delegation_count = len(getattr(experience, "delegation_records", []))
         specialist_evidence_count = len(getattr(experience, "specialist_evidence", []))
         specialist_conflict_count = len(getattr(experience, "specialist_conflicts", []))
+        model_selections = list(getattr(experience, "model_selections", []))
+        model_inferences = list(getattr(experience, "model_inferences", []))
+        model_failures = list(getattr(experience, "model_failures", []))
+        model_fallbacks = list(getattr(experience, "model_fallbacks", []))
+        learning_observations = list(getattr(experience, "learning_observations", []))
         verified = bool(experience.verification_result.get("success", False))
         human_interventions = len([item for item in experience.approval_events if item.get("reason")])
 
@@ -102,4 +108,5 @@ class EvaluationEngine:
             evaluator_version=EVALUATOR_VERSION,
             explanation=explanation,
             capability_metrics={"selection_count": len(experience.capability_selection), "satisfied_count": sum(1 for item in experience.capability_selection if item.get("availability") == "capability_available"), "gap_count": sum(1 for item in experience.capability_selection if item.get("availability") not in {"capability_available", "capability_partial"}), "selected_tools": [item.get("selection", {}).get("selected_tool", {}).get("name") for item in experience.capability_selection if item.get("selection", {}).get("selected_tool")]},
+            model_metrics={"selection_count": len(model_selections), "inference_event_count": len(model_inferences), "failure_count": len(model_failures), "fallback_count": len(model_fallbacks), "learning_observation_count": len(learning_observations), "model_identifier": experience.model_identifier, "provider_failures": sum(1 for item in model_failures if "provider" in str(item).lower()), "output_validity_events": sum(1 for item in model_inferences if bool(item.get("response", {}).get("output_schema_valid", True)))},
         )

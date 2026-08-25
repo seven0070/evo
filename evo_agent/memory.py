@@ -680,6 +680,21 @@ class MemoryManager:
         summary = f"Specialist {specialist_id} completed task {task_id}: success={bool(safe.get('success', False))}, verified={bool(safe.get('verified', False))}."
         return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"specialist:{task_id}", ConfidenceLevel.MEDIUM, min(1.0, max(0.0, float(safe.get("quality_score", 0.5)))), 0.55, metadata=safe))
 
+    def capture_model_performance(self, evidence: dict[str, Any]) -> MemoryRecord:
+        """Persist bounded model-performance metadata only; prompts and responses never enter memory."""
+        safe = {key: value for key, value in dict(evidence).items() if key not in {"input", "prompt", "messages", "response", "output", "content", "payload", "tool_calls"}}
+        model_id = str(safe.get("model_id", "unknown"))
+        task_category = str(safe.get("task_category", "general"))
+        summary = f"Model {model_id} performance evidence for {task_category}: success={bool(safe.get('success', False))}, verified={bool(safe.get('verified', False))}."
+        safe["untrusted_model_evidence"] = True
+        safe["executable"] = False
+        return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"model:{model_id}:{task_category}", ConfidenceLevel.MEDIUM, 0.6, 0.5, metadata=safe))
+
+    def capture_learning(self, evidence: dict[str, Any]) -> MemoryRecord:
+        safe = {key: value for key, value in dict(evidence).items() if key not in {"input", "prompt", "messages", "response", "output", "content", "payload"}}
+        safe["bounded_learning_evidence"] = True
+        return self.store(self._record(MemoryType.EPISODIC, f"Bounded learning evidence for {safe.get('affected_component', safe.get('model_id', 'unknown'))}.", "bounded learning metadata", ProvenanceSource.EVALUATION, str(safe.get("source_id", new_memory_id())), ConfidenceLevel.MEDIUM, 0.6, 0.5, metadata=safe))
+
     def capture_user_memory(self, content: str, summary: str = "", key: str = "", source_id: str = "user", importance: float = 0.8, expiration: str | None = None) -> MemoryRecord:
         return self.store(self._record(MemoryType.USER, content, summary or _summary(content), ProvenanceSource.USER_INPUT, source_id, ConfidenceLevel.HIGH, 0.95, importance, expiration=expiration, key=key, metadata={"user_owned": True, "explicit_action_required": True}))
 

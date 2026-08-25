@@ -518,3 +518,62 @@ evo --list-specialist-conflicts --workspace ./workspace
 evo --queue-specialist-task SPECIALIST_TASK_ID --workspace ./workspace
 evo --cancel-specialist-task SPECIALIST_TASK_ID --workspace ./workspace
 ```
+
+
+## Model and Learning Intelligence Layer
+
+Phase 17 adds a governed **Model & Learning Intelligence Layer**. Its flow is:
+
+```text
+Cognitive Goal
+    ↓
+Task Requirements
+    ↓
+Model Intelligence
+    ↓
+Model Selection
+    ↓
+Bounded Inference
+    ↓
+Verification
+    ↓
+Experience / Evaluation
+    ↓
+Learning Evidence
+    ↓
+Bounded Routing Adjustment
+    ↓
+Future Evolution Proposal
+```
+
+The persistent `ModelRegistry` records provider-neutral model metadata, capabilities, context and modality limits, structured-output and tool-use support, cost and latency metadata, performance, health, lifecycle, architecture version, policy, and provenance. Credential values are never stored; only non-secret credential references and metadata may be retained. Provider adapters are bounded interfaces for availability, discovery, inference, structured output, tool calls, streaming, and health checks. Deterministic test and local adapters work without a live external service. OpenAI-compatible and Anthropic-compatible adapters remain behind the provider-neutral boundary.
+
+`ModelRouter` produces deterministic ranked candidates, a selection explanation, confidence, and bounded fallbacks from task requirements, capability match, context limits, risk, health, reliability, latency, cost, specialist preferences, and historical evidence. Historical performance and learned scores can influence ranking only inside configured bounds; they cannot override Governance, permissions, approvals, network policy, Runtime limits, safe mode, the kill switch, or the Verifier. A model never becomes an authority and cannot select itself as authoritative.
+
+`ModelEvaluationEngine` runs versioned deterministic benchmark trials under identical bounded conditions and records task success, verification, output validity, latency, resource usage, failure category, retries, and reproducibility metadata. Comparative results are classified conservatively as `BETTER`, `NO_CHANGE`, `WORSE`, or `INCONCLUSIVE`. The existing Verifier remains authoritative for actual completion; model confidence is not treated as proof.
+
+The governed `LearningEngine` persists observations, outcomes, evidence, policies, and adjustments. Adjustments require minimum evidence, confidence thresholds, maximum deltas, cooldowns, version compatibility, provenance, rollback values, and audit records. They are reversible and decayed over time. Exploration is deterministic and bounded by eligibility, probability, seed, risk, and resource policy. Learning can change only bounded model/strategy/tool/specialist selection evidence. It cannot modify the protected core, governance, permissions, approval logic, verifier, sandbox, promotion, rollback, kill switch, provider adapters, routing architecture, or learning algorithm.
+
+Model context is explicitly bounded by byte and output budgets. Truncation preserves content hashes and provenance. Prompts, complete responses, credentials, and executable provider content are not automatically stored in Memory, Experience, Evaluation, logs, or model metadata. Provider and model outputs remain untrusted data until they pass the existing governed pipeline.
+
+Phase 17 integrates advisory model selection with Cognitive planning, specialist-aware routing, metadata-only Memory capture, Experience/Evaluation metrics, Flexibility recommendations, Evolution evidence, Metamorphosis boundaries, Phase 15 external-provider governance, and a bounded Runtime model-inference queue. Runtime deadlines, resource limits, concurrency, retries, safe mode, degraded mode, shutdown, and kill-switch behavior remain authoritative.
+
+Phase 17 inspection commands include:
+
+```bash
+evo --list-models --workspace ./workspace
+evo --show-model MODEL_ID --workspace ./workspace
+evo --model-health --workspace ./workspace
+evo --find-models "coding" --workspace ./workspace
+evo --analyze-model-selection "complex coding task" --workspace ./workspace
+evo --model-evaluation MODEL_ID --workspace ./workspace
+evo --compare-models MODEL_A MODEL_B --workspace ./workspace
+evo --list-learning --workspace ./workspace
+evo --show-learning LEARNING_ID --workspace ./workspace
+evo --learning-stats --workspace ./workspace
+evo --model-routing-report --workspace ./workspace
+```
+
+> **Models provide intelligence; they do not become authorities.**
+
+Phase 17 intentionally does not add autonomous model training, unrestricted weight modification, arbitrary provider or plugin installation, unrestricted endpoint access, credential storage, silent learning, irreversible routing changes, autonomous approval, autonomous promotion, protected-core mutation, production mutation, or Phase 18 functionality.

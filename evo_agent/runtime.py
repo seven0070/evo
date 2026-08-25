@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable
 from .cognitive import CognitiveOutcome, CognitiveOrchestrator, CognitiveResult
 from .models import Event, EventType, utc_now, new_id
 from .model_adapter import RuleBasedAdapter
+from .model_intelligence import InferenceStatus
 from .orchestrator import EvolutionOrchestrator
 from .storage import SQLiteStore
 from .version import __version__
@@ -71,6 +72,7 @@ class TaskSource(str, Enum):
     INTERNAL = "internal"
     EXTERNAL = "external"
     SPECIALIST = "specialist"
+    MODEL = "model"
 
 
 class RuntimeHealthStatus(str, Enum):
@@ -723,7 +725,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -736,6 +738,8 @@ class AgentRuntime:
         self.evolution = evolution_orchestrator or EvolutionOrchestrator(self.store, self.source_root)
         self.external_integrations = external_integrations
         self.specialist_delegation = specialist_delegation
+        self.model_intelligence = model_intelligence
+        self._model_requests: dict[str, Any] = {}
         if self.specialist_delegation is not None:
             self.specialist_delegation.runtime = self
         self.kernel = kernel
@@ -743,7 +747,7 @@ class AgentRuntime:
         if self.cognitive is None:
             from .kernel import AgentKernel
             self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback, external_integrations=self.external_integrations)
-            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation)
+            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation, model_intelligence=self.model_intelligence)
         elif self.kernel is None:
             self.kernel = getattr(self.cognitive, "kernel", None)
         if self.specialist_delegation is not None and getattr(self.cognitive, "specialist_delegation", None) is None:
@@ -936,6 +940,22 @@ class AgentRuntime:
 
     queue_specialist_task = enqueue_specialist_task
 
+    def enqueue_model_inference(self, request: Any, priority: TaskPriority | str = TaskPriority.NORMAL, dependencies: Iterable[str] | None = None, deadline: str | None = None, resource_budget: dict[str, Any] | None = None) -> RuntimeTask:
+        if self.model_intelligence is None:
+            raise RuntimeError("model intelligence is not configured")
+        request_id = str(getattr(request, "correlation_id", ""))
+        if not request_id:
+            raise ValueError("model inference request requires a correlation ID")
+        errors = request.validate() if hasattr(request, "validate") else ["model inference request is invalid"]
+        if errors:
+            raise ValueError("; ".join(errors))
+        self._model_requests[request_id] = request
+        task = self.enqueue_task("model inference for " + str(getattr(request, "purpose", "bounded task")), priority=priority, source=TaskSource.MODEL, dependencies=dependencies, deadline=deadline, resource_budget=resource_budget or getattr(request, "resource_limits", {}), metadata={"model_request_id": request_id, "model_id": getattr(request, "model_id", ""), "read_only": str(getattr(request, "risk", "low")) == "low"})
+        self._emit(EventType.MODEL_REQUEST_VALIDATED, {"runtime_task_id": task.task_id, "request_id": request_id, "model_id": getattr(request, "model_id", "")}, task.task_id)
+        return task
+
+    queue_model_inference = enqueue_model_inference
+
     def resume_external_operation(self, operation_id: str) -> list[RuntimeTask]:
         resumed: list[RuntimeTask] = []
         for task in self.tasks():
@@ -1123,6 +1143,38 @@ class AgentRuntime:
             self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "approval_id": approval.approval_id, "reason": "approval required", "scope_hash": approval.scope_hash}, task.task_id)
             self._transition(RuntimeState.WAITING_APPROVAL, "task requires human approval")
             return "waiting"
+        model_request_id = task.metadata.get("model_request_id")
+        if model_request_id:
+            request = self._model_requests.get(str(model_request_id))
+            if self.model_intelligence is None or request is None:
+                task.status = RuntimeTaskStatus.BLOCKED
+                task.last_error = "model inference request is unavailable after restart or model intelligence is not configured"
+                self.queue.update(task)
+                self._emit(EventType.MODEL_REQUEST_BLOCKED, {"task_id": task.task_id, "reason": task.last_error}, task.task_id)
+                return "blocked"
+            if self.safe_mode and not task.metadata.get("read_only", False):
+                task.status = RuntimeTaskStatus.WAITING
+                task.last_error = "safe mode blocks side-effecting model workflow"
+                self.queue.update(task)
+                return "waiting"
+            self._transition(RuntimeState.EXECUTING, "bounded model inference through ModelIntelligence")
+            response = self.model_intelligence.infer(request)
+            task.metadata["model_response"] = response.to_dict()
+            task.metadata["verified"] = bool(response.verified)
+            task.metadata["verification_required"] = not bool(response.verified)
+            self._model_requests.pop(str(model_request_id), None)
+            if response.success:
+                task.status = RuntimeTaskStatus.COMPLETED
+                task.progress = "completed"
+                self.queue.update(task)
+                self._emit(EventType.RUNTIME_TASK_COMPLETED, {"task_id": task.task_id, "model_id": request.model_id, "verified": response.verified}, task.task_id)
+                return "completed"
+            task.status = RuntimeTaskStatus.BLOCKED if response.status is InferenceStatus.BLOCKED else RuntimeTaskStatus.FAILED
+            task.progress = "blocked" if task.status is RuntimeTaskStatus.BLOCKED else "failed"
+            task.last_error = response.error or response.status.value
+            self.queue.update(task)
+            self._emit(EventType.RUNTIME_TASK_FAILED, {"task_id": task.task_id, "model_id": request.model_id, "error": task.last_error}, task.task_id)
+            return "failed"
         specialist_task_id = task.metadata.get("specialist_task_id")
         if specialist_task_id:
             if self.specialist_delegation is None:

@@ -24,6 +24,7 @@ from .world import EnvironmentObserver, WorldModelEngine, WorldRefreshEngine
 from .runtime import AgentRuntime, RuntimeSchedule, ScheduleKind, TaskPriority, TaskSource
 from .external import ExternalAccessPolicy, ExternalIntegrationManager, ExternalOperationRisk, integration_operation_from_row
 from .specialist import SpecialistDelegationEngine, SpecialistRisk
+from .model_intelligence import DeterministicTestAdapter, ModelBenchmark, ModelIntelligence
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -186,6 +187,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-specialist-evidence", dest="show_specialist_evidence", metavar="EVIDENCE_ID", help="Show one specialist evidence record")
     parser.add_argument("--list-specialist-conflicts", action="store_true", help="List specialist evidence conflicts")
     parser.add_argument("--show-conflicts", dest="show_conflicts", action="store_true", help="Show specialist evidence conflicts")
+    parser.add_argument("--list-models", action="store_true", help="List registered model records")
+    parser.add_argument("--show-model", metavar="MODEL_ID", help="Show one registered model")
+    parser.add_argument("--model-health", nargs="?", const="", default=None, metavar="MODEL_ID", help="Show model health, optionally for one model")
+    parser.add_argument("--find-models", metavar="QUERY", help="Find models by name, provider, or capability")
+    parser.add_argument("--analyze-model-selection", metavar="GOAL", help="Analyze deterministic model selection for a goal")
+    parser.add_argument("--model-evaluation", metavar="MODEL_ID", help="Run a bounded deterministic model evaluation")
+    parser.add_argument("--compare-models", nargs=2, metavar=("MODEL_A", "MODEL_B"), help="Compare two registered models")
+    parser.add_argument("--list-learning", action="store_true", help="List bounded learning records")
+    parser.add_argument("--show-learning", metavar="LEARNING_ID", help="Show one learning record")
+    parser.add_argument("--learning-stats", action="store_true", help="Show bounded learning statistics")
+    parser.add_argument("--model-routing-report", action="store_true", help="Show persisted model routing records")
     return parser
 
 
@@ -199,7 +211,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.list_models or args.show_model or args.model_health is not None or args.find_models or args.analyze_model_selection or args.model_evaluation or args.compare_models or args.list_learning or args.show_learning or args.learning_stats or args.model_routing_report):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -225,14 +237,17 @@ def inspect_command(args: argparse.Namespace) -> bool:
     specialist_manager = None
     if args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.run_goal:
         specialist_manager = SpecialistDelegationEngine(store, workspace, memory=memory, capability_intelligence=capability_intelligence, external_integrations=external_manager)
+    model_intelligence = None
+    if args.list_models or args.show_model or args.model_health is not None or args.find_models or args.analyze_model_selection or args.model_evaluation or args.compare_models or args.list_learning or args.show_learning or args.learning_stats or args.model_routing_report or args.run_goal:
+        model_intelligence = ModelIntelligence(store, workspace, adapters={"model_deterministic": DeterministicTestAdapter("model_deterministic")}, external_integrations=external_manager, evolution_orchestrator=orchestrator)
     runtime = None
     if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.external_enqueue or args.approve_external_operation or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task:
-        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager, specialist_delegation=specialist_manager)
+        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager, specialist_delegation=specialist_manager, model_intelligence=model_intelligence)
     cognitive = None
     if args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal:
         adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
         kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
-        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator, external_integrations=external_manager, specialist_delegation=specialist_manager)
+        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator, external_integrations=external_manager, specialist_delegation=specialist_manager, model_intelligence=model_intelligence)
     if args.runtime_start:
         print_json(runtime.start().to_dict())
     elif args.runtime_stop:
@@ -266,6 +281,32 @@ def inspect_command(args: argparse.Namespace) -> bool:
         print_json(runtime.heartbeat.beat().to_dict())
     elif args.runtime_health:
         print_json(runtime.health().to_dict())
+    elif args.list_models:
+        print_json([item.to_dict() for item in model_intelligence.list_models()])
+    elif args.show_model:
+        item = model_intelligence.registry.get(args.show_model)
+        print_json(item.to_dict() if item else {"error": "model not found", "model_id": args.show_model})
+    elif args.model_health is not None:
+        print_json(model_intelligence.model_health(args.model_health or None))
+    elif args.find_models:
+        query = args.find_models.lower()
+        print_json([item.to_dict() for item in model_intelligence.list_models() if query in str(item.to_dict()).lower()])
+    elif args.analyze_model_selection:
+        terms = [token for token in ("reasoning", "planning", "coding", "analysis", "summarization", "extraction", "classification", "vision", "tool_use", "structured_output", "long_context") if token.replace("_", " ") in args.analyze_model_selection.lower()]
+        selection = model_intelligence.select_model("cli-model-selection", args.analyze_model_selection, capability_requirements=terms or ["reasoning"])
+        print_json(selection.to_dict())
+    elif args.model_evaluation:
+        print_json(model_intelligence.evaluator.evaluate(args.model_evaluation, ModelBenchmark("cli-model-benchmark", "1", [{"task_id": "cli", "input": "deterministic inspection"}], 1, 0), model_intelligence.adapters.get(args.model_evaluation)).to_dict())
+    elif args.compare_models:
+        print_json(model_intelligence.evaluator.compare(args.compare_models, ModelBenchmark("cli-model-comparison", "1", [{"task_id": "cli", "input": "deterministic inspection"}], 1, 0), model_intelligence.adapters).to_dict())
+    elif args.list_learning:
+        print_json({"observations": store.find_learning_observations(limit=200), "outcomes": store.find_learning_outcomes(limit=200), "adjustments": store.find_learning_adjustments(limit=200)})
+    elif args.show_learning:
+        print_json(store.learning_adjustment_by_id(args.show_learning) or next((row for row in store.find_learning_observations(limit=1000) if row.get("observation_id") == args.show_learning), {"error": "learning record not found", "learning_id": args.show_learning}))
+    elif args.learning_stats:
+        print_json(model_intelligence.learning.statistics())
+    elif args.model_routing_report:
+        print_json(store.find_model_selections(limit=200))
     elif args.list_specialists:
         print_json([item.to_dict() for item in specialist_manager.registry.list()])
     elif args.show_specialist:

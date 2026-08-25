@@ -804,7 +804,7 @@ class CognitivePersistence:
 class CognitiveOrchestrator:
     """Bounded cognitive coordinator. Kernel, security, approvals, and Phase 9 remain authoritative."""
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None, specialist_delegation: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -835,6 +835,7 @@ class CognitiveOrchestrator:
         self.world_intelligence: WorldModelEngine | None = None
         self.external_integrations = external_integrations or integration_intelligence
         self.specialist_delegation = specialist_delegation
+        self.model_intelligence = model_intelligence
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)
@@ -889,6 +890,15 @@ class CognitiveOrchestrator:
             if external_candidates:
                 plan.rationale += f" External integration discovery found {len(external_candidates)} registered candidate(s); execution remains Kernel-authorized."
         self._capability_analyses = self._analyze_capabilities(goal, graph)
+        if self.model_intelligence is not None:
+            try:
+                model_requirements = [str(item.requirement.capability_id) for item in self._capability_analyses]
+                model_selection = self.model_intelligence.select_model(goal.goal_id, goal.normalized_goal, capability_requirements=model_requirements, context_requirements={"min_context_tokens": min(12000, len(goal.normalized_goal) + len(json.dumps(self._memory_context.to_dict() if self._memory_context else {})))}, risk=RiskLevel.LOW, task={"structured_output": False})
+                decisions.append({"goal_id": goal.goal_id, "decision_type": "model_selection", "selected_model_id": model_selection.selected_model_id, "alternatives": model_selection.fallback_model_ids, "reason": model_selection.explanation, "confidence": model_selection.confidence, "execution_authority": "kernel", "verification_authority": "cognitive_verifier", "created_at": utc_now()})
+                if model_selection.selected_model_id:
+                    plan.rationale += f" Model Intelligence selected {model_selection.selected_model_id} as an advisory routing decision; execution remains Kernel-authorized."
+            except Exception as exc:
+                decisions.append({"goal_id": goal.goal_id, "decision_type": "model_selection", "selected_model_id": None, "reason": f"Model selection unavailable: {type(exc).__name__}", "execution_authority": "kernel", "created_at": utc_now()})
         if self.specialist_delegation is not None and self.specialist_delegation.is_complex_goal(goal.normalized_goal, len(graph.nodes)):
             required = [str(item.requirement.capability_id) for item in self._capability_analyses]
             specialist_candidates = self.specialist_delegation.discover_for_goal(goal.normalized_goal, required_capabilities=required or None)

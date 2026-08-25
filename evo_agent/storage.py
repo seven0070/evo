@@ -971,6 +971,58 @@ class SQLiteStore:
                     payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_specialist_health_specialist ON specialist_health(specialist_id, observed_at);
+                CREATE TABLE IF NOT EXISTS model_providers (
+                    provider_id TEXT PRIMARY KEY, name TEXT NOT NULL, provider_type TEXT NOT NULL,
+                    lifecycle_state TEXT NOT NULL, enabled INTEGER NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS models (
+                    model_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, name TEXT NOT NULL,
+                    version TEXT NOT NULL, lifecycle_state TEXT NOT NULL, enabled INTEGER NOT NULL,
+                    health_state TEXT NOT NULL, architecture_version TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_models_provider_state ON models(provider_id, lifecycle_state);
+                CREATE TABLE IF NOT EXISTS model_capabilities (
+                    capability_id TEXT PRIMARY KEY, model_id TEXT NOT NULL, name TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS model_health (
+                    health_id TEXT PRIMARY KEY, model_id TEXT NOT NULL, observed_at TEXT NOT NULL,
+                    state TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_model_health_model ON model_health(model_id, observed_at);
+                CREATE TABLE IF NOT EXISTS model_evaluations (
+                    evaluation_id TEXT PRIMARY KEY, model_id TEXT NOT NULL, benchmark_id TEXT NOT NULL,
+                    decision TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS model_trials (
+                    trial_id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, model_id TEXT NOT NULL,
+                    benchmark_id TEXT NOT NULL, trial_number INTEGER NOT NULL, success INTEGER NOT NULL,
+                    verified INTEGER NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS model_selection_records (
+                    selection_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, model_id TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_model_selection_task ON model_selection_records(task_id, created_at);
+                CREATE TABLE IF NOT EXISTS learning_observations (
+                    observation_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS learning_outcomes (
+                    outcome_id TEXT PRIMARY KEY, observation_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS learning_adjustments (
+                    adjustment_id TEXT PRIMARY KEY, status TEXT NOT NULL, affected_component TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_adjustments_component ON learning_adjustments(affected_component, created_at);
+                CREATE TABLE IF NOT EXISTS learning_policies (
+                    policy_id TEXT PRIMARY KEY, version TEXT NOT NULL, enabled INTEGER NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
@@ -2408,3 +2460,154 @@ class SQLiteStore:
             else:
                 rows = db.execute("SELECT * FROM specialist_health ORDER BY observed_at DESC LIMIT ?", (limit,)).fetchall()
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    # Phase 17 Model & Learning Intelligence persistence.
+    def save_model_provider(self, provider: Any) -> None:
+        payload = provider.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO model_providers(provider_id, name, provider_type, lifecycle_state, enabled, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (provider.provider_id, provider.name, provider.provider_type.value, provider.lifecycle_state.value, int(provider.enabled), json.dumps(payload), provider.created_at, provider.updated_at))
+
+    def model_provider_by_id(self, provider_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM model_providers WHERE provider_id = ?", (provider_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row); result["payload"] = json.loads(result["payload"]); return result
+
+    def find_model_providers(self, enabled: bool | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = "SELECT * FROM model_providers"; values: list[Any] = []
+        if enabled is not None:
+            query += " WHERE enabled = ?"; values.append(int(enabled))
+        query += " ORDER BY name, provider_id LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_model(self, model: Any) -> None:
+        payload = model.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO models(model_id, provider_id, name, version, lifecycle_state, enabled, health_state, architecture_version, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (model.model_id, model.provider_id, model.name, model.version, model.lifecycle_state.value, int(model.enabled), model.health.state.value, model.architecture_version, json.dumps(payload), model.created_at, model.updated_at))
+            db.execute("DELETE FROM model_capabilities WHERE model_id = ?", (model.model_id,))
+            for capability in model.capabilities:
+                db.execute("INSERT OR REPLACE INTO model_capabilities(capability_id, model_id, name, payload, created_at) VALUES (?, ?, ?, ?, ?)", (capability.capability_id, model.model_id, capability.name, json.dumps(capability.to_dict()), capability.created_at))
+
+    def model_by_id(self, model_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM models WHERE model_id = ?", (model_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row); result["payload"] = json.loads(result["payload"]); return result
+
+    def find_models(self, provider_id: str | None = None, enabled: bool | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []; values: list[Any] = []
+        if provider_id: clauses.append("provider_id = ?"); values.append(provider_id)
+        if enabled is not None: clauses.append("enabled = ?"); values.append(int(enabled))
+        query = "SELECT * FROM models" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY name, version, model_id LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_model_health(self, model_id: str, health: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT INTO model_health(health_id, model_id, observed_at, state, payload) VALUES (?, ?, ?, ?, ?)", (new_id("model_health"), model_id, utc_now(), health.state.value, json.dumps(health.to_dict())))
+
+    def find_model_health(self, model_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM model_health"; values: list[Any] = []
+        if model_id: query += " WHERE model_id = ?"; values.append(model_id)
+        query += " ORDER BY observed_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_model_evaluation(self, evaluation: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO model_evaluations(evaluation_id, model_id, benchmark_id, decision, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)", (evaluation.evaluation_id, evaluation.model_id, evaluation.benchmark_id, evaluation.decision.value, json.dumps(evaluation.to_dict()), evaluation.created_at))
+
+    def model_evaluation_by_id(self, evaluation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM model_evaluations WHERE evaluation_id = ?", (evaluation_id,)).fetchone()
+        if not row: return None
+        result = dict(row); result["payload"] = json.loads(result["payload"]); return result
+
+    def find_model_evaluations(self, model_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM model_evaluations"; values: list[Any] = []
+        if model_id: query += " WHERE model_id = ?"; values.append(model_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_model_trial(self, trial: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO model_trials(trial_id, evaluation_id, model_id, benchmark_id, trial_number, success, verified, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (trial.trial_id, trial.evaluation_id, trial.model_id, trial.benchmark_id, trial.trial_number, int(trial.success), int(trial.verified), json.dumps(trial.to_dict()), trial.created_at))
+
+    def find_model_trials(self, evaluation_id: str | None = None, model_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        clauses: list[str] = []; values: list[Any] = []
+        if evaluation_id: clauses.append("evaluation_id = ?"); values.append(evaluation_id)
+        if model_id: clauses.append("model_id = ?"); values.append(model_id)
+        query = "SELECT * FROM model_trials" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY trial_number, created_at LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_model_selection(self, selection: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO model_selection_records(selection_id, task_id, model_id, payload, created_at) VALUES (?, ?, ?, ?, ?)", (selection.selection_id, selection.task_id, selection.selected_model_id or "", json.dumps(selection.to_dict()), selection.created_at))
+
+    def find_model_selections(self, task_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM model_selection_records"; values: list[Any] = []
+        if task_id: query += " WHERE task_id = ?"; values.append(task_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_learning_observation(self, observation: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO learning_observations(observation_id, task_id, payload, created_at) VALUES (?, ?, ?, ?)", (observation.observation_id, observation.task_id, json.dumps(observation.to_dict()), observation.created_at))
+
+    def find_learning_observations(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM learning_observations ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_learning_outcome(self, outcome: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO learning_outcomes(outcome_id, observation_id, payload, created_at) VALUES (?, ?, ?, ?)", (outcome.outcome_id, outcome.observation_id, json.dumps(outcome.to_dict()), outcome.created_at))
+
+    def find_learning_outcomes(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM learning_outcomes ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_learning_adjustment(self, adjustment: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO learning_adjustments(adjustment_id, status, affected_component, payload, created_at) VALUES (?, ?, ?, ?, ?)", (adjustment.adjustment_id, adjustment.status.value, adjustment.affected_component, json.dumps(adjustment.to_dict()), adjustment.created_at))
+
+    def learning_adjustment_by_id(self, adjustment_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM learning_adjustments WHERE adjustment_id = ?", (adjustment_id,)).fetchone()
+        if not row: return None
+        result = dict(row); result["payload"] = json.loads(result["payload"]); return result
+
+    def find_learning_adjustments(self, affected_component: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_adjustments"; values: list[Any] = []
+        if affected_component: query += " WHERE affected_component = ?"; values.append(affected_component)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_learning_policy(self, policy: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO learning_policies(policy_id, version, enabled, payload, created_at) VALUES (?, ?, ?, ?, ?)", (policy.policy_id, policy.version, int(policy.enabled), json.dumps(policy.to_dict()), policy.created_at))
+
+    def find_learning_policies(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM learning_policies ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def count_models(self) -> int:
+        with self._connect() as db:
+            row = db.execute("SELECT COUNT(*) AS count FROM models").fetchone()
+        return int(row["count"]) if row else 0

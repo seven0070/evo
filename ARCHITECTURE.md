@@ -791,3 +791,92 @@ Cognitive planning may record advisory specialist discovery for complex goals. D
 Phase 16 persistence adds `specialists`, `specialist_capabilities`, `specialist_tasks`, `specialist_contracts`, `specialist_messages`, `specialist_results`, `specialist_evidence`, `delegation_runs`, `evidence_fusions`, `evidence_conflicts`, and `specialist_health` to the existing SQLite architecture. The runtime and Cognitive layers consume these records through the existing shared store.
 
 The implementation intentionally excludes autonomous approval, autonomous promotion, specialist governance, unrestricted specialist tool or network access, arbitrary code execution, arbitrary provider installation, specialist self-replication, protected-core or production mutation, memory-to-policy conversion, and any Phase 17 functionality.
+
+
+## Model and Learning Intelligence Layer
+
+Phase 17 adds a governed model-selection and learning layer above the verified Phase 1–16 architecture. It supplies intelligence and evidence while preserving the existing authority hierarchy.
+
+```text
+Cognitive Goal
+      ↓
+Task Requirements + Context
+      ↓
+Model Discovery / Capability Match
+      ↓
+Deterministic Model Router
+      ↓
+Bounded Fallback Plan
+      ↓
+Runtime-Bounded Inference
+      ↓
+Kernel / Verifier Authority
+      ↓
+Experience + Evaluation
+      ↓
+Learning Observation + Evidence
+      ↓
+Bounded Reversible Routing Adjustment
+      ↓
+Future Governed Evolution Proposal
+```
+
+| Layer | Phase 17 responsibility | Authority it does not receive |
+|---|---|---|
+| Model Registry | Persist provider-neutral model metadata, capabilities, limits, health, policy, lifecycle, and provenance | It cannot grant provider access, permissions, or approval |
+| Provider Adapter | Perform bounded availability, discovery, inference, structured-output, tool-call, stream, and health operations | It cannot execute arbitrary tools, install plugins, or become a Kernel |
+| Model Router | Rank eligible models deterministically and explain selection and fallback | It cannot override governance, Runtime limits, risk, approvals, or the Verifier |
+| Model Evaluator | Run identical deterministic trials and compare task, verification, validity, latency, and reliability evidence | It cannot treat self-reported confidence as proof or promote a model |
+| Learning Engine | Persist observations and apply bounded, reversible, auditable selection-statistic adjustments | It cannot alter protected architecture, governance, permissions, approvals, verifier, sandbox, promotion, rollback, or kill switch |
+| Cognitive / Specialist integration | Derive requirements and record advisory model selections | It cannot directly execute models outside the existing Kernel/Runtime path |
+| Runtime | Queue and bound model operations by deadline, timeout, resources, safe mode, retry, shutdown, and kill switch | It cannot bypass the Kernel, External Access Policy, or final verification |
+
+### Registry and provider boundary
+
+`ModelProvider`, `Model`, `ModelVersion`, `ModelCapability`, `ModelContextProfile`, `ModelCostProfile`, `ModelPerformanceProfile`, `ModelHealth`, `ModelProvenance`, and `ModelPolicy` are persisted in the existing SQLite database. Credential values are rejected from provider/model metadata and endpoints. Only a credential reference such as an environment-variable name may be recorded; secret material is never persisted, logged, placed in memory, or included in model requests stored by Runtime.
+
+`ProviderAdapter` is provider-neutral. The deterministic test adapter and local adapter work offline. OpenAI-compatible and Anthropic-compatible adapters remain bounded implementations behind the interface. Provider discovery is advisory and untrusted; discovered metadata is validated before registry insertion and cannot install arbitrary providers or plugins.
+
+Every `InferenceRequest` carries model/provider identity, task ID, purpose, input classification, output schema, timeout, resource limits, permission context, correlation ID, risk, and optional tool schema. Requests fail before adapter execution when malformed, over budget, out of scope, missing an approved provider boundary, or targeting protected authority. Responses are bounded, schema-validated, provenance-bearing, and untrusted until processed through the existing governed verification path.
+
+### Deterministic routing and fallback
+
+`ModelRouter` evaluates required capabilities, context limits, output requirements, risk, resource ceilings, lifecycle, health and circuit state, provider/network policy, historical evidence, specialist preferences, latency, cost, and bounded learning scores. Identical registry metadata and request requirements produce the same ranking and explanation. A model cannot select itself as authoritative. `ModelFallbackEngine` produces a finite fallback plan; alternate providers remain subject to Phase 15 External Access Policy, credential isolation, permissions, approvals, rate limits, timeouts, and Runtime controls.
+
+`ModelContextManager` constructs task-scoped context from bounded goal/input, relevant memory, environment evidence, specialist context, and external observations. It enforces byte and output budgets, records content hashes and provenance when truncating, and never silently exceeds model or Runtime limits. Complete prompts and responses are not automatically persisted.
+
+### Evaluation and evidence
+
+`ModelEvaluationEngine` runs versioned `ModelBenchmark` tasks with fixed inputs, bounded trial counts, deterministic seeds, identical task contracts, and controlled output validation. `ModelTrial` records success, authoritative verification, output validity, latency, resource use, failure category, retry count, output hash, and reproducibility metadata. `ModelComparison` classifies results as `BETTER`, `NO_CHANGE`, `WORSE`, or `INCONCLUSIVE`; safety and verification failures remain hard gates.
+
+Model-performance evidence is captured into Experience, Evaluation, and metadata-only Memory records. Learning evidence excludes prompts, messages, responses, outputs, payloads, tool calls, and secrets. Provider failures, model failures, tool failures, environment failures, specialist failures, reasoning failures, verification failures, and external-provider failures remain distinguishable evidence categories.
+
+### Governed learning boundary
+
+`LearningObservation`, `LearningOutcome`, `LearningAdjustment`, `LearningPolicy`, and `LearningEvidence` provide an inspectable adaptation record. An adjustment includes source evidence, previous and proposed values, reason, expected benefit, confidence, risk, affected component, evaluator version, timestamp, architecture version, and rollback value. Minimum evidence, confidence threshold, maximum delta, cooldown, version compatibility, bounded pending count, decay, and rollback prevent one task from radically changing routing behavior.
+
+Exploration is deterministic and bounded by configured rate, task eligibility, risk ceiling, resource ceiling, seed, and rollback evidence. High-risk work is not automatically explored with unapproved models. Learning can influence only bounded selection evidence such as model, strategy, specialist, tool, fallback, or context-size preference. It does not modify weights, architecture, registry schema, adapters, governance, permissions, approval logic, verifier, sandbox, promotion rules, rollback authority, production, or the kill switch.
+
+> **Models provide intelligence; they do not become authorities.**
+
+The authoritative chain remains:
+
+```text
+Governance / Policy authorize
+        ↓
+Runtime bounds and schedules
+        ↓
+Kernel executes
+        ↓
+Verifier confirms
+        ↓
+Experience and Evaluation measure
+        ↓
+Model Intelligence advises
+        ↓
+Learning records bounded evidence
+        ↓
+Evolver may propose; existing approvals and promotion remain separate
+```
+
+Phase 17 intentionally does not add autonomous model training, unrestricted weight modification, arbitrary endpoint access, arbitrary provider/plugin installation, credential storage, silent learning, irreversible routing changes, autonomous approval, autonomous promotion, protected-core mutation, production mutation, or Phase 18 functionality.
