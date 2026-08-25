@@ -601,3 +601,40 @@ Learning cycles are finite, persistent, restart-safe, pausable, cancellable thro
 Phase 18 inspection commands include `--learning-status`, `--learning-cycle`, `--list-learning-patterns`, `--show-learning-pattern`, `--list-learning-hypotheses`, `--show-learning-hypothesis`, `--list-adaptive-policies`, `--show-adaptive-policy`, `--list-adjustments`, `--show-adjustment`, `--learning-evaluate`, `--learning-rollback`, `--learning-feedback`, and `--learning-stats`.
 
 Phase 18 intentionally excludes autonomous approval, promotion, deployment, governance or security modification, unrestricted training or weight modification, arbitrary code or plugin execution, credential storage, unrestricted network access, protected-core or production mutation, self-replication, uncontrolled agent spawning, and uncontrolled learning daemons. The Kernel remains the sole execution authority and the Verifier remains the sole authority for determining whether requested outcomes actually occurred.
+
+
+## Self-Model and Meta-Cognition Intelligence Layer
+
+Phase 19 adds a bounded, inspectable **Self-Model and Meta-Cognition Intelligence Layer**. Self-modeling describes Evo's current capabilities, limitations, reliability, uncertainty, assumptions, readiness, freshness, and operating constraints from authoritative registries and verified evidence. Meta-reasoning evaluates whether a goal is ready for bounded execution, requires clarification, needs human approval, has insufficient evidence, or should be refused. Neither subsystem is an authority.
+
+`SelfModelEngine` persists claims, snapshots, limitations, assumptions, uncertainty, conflicts, reliability summaries, freshness, and provenance in the existing SQLite database. Claims are generated from the existing Capability, Tool, Model, Specialist, External Integration, World, Runtime, Learning, Governance, Kernel, and Verifier surfaces. Current state is revalidated on refresh; stale, expired, missing, contradictory, or untrusted information is labeled rather than fabricated. Environment, version, capability, model, specialist, and architecture drift can invalidate relevant self-model claims.
+
+`MetaReasoningEngine` provides bounded decision readiness, clarification intelligence, human-escalation recommendations, confidence calibration, uncertainty disclosure, safer alternatives, and refusal recommendations. Its output is advisory evidence only. It cannot execute work, grant permission, satisfy approval, replace the Verifier, clear the kill switch, modify Governance, promote itself, change the protected core, access credentials, or override Runtime, Sandbox, Evolution, Metamorphosis, Promotion, or Rollback.
+
+Self-diagnostics query existing authorities for database, Runtime, model, tool, capability, specialist, integration, environment, learning, evolution-queue, and rollback health. The layer does not create a duplicate health system. Structured post-task reflection records what was attempted, succeeded, failed, assumed, selected, verified, remembered, and whether bounded Learning or Evolution evidence should be generated. Self-critique checks unsupported completion, success, verification, availability, and safety claims against authoritative evidence; confidence is never verification.
+
+Persistent records include `self_model_claims`, `self_model_snapshots`, `self_model_limitations`, `self_model_assumptions`, `self_model_uncertainty`, `self_model_conflicts`, `decision_readiness`, `meta_reasoning_records`, `confidence_calibration`, `self_reflections`, and `self_diagnostics`. Each record includes provenance, timestamps, architecture and environment identity, lifecycle or status, and bounded evidence references. Sensitive prompts, responses, credentials, arbitrary payloads, and executable content are excluded from metadata-only Memory capture.
+
+Phase 19 operations can run through the existing bounded AgentRuntime queue as finite, resource-limited, restart-safe, cancellable, pausable, safe-mode-aware, and kill-switch-aware operations. No uncontrolled daemon or autonomous reflection loop is started by importing Evo. Cognitive may receive meta-reasoning and self-model references for advisory annotations, while the existing Cognitive, Kernel, Runtime, Governance, and Verifier authorities remain unchanged.
+
+Phase 19 controls include:
+
+```bash
+evo --self-model --workspace ./workspace
+evo --self-model-refresh --workspace ./workspace
+evo --self-model-status --workspace ./workspace
+evo --self-model-claims --workspace ./workspace
+evo --self-model-limitations --workspace ./workspace
+evo --self-model-assumptions --workspace ./workspace
+evo --self-model-uncertainty --workspace ./workspace
+evo --self-model-conflicts --workspace ./workspace
+evo --decision-readiness "prepare a verified report" --workspace ./workspace
+evo --meta-reason "prepare a verified report" --workspace ./workspace
+evo --self-diagnostics --workspace ./workspace
+evo --self-reflect TASK_ID --workspace ./workspace
+evo --confidence-report --workspace ./workspace
+```
+
+Persistent limitations are converted into evidence for the existing Phase 9 EvolutionOrchestrator or, for structural limitations, the existing Phase 8/9 Metamorphosis pipeline. Self-modeling never mutates source, architecture, production, governance, permissions, security, or protected authorities directly.
+
+> **Self-modeling informs decisions; it does not become an authority.**

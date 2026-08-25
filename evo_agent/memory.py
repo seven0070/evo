@@ -695,6 +695,15 @@ class MemoryManager:
         safe["bounded_learning_evidence"] = True
         return self.store(self._record(MemoryType.EPISODIC, f"Bounded learning evidence for {safe.get('affected_component', safe.get('model_id', 'unknown'))}.", "bounded learning metadata", ProvenanceSource.EVALUATION, str(safe.get("source_id", new_memory_id())), ConfidenceLevel.MEDIUM, 0.6, 0.5, metadata=safe))
 
+    def capture_self_model(self, evidence: dict[str, Any]) -> MemoryRecord:
+        """Persist bounded self-model metadata; claims and execution content remain outside memory."""
+        blocked = {"claim", "claims", "context", "input", "prompt", "messages", "response", "output", "content", "payload", "inference", "executable"}
+        safe = {key: value for key, value in dict(evidence).items() if key not in blocked}
+        safe["bounded_self_model_evidence"] = True
+        safe["executable"] = False
+        subject = str(safe.get("subject", safe.get("operation", "self-model")))
+        return self.store(self._record(MemoryType.EPISODIC, f"Bounded self-model evidence for {subject}.", "bounded self-model metadata", ProvenanceSource.EVALUATION, str(safe.get("source_id", new_memory_id())), ConfidenceLevel.MEDIUM, 0.6, 0.5, metadata=safe))
+
     def capture_user_memory(self, content: str, summary: str = "", key: str = "", source_id: str = "user", importance: float = 0.8, expiration: str | None = None) -> MemoryRecord:
         return self.store(self._record(MemoryType.USER, content, summary or _summary(content), ProvenanceSource.USER_INPUT, source_id, ConfidenceLevel.HIGH, 0.95, importance, expiration=expiration, key=key, metadata={"user_owned": True, "explicit_action_required": True}))
 

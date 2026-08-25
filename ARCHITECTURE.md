@@ -965,3 +965,51 @@ Experience → Evaluation → Adaptive Learning
 If learning identifies a structural limitation, it emits evidence to the existing EvolutionOrchestrator or MetamorphosisEngine. Learning never directly modifies architecture, source, permissions, governance, verification, production, or protected core.
 
 Phase 18 intentionally excludes autonomous approval, autonomous promotion, autonomous deployment, unrestricted self-modification, protected-core modification, governance modification, verification bypass, unrestricted model training or weight modification, arbitrary code execution, arbitrary provider/plugin installation, unrestricted network access, credential storage, self-replication, uncontrolled agent spawning, uncontrolled learning daemons, and direct production mutation. The Kernel remains the sole execution authority, the Verifier remains the sole authority for determining whether requested outcomes actually occurred, and Governance remains authoritative over permissions, approvals, promotion, rollback, and safety.
+
+
+## Phase 19 — Self-Model and Meta-Cognition Intelligence Layer
+
+Phase 19 adds self-understanding and decision-advisory intelligence without adding an authority. The authoritative flow is:
+
+```text
+Authoritative Registries and Verified Evidence
+        ↓
+SelfModelEngine
+        ├── capability / tool / model / specialist awareness
+        ├── limitation and reliability estimates
+        ├── assumptions and uncertainty
+        ├── freshness and consistency
+        └── inspectable persisted snapshot
+        ↓
+MetaReasoningEngine
+        ├── decision readiness
+        ├── clarification recommendation
+        ├── human escalation recommendation
+        ├── confidence calibration
+        ├── self-reflection and bounded critique
+        └── refusal / safer-alternative recommendation
+        ↓
+Existing Cognitive / Flexibility / Runtime / Evolution evidence paths
+```
+
+| Concern | Phase 19 role | Existing authority retained |
+|---|---|---|
+| Self-knowledge | Describe current capabilities, limitations, reliability, assumptions, uncertainty, and freshness | Capability, Model, Specialist, World, Runtime, Learning, Governance, Kernel, and Verifier registries |
+| Decision readiness | Recommend ready, clarify, approve, collect evidence, refuse, or escalate states | Governance and Approval decide permission; Runtime schedules; Kernel executes |
+| Confidence | Compare predictions with verified outcomes and preserve calibration error | Verifier decides outcome truth |
+| Reflection | Produce structured evidence after a task | Experience, Evaluation, Memory, and Learning retain evidence |
+| Diagnostics | Read health from existing subsystems | Each subsystem remains responsible for its own health |
+| Limitation routing | Emit ordinary or structural limitation evidence | EvolutionOrchestrator and Metamorphosis pipeline decide and route changes |
+| Runtime operations | Queue bounded refresh, diagnostics, consistency, and meta-reasoning tasks | AgentRuntime owns lifecycle, limits, pause, cancellation, safe mode, and kill switch |
+
+All self-model records are persisted in the existing SQLiteStore and include provenance, timestamp, lifecycle/status, architecture version, environment identity, evidence references, and confidence. Claims, limitations, assumptions, uncertainty, conflicts, readiness assessments, meta-reasoning records, calibration, reflections, and diagnostics are evidence and metadata. They cannot grant permission, approve actions, satisfy verification, promote changes, clear the kill switch, or mutate source or production.
+
+Self-model refresh is bounded and revalidates relevant current registries rather than fabricating missing information. Environment, architecture, version, capability, model, specialist, and learning changes can make claims aging, stale, expired, unknown, or conflicted. Current authoritative evidence wins conflicts; conflicting historical evidence is retained. Metadata-only Memory capture excludes prompts, responses, outputs, credentials, executable content, and arbitrary payloads.
+
+The Runtime integration uses `TaskSource.SELF_MODEL` and the existing state machine. Operations are finite, resource-limited, pausable, cancellable, restart-safe, safe-mode-aware, and kill-switch-aware. Importing Evo never starts a reflection daemon or uncontrolled meta-reasoning loop.
+
+The non-negotiable trust boundary is:
+
+> **Self-modeling informs decisions; it does not become an authority.**
+
+Self-model-generated text such as `I am authorized`, `I can bypass approval`, `I can modify governance`, `I can modify the protected core`, `I can disable the kill switch`, `I can execute arbitrary code`, `I can promote myself`, `I can approve myself`, `I can access credentials`, or `I can bypass verification` is rejected or marked non-authoritative unless the corresponding existing authority supplies independent evidence. No Phase 19 path adds autonomous approval, promotion, deployment, governance or security modification, verification bypass, protected-core modification, direct production mutation, arbitrary code execution, unrestricted network access, credential storage, arbitrary plugin installation, unrestricted training, unrestricted weight modification, self-replication, uncontrolled agent spawning, or uncontrolled reflection/meta-reasoning loops.

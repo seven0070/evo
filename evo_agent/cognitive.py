@@ -804,7 +804,7 @@ class CognitivePersistence:
 class CognitiveOrchestrator:
     """Bounded cognitive coordinator. Kernel, security, approvals, and Phase 9 remain authoritative."""
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -837,6 +837,8 @@ class CognitiveOrchestrator:
         self.specialist_delegation = specialist_delegation
         self.model_intelligence = model_intelligence
         self.adaptive_learning = adaptive_learning
+        self.self_model = self_model
+        self.meta_reasoning = meta_reasoning
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)
@@ -853,6 +855,12 @@ class CognitiveOrchestrator:
         intent = self.intent_engine.build(goal)
         state = CognitiveStateRecord(goal.goal_id, CognitiveState.UNDERSTANDING)
         decisions: list[dict[str, Any]] = []
+        if self.meta_reasoning is not None:
+            try:
+                meta_record = self.meta_reasoning.reason(text, {"clarified": goal.ambiguity is AmbiguityStatus.CLEAR, "missing_requirements": goal.missing_requirements}, goal.goal_id)
+                decisions.append({"goal_id": goal.goal_id, "decision_type": "meta_reasoning", "record_id": meta_record.record_id, "recommendation": meta_record.recommendation, "confidence": meta_record.confidence, "execution_authority": "kernel", "verification_authority": "cognitive_verifier", "created_at": utc_now()})
+            except Exception as exc:
+                decisions.append({"goal_id": goal.goal_id, "decision_type": "meta_reasoning", "recommendation": "unavailable", "reason": f"Meta-reasoning unavailable: {type(exc).__name__}", "execution_authority": "kernel", "created_at": utc_now()})
         self._persist(goal, intent, None, [], state, [], decisions)
         if goal.ambiguity is AmbiguityStatus.CRITICAL:
             state.state = CognitiveState.WAITING_FOR_INPUT

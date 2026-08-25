@@ -75,6 +75,7 @@ class TaskSource(str, Enum):
     SPECIALIST = "specialist"
     MODEL = "model"
     LEARNING = "learning"
+    SELF_MODEL = "self_model"
 
 
 class RuntimeHealthStatus(str, Enum):
@@ -727,7 +728,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -742,15 +743,19 @@ class AgentRuntime:
         self.specialist_delegation = specialist_delegation
         self.model_intelligence = model_intelligence
         self.adaptive_learning = adaptive_learning
+        self.self_model = self_model
+        self.meta_reasoning = meta_reasoning
         self._model_requests: dict[str, Any] = {}
         if self.specialist_delegation is not None:
             self.specialist_delegation.runtime = self
+        if self.self_model is not None:
+            self.self_model.runtime = self
         self.kernel = kernel
         self.cognitive = cognitive
         if self.cognitive is None:
             from .kernel import AgentKernel
             self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback, external_integrations=self.external_integrations)
-            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation, model_intelligence=self.model_intelligence)
+            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation, model_intelligence=self.model_intelligence, self_model=self.self_model, meta_reasoning=self.meta_reasoning)
         elif self.kernel is None:
             self.kernel = getattr(self.cognitive, "kernel", None)
         if self.specialist_delegation is not None and getattr(self.cognitive, "specialist_delegation", None) is None:
@@ -966,6 +971,18 @@ class AgentRuntime:
 
     queue_learning_cycle = enqueue_learning_cycle
 
+    def enqueue_self_model_operation(self, operation: str, goal: str = "bounded self-model operation", payload: dict[str, Any] | None = None, priority: TaskPriority | str = TaskPriority.BACKGROUND, resource_budget: dict[str, Any] | None = None) -> RuntimeTask:
+        if self.self_model is None:
+            raise RuntimeError("self-model is not configured")
+        metadata = {"self_model_operation": str(operation), "self_model_payload": dict(payload or {}), "read_only": True}
+        return self.enqueue_task(goal, priority=priority, source=TaskSource.SELF_MODEL, resource_budget=resource_budget, metadata=metadata)
+
+    queue_self_model_operation = enqueue_self_model_operation
+    enqueue_self_model_refresh = lambda self, **kwargs: self.enqueue_self_model_operation("refresh", "bounded self-model refresh", **kwargs)
+    enqueue_self_diagnostics = lambda self, **kwargs: self.enqueue_self_model_operation("diagnostics", "bounded self-diagnostics", **kwargs)
+    enqueue_self_consistency = lambda self, **kwargs: self.enqueue_self_model_operation("consistency", "bounded self-model consistency check", **kwargs)
+    enqueue_meta_reasoning = lambda self, goal, **kwargs: self.enqueue_self_model_operation("meta_reason", goal, payload={"goal": goal, **dict(kwargs.pop("payload", {}) or {})}, **kwargs)
+
     def run_learning_cycle(self, resource_budget: int | None = None) -> Any:
         if self.adaptive_learning is None:
             raise RuntimeError("adaptive learning is not configured")
@@ -1162,6 +1179,26 @@ class AgentRuntime:
             self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "approval_id": approval.approval_id, "reason": "approval required", "scope_hash": approval.scope_hash}, task.task_id)
             self._transition(RuntimeState.WAITING_APPROVAL, "task requires human approval")
             return "waiting"
+        if task.metadata.get("self_model_operation"):
+            if self.self_model is None:
+                task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "self-model is not configured"; self.queue.update(task); return "blocked"
+            if self.kill_switch_active:
+                task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "self-model operation blocked by runtime kill switch"; self.queue.update(task); return "blocked"
+            if hasattr(self.self_model, "set_safe_mode"): self.self_model.set_safe_mode(self.safe_mode)
+            self.self_model.kill_switch = self.kill_switch_active
+            self._transition(RuntimeState.EXECUTING, "bounded self-model operation admitted by Runtime")
+            self._transition(RuntimeState.LEARNING, "bounded self-model operation")
+            operation = str(task.metadata.get("self_model_operation")); payload = dict(task.metadata.get("self_model_payload", {}))
+            try:
+                if operation == "refresh": result = self.self_model.refresh("Runtime bounded refresh")
+                elif operation == "diagnostics": result = self.self_model.diagnostics()
+                elif operation == "consistency": result = self.self_model.consistency_check()
+                elif operation == "meta_reason" and self.meta_reasoning is not None: result = self.meta_reasoning.reason(str(payload.get("goal", task.goal)), payload)
+                else: raise RuntimeError("unsupported self-model operation")
+                task.metadata["self_model_result"] = result.to_dict() if hasattr(result, "to_dict") else result
+                task.status = RuntimeTaskStatus.COMPLETED; task.progress = "completed"; self.queue.update(task); self._emit(EventType.RUNTIME_TASK_COMPLETED, {"task_id": task.task_id, "self_model_operation": operation}, task.task_id); return "completed"
+            except Exception as exc:
+                task.status = RuntimeTaskStatus.FAILED; task.progress = "failed"; task.last_error = f"{type(exc).__name__}: {exc}"; self.queue.update(task); self._emit(EventType.RUNTIME_TASK_FAILED, {"task_id": task.task_id, "error": task.last_error}, task.task_id); return "failed"
         if task.metadata.get("learning_cycle"):
             if self.adaptive_learning is None:
                 task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "adaptive learning is not configured"; self.queue.update(task); return "blocked"

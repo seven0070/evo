@@ -1070,6 +1070,70 @@ class SQLiteStore:
                     completed_at TEXT, payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_learning_cycles_status ON learning_cycles(status, started_at);
+                CREATE TABLE IF NOT EXISTS self_model_claims (
+                    claim_id TEXT PRIMARY KEY, category TEXT NOT NULL, subject TEXT NOT NULL,
+                    confidence REAL NOT NULL, lifecycle_state TEXT NOT NULL, architecture_version TEXT NOT NULL,
+                    environment_id TEXT NOT NULL, evidence_ids TEXT NOT NULL, provenance TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_self_model_claims_subject ON self_model_claims(subject, lifecycle_state);
+                CREATE TABLE IF NOT EXISTS self_model_snapshots (
+                    snapshot_id TEXT PRIMARY KEY, active_version TEXT NOT NULL, architecture_version TEXT NOT NULL,
+                    environment_id TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_self_model_snapshots_created ON self_model_snapshots(created_at);
+                CREATE TABLE IF NOT EXISTS self_model_limitations (
+                    limitation_id TEXT PRIMARY KEY, limitation_type TEXT NOT NULL, severity TEXT NOT NULL,
+                    frequency INTEGER NOT NULL, confidence REAL NOT NULL, lifecycle_state TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL, evidence_ids TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_self_model_limitations_type ON self_model_limitations(limitation_type, lifecycle_state);
+                CREATE TABLE IF NOT EXISTS self_model_assumptions (
+                    assumption_id TEXT PRIMARY KEY, statement TEXT NOT NULL, confidence REAL NOT NULL,
+                    validation_status TEXT NOT NULL, dependent_task TEXT NOT NULL, invalidation_condition TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_self_model_assumptions_status ON self_model_assumptions(validation_status, updated_at);
+                CREATE TABLE IF NOT EXISTS self_model_uncertainty (
+                    uncertainty_id TEXT PRIMARY KEY, uncertainty_type TEXT NOT NULL, severity TEXT NOT NULL,
+                    confidence REAL NOT NULL, lifecycle_state TEXT NOT NULL, architecture_version TEXT NOT NULL,
+                    environment_id TEXT NOT NULL, evidence_ids TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS self_model_conflicts (
+                    conflict_id TEXT PRIMARY KEY, subject TEXT NOT NULL, status TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS decision_readiness (
+                    readiness_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, state TEXT NOT NULL,
+                    confidence REAL NOT NULL, architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_decision_readiness_goal ON decision_readiness(goal_id, created_at);
+                CREATE TABLE IF NOT EXISTS meta_reasoning_records (
+                    record_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, recommendation TEXT NOT NULL,
+                    confidence REAL NOT NULL, architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS confidence_calibration (
+                    calibration_id TEXT PRIMARY KEY, subject TEXT NOT NULL, predicted_confidence REAL NOT NULL,
+                    actual_verified INTEGER NOT NULL, calibration_state TEXT NOT NULL, error REAL NOT NULL,
+                    architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS self_reflections (
+                    reflection_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, outcome TEXT NOT NULL,
+                    verified INTEGER NOT NULL, architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS self_diagnostics (
+                    diagnostic_id TEXT PRIMARY KEY, status TEXT NOT NULL, architecture_version TEXT NOT NULL,
+                    environment_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
@@ -2797,3 +2861,154 @@ class SQLiteStore:
         query += " ORDER BY started_at DESC LIMIT ?"; values.append(limit)
         with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
         return self._phase18_rows(rows)
+
+    # Phase 19 Self-Model & Meta-Cognition persistence.
+    @staticmethod
+    def _phase19_rows(rows: Iterable[Any]) -> list[dict[str, Any]]:
+        result = []
+        for row in rows:
+            if not row:
+                continue
+            item = dict(row)
+            if isinstance(item.get("payload"), str):
+                try:
+                    item["payload"] = json.loads(item["payload"])
+                except (TypeError, ValueError):
+                    pass
+            result.append(item)
+        return result
+
+    def _save_phase19(self, table: str, columns: list[str], values: list[Any]) -> None:
+        names = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
+        with self._connect() as db:
+            db.execute(f"INSERT OR REPLACE INTO {table}({names}) VALUES ({placeholders})", tuple(values))
+
+    def save_self_model_claim(self, record: Any) -> None:
+        self._save_phase19("self_model_claims", ["claim_id", "category", "subject", "confidence", "lifecycle_state", "architecture_version", "environment_id", "evidence_ids", "provenance", "payload", "created_at", "updated_at"], [record.claim_id, record.category.value, record.subject, record.confidence, record.lifecycle_state, record.architecture_version, record.environment_id, json.dumps(record.evidence_ids), json.dumps(record.provenance), json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def self_model_claim_by_id(self, claim_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM self_model_claims WHERE claim_id = ?", (claim_id,)).fetchone()
+        return self._phase19_rows([row])[0] if row else None
+
+    def find_self_model_claims(self, category: str | None = None, subject: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        clauses: list[str] = []; values: list[Any] = []
+        if category: clauses.append("category = ?"); values.append(category)
+        if subject: clauses.append("subject = ?"); values.append(subject)
+        query = "SELECT * FROM self_model_claims" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY updated_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_model_snapshot(self, record: Any) -> None:
+        self._save_phase19("self_model_snapshots", ["snapshot_id", "active_version", "architecture_version", "environment_id", "status", "payload", "created_at"], [record.snapshot_id, record.active_version, record.architecture_version, record.environment_id, record.status, json.dumps(record.to_dict()), record.created_at])
+
+    def self_model_snapshot_by_id(self, snapshot_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM self_model_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+        return self._phase19_rows([row])[0] if row else None
+
+    def latest_self_model_snapshot(self) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM self_model_snapshots ORDER BY created_at DESC LIMIT 1").fetchone()
+        return self._phase19_rows([row])[0] if row else None
+
+    def find_self_model_snapshots(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db: rows = db.execute("SELECT * FROM self_model_snapshots ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_model_limitation(self, record: Any) -> None:
+        self._save_phase19("self_model_limitations", ["limitation_id", "limitation_type", "severity", "frequency", "confidence", "lifecycle_state", "architecture_version", "environment_id", "evidence_ids", "payload", "created_at", "updated_at"], [record.limitation_id, record.limitation_type.value, record.severity, record.frequency, record.confidence, record.lifecycle_state, record.architecture_version, record.environment_id, json.dumps(record.evidence_ids), json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def self_model_limitation_by_id(self, limitation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM self_model_limitations WHERE limitation_id = ?", (limitation_id,)).fetchone()
+        return self._phase19_rows([row])[0] if row else None
+
+    def find_self_model_limitations(self, limitation_type: str | None = None, lifecycle_state: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        clauses: list[str] = []; values: list[Any] = []
+        if limitation_type: clauses.append("limitation_type = ?"); values.append(limitation_type)
+        if lifecycle_state: clauses.append("lifecycle_state = ?"); values.append(lifecycle_state)
+        query = "SELECT * FROM self_model_limitations" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY updated_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_model_assumption(self, record: Any) -> None:
+        self._save_phase19("self_model_assumptions", ["assumption_id", "statement", "confidence", "validation_status", "dependent_task", "invalidation_condition", "architecture_version", "environment_id", "payload", "created_at", "updated_at"], [record.assumption_id, record.statement, record.confidence, record.validation_status.value, record.dependent_task, record.invalidation_condition, record.architecture_version, record.environment_id, json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def self_model_assumption_by_id(self, assumption_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM self_model_assumptions WHERE assumption_id = ?", (assumption_id,)).fetchone()
+        return self._phase19_rows([row])[0] if row else None
+
+    def find_self_model_assumptions(self, validation_status: str | None = None, dependent_task: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        clauses: list[str] = []; values: list[Any] = []
+        if validation_status: clauses.append("validation_status = ?"); values.append(validation_status)
+        if dependent_task: clauses.append("dependent_task = ?"); values.append(dependent_task)
+        query = "SELECT * FROM self_model_assumptions" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY updated_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_model_uncertainty(self, record: Any) -> None:
+        self._save_phase19("self_model_uncertainty", ["uncertainty_id", "uncertainty_type", "severity", "confidence", "lifecycle_state", "architecture_version", "environment_id", "evidence_ids", "payload", "created_at"], [record.uncertainty_id, record.uncertainty_type, record.severity, record.confidence, record.lifecycle_state, record.architecture_version, record.environment_id, json.dumps(record.evidence_ids), json.dumps(record.to_dict()), record.created_at])
+
+    def find_self_model_uncertainty(self, uncertainty_type: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM self_model_uncertainty"; values: list[Any] = []
+        if uncertainty_type: query += " WHERE uncertainty_type = ?"; values.append(uncertainty_type)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_model_conflict(self, record: Any) -> None:
+        self._save_phase19("self_model_conflicts", ["conflict_id", "subject", "status", "architecture_version", "environment_id", "payload", "created_at"], [record.conflict_id, record.subject, record.status, record.architecture_version, record.environment_id, json.dumps(record.to_dict()), record.created_at])
+
+    def find_self_model_conflicts(self, subject: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM self_model_conflicts"; values: list[Any] = []
+        if subject: query += " WHERE subject = ?"; values.append(subject)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_decision_readiness(self, record: Any) -> None:
+        self._save_phase19("decision_readiness", ["readiness_id", "goal_id", "state", "confidence", "architecture_version", "environment_id", "payload", "created_at"], [record.readiness_id, record.goal_id, record.state.value, record.confidence, record.architecture_version, record.environment_id, json.dumps(record.to_dict()), record.created_at])
+
+    def find_decision_readiness(self, goal_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM decision_readiness"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_meta_reasoning(self, record: Any) -> None:
+        self._save_phase19("meta_reasoning_records", ["record_id", "goal_id", "recommendation", "confidence", "architecture_version", "environment_id", "payload", "created_at"], [record.record_id, record.goal_id, record.recommendation, record.confidence, record.architecture_version, record.environment_id, json.dumps(record.to_dict()), record.created_at])
+
+    def find_meta_reasoning(self, goal_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM meta_reasoning_records"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_confidence_calibration(self, record: Any) -> None:
+        self._save_phase19("confidence_calibration", ["calibration_id", "subject", "predicted_confidence", "actual_verified", "calibration_state", "error", "architecture_version", "environment_id", "payload", "created_at"], [record.calibration_id, record.subject, record.predicted_confidence, int(record.actual_verified), record.calibration_state.value, record.error, record.architecture_version, record.environment_id, json.dumps(record.to_dict()), record.created_at])
+
+    def find_confidence_calibration(self, subject: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM confidence_calibration"; values: list[Any] = []
+        if subject: query += " WHERE subject = ?"; values.append(subject)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_reflection(self, record: Any) -> None:
+        outcome = getattr(record, "outcome", "verified" if getattr(record, "actual_verified", False) else "not_verified")
+        verified = getattr(record, "verified", getattr(record, "actual_verified", False))
+        self._save_phase19("self_reflections", ["reflection_id", "task_id", "outcome", "verified", "architecture_version", "environment_id", "payload", "created_at"], [record.reflection_id, record.task_id, outcome, int(bool(verified)), record.architecture_version, record.environment_id, json.dumps(record.to_dict()), getattr(record, "created_at", getattr(record, "timestamp", utc_now()))])
+
+    def find_self_reflections(self, task_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM self_reflections"; values: list[Any] = []
+        if task_id: query += " WHERE task_id = ?"; values.append(task_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase19_rows(rows)
+
+    def save_self_diagnostics(self, record: Any) -> None:
+        self._save_phase19("self_diagnostics", ["diagnostic_id", "status", "architecture_version", "environment_id", "payload", "created_at"], [record.diagnostic_id, record.status, record.architecture_version, record.environment_id, json.dumps(record.to_dict()), record.created_at])
+
+    def find_self_diagnostics(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db: rows = db.execute("SELECT * FROM self_diagnostics ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return self._phase19_rows(rows)
