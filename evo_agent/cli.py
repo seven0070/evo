@@ -22,6 +22,7 @@ from .tools import ToolRegistry
 from .storage import SQLiteStore
 from .world import EnvironmentObserver, WorldModelEngine, WorldRefreshEngine
 from .runtime import AgentRuntime, RuntimeSchedule, ScheduleKind, TaskPriority, TaskSource
+from .external import ExternalAccessPolicy, ExternalIntegrationManager, ExternalOperationRisk, integration_operation_from_row
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,6 +139,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-cycle", action="store_true", help="Run one bounded persistent-runtime cycle")
     parser.add_argument("--runtime-heartbeat", action="store_true", help="Record and show one runtime heartbeat")
     parser.add_argument("--runtime-health", action="store_true", help="Show runtime health")
+    parser.add_argument("--list-integrations", action="store_true", help="List registered external integrations")
+    parser.add_argument("--show-integration", metavar="INTEGRATION_ID", help="Show one external integration")
+    parser.add_argument("--external-health", "--integration-health", dest="external_health", metavar="INTEGRATION_ID", help="Show connector health for an external integration")
+    parser.add_argument("--test-integration", dest="test_integration", metavar="INTEGRATION_ID", help="Run a bounded connector availability test")
+    parser.add_argument("--external-policy", action="store_true", help="Show the latest persisted external access policy")
+    parser.add_argument("--list-external-policies", action="store_true", help="List persisted external access policies")
+    parser.add_argument("--show-external-policy", dest="show_external_policy", metavar="POLICY_ID", help="Show one persisted external access policy")
+    parser.add_argument("--list-external-operations", action="store_true", help="List persisted external operations")
+    parser.add_argument("--show-external-operation", metavar="OPERATION_ID", help="Show one external operation")
+    parser.add_argument("--external-submit", metavar="INTEGRATION_ID", help="Request one controlled external operation")
+    parser.add_argument("--external-operation", default="read", help="External operation name used with --external-submit")
+    parser.add_argument("--external-target", default="", help="External resource or endpoint used with --external-submit")
+    parser.add_argument("--external-payload", default="{}", help="JSON payload used with --external-submit")
+    parser.add_argument("--external-risk", choices=[item.value for item in ExternalOperationRisk], default=None, help="Optional external risk override")
+    parser.add_argument("--external-enqueue", metavar="OPERATION_ID", help="Queue a persisted external operation in the bounded runtime")
+    parser.add_argument("--approve-external-operation", metavar="OPERATION_ID", help="Record an explicit human approval for an external operation")
+    parser.add_argument("--external-approval-scope", default="", help="Exact approval scope hash for --approve-external-operation")
+    parser.add_argument("--external-approval-actor", default="human", help="Human actor recorded for external approval")
+    parser.add_argument("--external-approval-reason", default="", help="Reason recorded for external approval")
+    parser.add_argument("--list-integration-capabilities", action="store_true", help="List registered external integration capabilities")
+    parser.add_argument("--list-external-observations", "--show-external-observations", dest="list_external_observations", action="store_true", help="List bounded external observations")
+    parser.add_argument("--external-diff", action="store_true", help="Compare two external observations")
+    parser.add_argument("--before-external-observation", default="", help="Older observation ID used with --external-diff")
+    parser.add_argument("--after-external-observation", default="", help="Newer observation ID used with --external-diff")
+    parser.add_argument("--list-external-changes", action="store_true", help="List external resource changes")
+    parser.add_argument("--external-stats", action="store_true", help="Show external integration statistics")
     return parser
 
 
@@ -151,7 +178,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -171,14 +198,17 @@ def inspect_command(args: argparse.Namespace) -> bool:
     evolver = Evolver(store, experiences)
     metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
     orchestrator = EvolutionOrchestrator(store, Path(args.source_root), policy=OrchestrationPolicy()) if metamorphosis else None
+    external_manager = None
+    if args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats:
+        external_manager = ExternalIntegrationManager(workspace, store=store, memory=memory)
     runtime = None
-    if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health:
-        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root))
+    if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.external_enqueue or args.approve_external_operation:
+        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager)
     cognitive = None
     if args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal:
         adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
         kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
-        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator)
+        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator, external_integrations=external_manager)
     if args.runtime_start:
         print_json(runtime.start().to_dict())
     elif args.runtime_stop:
@@ -212,6 +242,62 @@ def inspect_command(args: argparse.Namespace) -> bool:
         print_json(runtime.heartbeat.beat().to_dict())
     elif args.runtime_health:
         print_json(runtime.health().to_dict())
+    elif args.list_integrations:
+        print_json([item.to_dict() for item in external_manager.list_integrations()])
+    elif args.show_integration:
+        item = external_manager.get_integration(args.show_integration)
+        print_json(item.to_dict() if item else {"error": "integration not found", "integration_id": args.show_integration})
+    elif args.external_health:
+        print_json(external_manager.health(args.external_health))
+    elif args.test_integration:
+        print_json(external_manager.health(args.test_integration))
+    elif args.external_policy:
+        print_json(external_manager.policy.to_dict())
+    elif args.list_external_policies:
+        print_json([item.to_dict() for item in external_manager.list_policies()])
+    elif args.show_external_policy:
+        item = next((item for item in external_manager.list_policies() if item.policy_id == args.show_external_policy), None)
+        print_json(item.to_dict() if item else {"error": "external policy not found", "policy_id": args.show_external_policy})
+    elif args.list_integration_capabilities:
+        print_json(store.find_integration_capabilities())
+    elif args.list_external_operations:
+        print_json([json.loads(item["payload"]) for item in store.find_integration_operations()])
+    elif args.show_external_operation:
+        row = store.integration_operation_by_id(args.show_external_operation)
+        print_json(json.loads(row["payload"]) if row else {"error": "external operation not found", "operation_id": args.show_external_operation})
+    elif args.external_submit:
+        try:
+            payload = json.loads(args.external_payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"--external-payload must be JSON: {exc}") from exc
+        operation = external_manager.request_operation(args.external_submit, args.external_operation, args.external_target, payload, risk_level=args.external_risk)
+        print_json(operation.to_dict())
+    elif args.external_enqueue:
+        print_json(runtime.enqueue_external_operation(args.external_enqueue).to_dict())
+    elif args.approve_external_operation:
+        row = store.integration_operation_by_id(args.approve_external_operation)
+        if not row:
+            print_json({"error": "external operation not found", "operation_id": args.approve_external_operation})
+        else:
+            operation, _ = integration_operation_from_row(row)
+            scope = args.external_approval_scope or external_manager.approval_scope(operation)
+            approved = external_manager.approve_operation(args.approve_external_operation, args.external_approval_actor, scope, args.external_approval_reason)
+            print_json({"operation": approved.to_dict(), "resumed_tasks": [item.task_id for item in runtime.resume_external_operation(args.approve_external_operation)] if runtime else []})
+    elif args.list_external_observations:
+        print_json([item.to_dict() for item in external_manager.external_observations()])
+    elif args.external_diff:
+        if args.before_external_observation and args.after_external_observation:
+            print_json(external_manager.external_diff(args.before_external_observation, args.after_external_observation).to_dict())
+        else:
+            observations = external_manager.external_observations(limit=2)
+            if len(observations) >= 2:
+                print_json(external_manager.external_diff(observations[1].observation_id, observations[0].observation_id).to_dict())
+            else:
+                print_json({"error": "at least two external observations are required"})
+    elif args.list_external_changes:
+        print_json(store.find_external_changes())
+    elif args.external_stats:
+        print_json({"integration_count": len(external_manager.list_integrations()), "operation_count": len(store.find_integration_operations()), "observation_count": len(external_manager.external_observations()), "change_count": len(store.find_external_changes()), "communication_count": len(store.find_communication_records()), "health_records": len(store.find_connector_health()), "policy": external_manager.policy.to_dict()})
     elif args.show_environment:
         model = world.observe("CLI bounded environment inspection")
         world.save_observations(model)

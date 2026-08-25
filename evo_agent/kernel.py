@@ -10,7 +10,7 @@ from .evaluation import EvaluationEngine
 from .experience import ExperienceEngine
 from .flexibility import FlexibilityContext, FlexibilityEngine
 from .model_adapter import ModelAdapter
-from .models import Event, EventType, Goal, Plan, PlanStep, TaskOutcome, TaskStatus, ToolCall, utc_now
+from .models import Event, EventType, Goal, Plan, PlanStep, RiskLevel, TaskOutcome, TaskStatus, ToolCall, utc_now
 from .security import SecurityPolicy
 from .storage import SQLiteStore
 from .tools import ToolRegistry
@@ -32,6 +32,7 @@ class AgentKernel:
         max_adaptations: int = 1,
         flexibility: FlexibilityEngine | None = None,
         agent_version: str = __version__,
+        external_integrations: Any | None = None,
     ):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
@@ -52,7 +53,31 @@ class AgentKernel:
         self.max_adaptations = max_adaptations
         from .capability import CapabilityIntelligence
         self.capability_intelligence = CapabilityIntelligence(self.store, self.workspace, self.tools, self.policy)
+        self.external_integrations = external_integrations
+        if self.external_integrations is not None:
+            self.external_integrations.capability_intelligence = self.capability_intelligence
+            if getattr(self.external_integrations, "memory", None) is None:
+                from .memory import MemoryManager
+                self.external_integrations.memory = MemoryManager(self.store, self.workspace)
         self.world_intelligence = None
+
+    def run_external_operation(self, operation_id: str, payload: dict[str, Any] | None = None) -> Any:
+        """Execute an already-modeled external operation through the Kernel boundary."""
+        if self.external_integrations is None:
+            raise RuntimeError("external integration manager is not configured")
+        operation_row = self.store.integration_operation_by_id(operation_id)
+        if not operation_row:
+            raise KeyError(operation_id)
+        from .external import ExternalOperationRisk
+        # Decode through the manager-owned persistence helper rather than accepting
+        # caller-supplied execution authority or connector objects.
+        from .external import integration_operation_from_row
+        operation, _ = integration_operation_from_row(operation_row)
+        risk = RiskLevel.CRITICAL if operation.risk_level is ExternalOperationRisk.DESTRUCTIVE else RiskLevel.HIGH if operation.risk_level.requires_approval else RiskLevel.LOW
+        call = ToolCall(task_id=operation_id, step_id=operation.operation, tool_name=f"external:{operation.integration_id}:{operation.operation}", arguments={"target": operation.target, "operation": operation.operation}, risk=risk)
+        return self.external_integrations.execute_operation(operation_id, payload=payload, approval_callback=lambda item: self.approval_callback(call, f"External operation {item.operation} requires approval"), actor="kernel")
+
+    execute_external_operation = run_external_operation
 
     def run(self, request: str) -> TaskOutcome:
         goal = Goal(request)

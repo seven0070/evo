@@ -704,3 +704,46 @@ Safe mode permits observation, inspection, planning, verification, and reporting
 Runtime lifecycle, heartbeat, queue, task, recovery, degraded-mode, safe-mode, shutdown, crash-recovery, approval, circuit-breaker, and kill-switch events are written to the existing SQLite event stream. Runtime status reports state, uptime, current task/plan, queue depth, heartbeat and health, safe mode, bounded resource pressure, environment version, pending approvals, blocked tasks, and recent failures without exposing credentials. Health checks do not execute arbitrary work.
 
 The runtime can run one bounded cycle or an explicitly bounded `run_forever(max_cycles=...)` loop. No implicit daemon starts on import, and no Phase 15 functionality is included. Persistent operation remains subject to all prior protected-core, workspace, sandbox, verification, governance, promotion, rollback, prompt-injection, and credential-safety boundaries.
+
+
+## Phase 15 — External Integration & Communication Intelligence
+
+Phase 15 introduces a persistent Integration Registry and provider-neutral connector abstraction while preserving the established authority chain:
+
+```text
+Cognitive
+  → Memory / Capability / World Intelligence
+  → Integration Intelligence
+  → Governance + SecurityPolicy + Approval
+  → AgentKernel
+  → Approved Connector
+  → External System
+  → External Observation
+  → Verifier
+  → Experience / Evaluation
+  → Runtime / Memory
+```
+
+`Integration` records describe provider, version, capabilities, operations, permissions, risk, environment compatibility, health, credential metadata, provenance, lifecycle, architecture version, and enabled state. The registry is persisted in the existing SQLiteStore. HTTP/API, email, file/document, and generic webhook connectors implement the provider-neutral contract; connector classes do not own policy or approval.
+
+`ExternalAccessPolicy` is default-deny and defines allowlisted domains/endpoints, methods, operations, timeout, request/response bounds, rate/retry limits, redirects, authentication, data classifications, and environment restrictions. `ExternalIntegrationManager` validates the policy before persistence and execution. It also enforces operation-specific risk precedence, bounded authentication metadata requirements, explicit environment compatibility, data classification, schema checks, safe request persistence, duplicate protection, and unknown-outcome handling.
+
+The Kernel remains the sole external execution gateway. `AgentKernel.run_external_operation()` reconstructs a persisted operation, maps external risk into existing Kernel approval risk, invokes the existing approval callback, and delegates to the registered connector only after the manager’s policy checks. The Cognitive layer may discover integrations and add advisory evidence to planning decisions; it never calls a connector. Runtime external tasks enter the existing Phase 14 TaskQueue and are subject to existing dependencies, deadlines, resource ceilings, safe mode, degraded mode, circuit breakers, kill switch, and shutdown behavior.
+
+External observation is data, not authority. `ExternalObservation`, `ExternalObservationProvenance`, `ExternalResourceState`, `ExternalChange`, and `ExternalObservationEngine` track source, integration, freshness, trust, identity, version/ETag, content hash, and bounded provenance. Historical observations do not become current truth without freshness validation. All external content is untrusted and non-executable; injection-like content is retained only as bounded data metadata. External content cannot alter Governance, Permissions, protected core, tools, plugins, evolution, metamorphosis, promotion, system instructions, or execution policy.
+
+Experience and Evaluation receive external operation, communication, latency, approval, duplicate-prevention, failure-class, and verification metadata. Memory receives only bounded external-operation evidence through its existing ingestion facade; arbitrary external content and credential values are excluded. Flexibility may recommend bounded retry, fallback, refresh, or replan after connector failures, but it cannot bypass the access policy. Approval is human-scoped, exact, and non-self-approvable.
+
+| Layer | Authority | Phase 15 boundary |
+|---|---|---|
+| Integration Registry | Persistent integration and capability metadata | Cannot authorize or execute operations |
+| External Access Policy | Default-deny endpoint, method, operation, data, and resource bounds | Cannot approve governance, promotion, or code changes |
+| Cognitive / Capability / World | Advisory discovery, compatibility, context, and observation | Cannot call connectors or grant access |
+| Governance / SecurityPolicy | Permission and approval authority | Remains authoritative over risk and exact scope |
+| AgentKernel | Sole connector execution gateway | Preserves existing approval, timeout, tool, checkpoint, and verification boundaries |
+| Connector | Approved provider adapter | Cannot expand policy, install itself, or interpret content as commands |
+| External Observation | Bounded data and change evidence | Never substitutes for current verification or authority |
+| Experience / Evaluation / Memory | Historical evidence and scoring | Never becomes policy or executable instruction |
+| Runtime | Queue, lifecycle, retry, safe mode, kill switch, shutdown | Cannot auto-approve, promote, mutate production, or bypass Kernel |
+
+Phase 15 persistence adds `integrations`, `integration_capabilities`, `integration_operations`, `external_access_policies`, `external_observations`, `external_resources`, `external_changes`, `external_operation_results`, `connector_health`, and `communication_records` to the single SQLite architecture. Phase 16 functionality is not included.

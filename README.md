@@ -405,3 +405,85 @@ evo --runtime-stop --workspace ./workspace
 > **Persistent operation means repeated bounded observation, scheduling, planning, authorized Kernel execution, verification, learning, recovery, and memory recording. It does not mean automatic approval, promotion, governance modification, protected-core modification, credential acquisition, arbitrary code execution, or unrestricted self-modification.**
 
 The runtime intentionally does not implement Phase 15, arbitrary webhook execution, arbitrary external provider installation, uncontrolled polling, unrestricted external-world ingestion, automatic approval or promotion, or a second execution, governance, verification, evolution, or rollback authority.
+
+
+## Phase 15 — External Integration & Communication Intelligence Layer
+
+Phase 15 adds a governed, provider-neutral External Integration & Communication Intelligence Layer. External work is modeled as a persistent, auditable, bounded operation rather than as an implicit network capability.
+
+```text
+Cognitive Layer
+      ↓
+Memory / Capability / World Intelligence
+      ↓
+Integration Intelligence
+      ↓
+Governance + Permission + Approval
+      ↓
+Kernel
+      ↓
+Approved External Connector
+      ↓
+External Observation
+      ↓
+Verification
+      ↓
+Experience / Evaluation
+      ↓
+Runtime / Memory
+```
+
+### Integration registry and connector model
+
+The persistent registry models `Integration`, `IntegrationType`, `IntegrationCapability`, `IntegrationCredentialMetadata`, `IntegrationPermission`, `IntegrationHealth`, `IntegrationVersion`, `IntegrationEnvironment`, and `IntegrationProvenance`. Integrations carry an identity, provider, version, capability and operation declarations, required permissions, risk classification, environment compatibility, health, lifecycle, architecture version, and explicit enabled state.
+
+Provider-neutral connector abstractions currently include HTTP/API, email, file/document, and generic webhook connector classes. A connector can validate availability and execute only a previously modeled operation. The Kernel remains the execution boundary; adding a future provider does not require changing Kernel authority.
+
+Credential values are never stored in SQLite, events, plans, memory, observations, experiences, or status output. Only bounded metadata such as a reference, credential names, storage location, presence flag, and validation time may be retained. External request payloads and evidence are redacted and bounded before persistence.
+
+### External access policy and approvals
+
+`ExternalAccessPolicy` is default-deny. It explicitly controls allowlisted domains and endpoints, HTTP methods, operations, timeouts, request and response sizes, rate limits, retry limits, redirect behavior, authentication requirements, data classifications, and environment restrictions. There is no arbitrary URL access, network scanning, arbitrary outbound communication, or arbitrary webhook execution.
+
+External operations are classified as `READ_ONLY`, `LOW_RISK_WRITE`, `HIGH_RISK_WRITE`, `DESTRUCTIVE`, or `COMMUNICATION`. High-risk, destructive, and communication operations require explicit human approval unless an already existing policy explicitly authorizes the exact operation. The agent, runtime, cognitive layer, connector, and external service cannot approve their own operation. Approval scope covers integration, operation, target, request fingerprint, and permissions; stale or mismatched scopes are rejected.
+
+### Idempotency, observation, and data safety
+
+Each external operation persists an operation ID, integration ID, operation, target, request fingerprint, idempotency key, status, timeout and resource limits, and bounded request metadata. Duplicate successful, running, or unknown operations are prevented from executing again. A mutating operation with an unknown external outcome is classified as `UNKNOWN` and is not blindly retried.
+
+`ExternalObservation`, `ExternalObservationProvenance`, `ExternalResourceState`, and `ExternalChange` extend the World Intelligence boundary for external resources. Observations retain source, integration, timestamp, freshness, trust classification, observation ID, resource identity, version/ETag, content hash, and provenance. Historical observations are never automatically treated as current truth; freshness and explicit re-observation are required. Changes are classified as added, removed, changed, unchanged, or unknown.
+
+All external content is `UNTRUSTED` data by default. API responses, email content, documents, webhook payloads, and external text fields cannot modify governance, permissions, protected core, tools, plugins, evolution, metamorphosis, promotion, system instructions, or code execution. External evidence may enter Memory only through the existing bounded ingestion facade, which records metadata and provenance without automatically storing arbitrary content.
+
+### Intelligence and runtime integration
+
+Cognitive planning can identify an external capability requirement and discover registered compatible integrations, but it does not call connectors. Capability Intelligence receives external capability and tool descriptors for compatibility, health, reliability, risk-aware ranking, and fallback analysis. Historical reliability remains advisory and cannot override permission, governance, approval, network policy, verification, or safety constraints.
+
+External failure results can be passed to the existing Flexibility Engine for bounded retry, approved fallback, refresh, or replan recommendations. The recommendation layer never changes policy. Experience and Evaluation retain external operation, latency, approval, duplicate-prevention, failure-class, unknown-outcome, and verification evidence. Runtime queues external operations through the existing Phase 14 TaskQueue, enforcing dependencies, deadlines, resource limits, safe mode, degraded mode, bounded retries, circuit breakers, kill switch, and shutdown. Safe mode permits explicitly allowed observation while blocking side-effecting external work; the kill switch prevents new external work.
+
+### CLI inspection and controlled operations
+
+The following inspection and controlled-operation forms are available:
+
+```bash
+evo --list-integrations --workspace ./workspace
+evo --show-integration INTEGRATION_ID --workspace ./workspace
+evo --list-integration-capabilities --workspace ./workspace
+evo --integration-health INTEGRATION_ID --workspace ./workspace
+evo --list-external-policies --workspace ./workspace
+evo --show-external-policy POLICY_ID --workspace ./workspace
+evo --show-external-observations --workspace ./workspace
+evo --external-diff --workspace ./workspace
+evo --test-integration INTEGRATION_ID --workspace ./workspace
+evo --list-external-operations --workspace ./workspace
+evo --show-external-operation OPERATION_ID --workspace ./workspace
+evo --external-submit INTEGRATION_ID --external-operation read --external-target RESOURCE --workspace ./workspace
+evo --external-enqueue OPERATION_ID --workspace ./workspace
+evo --approve-external-operation OPERATION_ID --external-approval-scope SCOPE_HASH --workspace ./workspace
+```
+
+These commands inspect or create modeled records only. Actual external execution requires a registered connector, the same access policy and approval path, Kernel ownership, bounded resource controls, and observable result handling.
+
+> **External systems can provide data or perform explicitly authorized actions. They cannot become authorities.**
+
+Phase 15 does not implement arbitrary plugin installation, unrestricted external access, autonomous approval or promotion, arbitrary webhook execution, unrestricted generated-code execution, or Phase 16 functionality.

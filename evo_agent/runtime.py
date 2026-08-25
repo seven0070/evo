@@ -69,6 +69,7 @@ class TaskSource(str, Enum):
     MEMORY = "memory"
     ENVIRONMENT = "environment"
     INTERNAL = "internal"
+    EXTERNAL = "external"
 
 
 class RuntimeHealthStatus(str, Enum):
@@ -721,7 +722,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -732,14 +733,21 @@ class AgentRuntime:
         self.runtime_record = self._load_record()
         self.queue = TaskQueue(self.store, self.limits)
         self.evolution = evolution_orchestrator or EvolutionOrchestrator(self.store, self.source_root)
+        self.external_integrations = external_integrations
         self.kernel = kernel
         self.cognitive = cognitive
         if self.cognitive is None:
             from .kernel import AgentKernel
-            self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback)
-            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration})
+            self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback, external_integrations=self.external_integrations)
+            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations)
         elif self.kernel is None:
             self.kernel = getattr(self.cognitive, "kernel", None)
+        if self.external_integrations is not None:
+            self.external_integrations.memory = getattr(self.external_integrations, "memory", None) or getattr(self.cognitive, "memory", None)
+            self.external_integrations.capability_intelligence = getattr(self.kernel, "capability_intelligence", None)
+            if self.kernel is not None:
+                self.kernel.external_integrations = self.external_integrations
+                self.external_integrations.flexibility = getattr(self.kernel, "flexibility", None)
         self.scheduler = Scheduler(self.queue, self.workspace, self.store)
         self.resources = RuntimeResourceManager(self, self.limits)
         self.heartbeat = HeartbeatManager(self)
@@ -875,6 +883,8 @@ class AgentRuntime:
 
     def enqueue_task(self, goal: str, priority: TaskPriority | str = TaskPriority.NORMAL, source: TaskSource | str = TaskSource.USER, dependencies: Iterable[str] | None = None, deadline: str | None = None, resource_budget: dict[str, Any] | None = None, approval_requirement: bool | str = False, retry_budget: int | None = None, metadata: dict[str, Any] | None = None) -> RuntimeTask:
         with self._lock:
+            if self.kill_switch_active:
+                raise RuntimeError("runtime kill switch is active")
             if not self.accepting_work and self.state not in {RuntimeState.STOPPED, RuntimeState.STARTING}:
                 raise RuntimeError("runtime is not accepting new work")
             task = RuntimeTask(new_id("rtask"), goal, TaskPriority(priority), TaskSource(source), dependencies=list(dependencies or []), deadline=deadline, resource_budget=dict(resource_budget or {}), approval_requirement=approval_requirement, retry_budget=self.limits.max_retry_count if retry_budget is None else retry_budget, agent_version=__version__, metadata=dict(metadata or {}))
@@ -886,6 +896,32 @@ class AgentRuntime:
             return task
 
     queue_task = enqueue_task
+
+    def enqueue_external_operation(self, operation_id: str, priority: TaskPriority | str = TaskPriority.NORMAL, dependencies: Iterable[str] | None = None, deadline: str | None = None, resource_budget: dict[str, Any] | None = None) -> RuntimeTask:
+        if self.external_integrations is None:
+            raise RuntimeError("external integration manager is not configured")
+        row = self.store.integration_operation_by_id(operation_id)
+        if not row:
+            raise KeyError(operation_id)
+        from .external import integration_operation_from_row
+        operation, _ = integration_operation_from_row(row)
+        return self.enqueue_task(f"external operation {operation.operation} for integration {operation.integration_id}", priority=priority, source=TaskSource.EXTERNAL, dependencies=dependencies, deadline=deadline, resource_budget=resource_budget, metadata={"external_operation_id": operation.operation_id})
+
+    queue_external_operation = enqueue_external_operation
+
+    def resume_external_operation(self, operation_id: str) -> list[RuntimeTask]:
+        resumed: list[RuntimeTask] = []
+        for task in self.tasks():
+            if task.metadata.get("external_operation_id") != operation_id or task.status is not RuntimeTaskStatus.WAITING:
+                continue
+            task.status = RuntimeTaskStatus.READY
+            task.last_error = None
+            task.progress = "approval_received"
+            self.queue.update(task)
+            self.event_loop.wake("external_approval", {"task_id": task.task_id, "operation_id": operation_id})
+            self._emit(EventType.RUNTIME_TASK_RESUMED, {"task_id": task.task_id, "external_operation_id": operation_id, "reason": "external approval received"}, task.task_id)
+            resumed.append(task)
+        return resumed
 
     def schedule_task(self, schedule: RuntimeSchedule) -> RuntimeSchedule:
         result = self.scheduler.register(schedule)
@@ -1060,6 +1096,43 @@ class AgentRuntime:
             self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "approval_id": approval.approval_id, "reason": "approval required", "scope_hash": approval.scope_hash}, task.task_id)
             self._transition(RuntimeState.WAITING_APPROVAL, "task requires human approval")
             return "waiting"
+        external_operation_id = task.metadata.get("external_operation_id")
+        if external_operation_id:
+            if self.external_integrations is None:
+                return self._block_external_task(task, "external integration manager is not configured")
+            from .external import ExternalOperationRisk, ExternalOperationStatus, integration_operation_from_row
+            operation_row = self.store.integration_operation_by_id(str(external_operation_id))
+            if not operation_row:
+                return self._block_external_task(task, "external operation record is missing")
+            external_operation, _ = integration_operation_from_row(operation_row)
+            if self.safe_mode and external_operation.risk_level is not ExternalOperationRisk.READ_ONLY:
+                return self._block_external_task(task, "safe mode blocks side-effecting external operations", waiting=True)
+            task.progress = "in_progress"
+            self.queue.update(task)
+            self._transition(RuntimeState.EXECUTING, "delegate external operation through Kernel gateway")
+            result = self.kernel.run_external_operation(str(external_operation_id))
+            task.metadata["external_result"] = result.to_dict()
+            if result.status is ExternalOperationStatus.WAITING_APPROVAL:
+                task.status = RuntimeTaskStatus.WAITING
+                task.progress = "blocked"
+                task.last_error = result.error
+                self.queue.update(task)
+                self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "reason": result.error, "external_operation_id": external_operation_id}, task.task_id)
+                return "waiting"
+            if result.status is ExternalOperationStatus.SUCCEEDED and result.output_schema_valid:
+                task.status = RuntimeTaskStatus.COMPLETED
+                task.progress = "completed"
+                task.metadata["verified"] = False
+                task.metadata["verification_required"] = True
+                self.queue.update(task)
+                self._emit(EventType.RUNTIME_TASK_COMPLETED, {"task_id": task.task_id, "external_operation_id": external_operation_id, "verified": False, "schema_valid": True}, task.task_id)
+                return "completed"
+            task.status = RuntimeTaskStatus.FAILED if result.status not in {ExternalOperationStatus.BLOCKED, ExternalOperationStatus.UNKNOWN} else RuntimeTaskStatus.BLOCKED
+            task.progress = "failed" if task.status is RuntimeTaskStatus.FAILED else "blocked"
+            task.last_error = result.error or result.failure_class.value
+            self.queue.update(task)
+            self._emit(EventType.RUNTIME_TASK_FAILED, {"task_id": task.task_id, "external_operation_id": external_operation_id, "status": result.status.value, "failure_class": result.failure_class.value}, task.task_id)
+            return "failed"
         if self.safe_mode and not bool(task.metadata.get("read_only", False)):
             task.status = RuntimeTaskStatus.WAITING
             task.last_error = "safe mode restricts side-effecting autonomous execution"
@@ -1107,6 +1180,14 @@ class AgentRuntime:
         finally:
             self.runtime_record.current_task = None
             self._persist_record()
+
+    def _block_external_task(self, task: RuntimeTask, reason: str, waiting: bool = False) -> str:
+        task.status = RuntimeTaskStatus.WAITING if waiting else RuntimeTaskStatus.BLOCKED
+        task.progress = "blocked"
+        task.last_error = reason
+        self.queue.update(task)
+        self._emit(EventType.RUNTIME_TASK_WAITING if waiting else EventType.RUNTIME_TASK_FAILED, {"task_id": task.task_id, "reason": reason, "external": True}, task.task_id)
+        return "waiting" if waiting else "blocked"
 
     def _record_cognitive_result(self, task: RuntimeTask, result: CognitiveResult) -> str:
         if result.outcome is CognitiveOutcome.SUCCESS:

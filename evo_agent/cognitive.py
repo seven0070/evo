@@ -804,7 +804,7 @@ class CognitivePersistence:
 class CognitiveOrchestrator:
     """Bounded cognitive coordinator. Kernel, security, approvals, and Phase 9 remain authoritative."""
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -833,6 +833,7 @@ class CognitiveOrchestrator:
         self._capability_analyses: list[CapabilityAnalysis] = []
         self._memory_context: CognitiveMemoryContext | None = None
         self.world_intelligence: WorldModelEngine | None = None
+        self.external_integrations = external_integrations or integration_intelligence
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)
@@ -880,6 +881,12 @@ class CognitiveOrchestrator:
         environment_context = world.context_for_task(goal.normalized_goal, task=graph.nodes[0] if graph.nodes else None)
         plans = self.planner.generate(goal, graph, self._architecture_version(), self._memory_context)
         plan = self.reasoner.select_plan(plans, self._available_tools())
+        if self.external_integrations is not None:
+            external_requirements = self.external_integrations.requirements_for_goal(goal.normalized_goal)
+            external_candidates = self.external_integrations.discover_for_goal(goal.normalized_goal)
+            decisions.append({"goal_id": goal.goal_id, "decision_type": "external_integration_discovery", "requirements": external_requirements, "candidate_integrations": [item.integration_id for item in external_candidates], "execution_authority": "kernel", "created_at": utc_now()})
+            if external_candidates:
+                plan.rationale += f" External integration discovery found {len(external_candidates)} registered candidate(s); execution remains Kernel-authorized."
         self._capability_analyses = self._analyze_capabilities(goal, graph)
         plan.capability_requirements = [item.requirement.to_dict() for item in self._capability_analyses]
         plan.capability_selection = [item.selection.to_dict() for item in self._capability_analyses]

@@ -41,6 +41,9 @@ class Experience:
     relevant_environment_hash: str = ""
     tool_environment: dict[str, Any] = field(default_factory=dict)
     resource_conditions: dict[str, Any] = field(default_factory=dict)
+    external_operations: list[dict[str, Any]] = field(default_factory=list)
+    external_failures: list[dict[str, Any]] = field(default_factory=list)
+    communication_records: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -79,6 +82,10 @@ class ExperienceEngine:
         duration_ms = self._duration_ms(events)
         capability_selection = [event.payload.get("analysis", event.payload) for event in events if event.event_type is EventType.CAPABILITY_SELECTED]
         capability_events = {EventType.CAPABILITY_SELECTED, EventType.CAPABILITY_REQUIRED, EventType.CAPABILITY_GAP_DETECTED, EventType.TOOL_SELECTED, EventType.TOOL_REJECTED, EventType.TOOL_FALLBACK, EventType.TOOL_HEALTH_CHANGED}
+        external_events = {EventType.EXTERNAL_OPERATION_REQUESTED, EventType.EXTERNAL_OPERATION_STARTED, EventType.EXTERNAL_OPERATION_COMPLETED, EventType.EXTERNAL_OPERATION_FAILED, EventType.EXTERNAL_OPERATION_BLOCKED, EventType.EXTERNAL_DUPLICATE_PREVENTED, EventType.EXTERNAL_OBSERVATION_RECORDED, EventType.EXTERNAL_CHANGE_DETECTED}
+        external_operations = [event.payload for event in events if event.event_type in external_events]
+        external_failures = [event.payload for event in events if event.event_type in {EventType.EXTERNAL_OPERATION_FAILED, EventType.EXTERNAL_OPERATION_BLOCKED}]
+        communication_records = [event.payload for event in events if event.event_type is EventType.EXTERNAL_COMMUNICATION_RECORDED]
         return Experience(
             experience_id=f"exp_{outcome.task_id}",
             task_id=outcome.task_id,
@@ -95,8 +102,11 @@ class ExperienceEngine:
             verification_result=verification,
             final_outcome=self._outcome(outcome),
             duration_ms=duration_ms,
-            resource_information={"event_count": len(events), "step_count": outcome.steps_completed, "capability_selection_count": len(capability_selection), "capability_gap_count": sum(1 for event in events if event.event_type is EventType.CAPABILITY_GAP_DETECTED)},
-            approval_events=[event.payload for event in events if event.event_type in {EventType.APPROVAL_REQUESTED, EventType.APPROVAL_GRANTED, EventType.APPROVAL_DENIED}],
+            resource_information={"event_count": len(events), "step_count": outcome.steps_completed, "capability_selection_count": len(capability_selection), "capability_gap_count": sum(1 for event in events if event.event_type is EventType.CAPABILITY_GAP_DETECTED), "external_operation_count": len(external_operations)},
+            approval_events=[event.payload for event in events if event.event_type in {EventType.APPROVAL_REQUESTED, EventType.APPROVAL_GRANTED, EventType.APPROVAL_DENIED, EventType.EXTERNAL_APPROVAL_REQUESTED, EventType.EXTERNAL_APPROVAL_RECEIVED}],
+            external_operations=external_operations,
+            external_failures=external_failures,
+            communication_records=communication_records,
             timestamp=timestamp,
             agent_version=agent_version,
             model_identifier=model_identifier,

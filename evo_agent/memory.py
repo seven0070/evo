@@ -661,6 +661,17 @@ class MemoryManager:
         metadata = {"environment_id": environment_id, "environment_version": environment_version, "goal": goal, "task_id": task_id, "outcome": outcome, "resource_state": payload.get("resource_state", {}), "tool_state": [{key: item.get(key) for key in ("name", "version", "provider", "availability", "status") if key in item} for item in payload.get("available_tools", [])], "network_state": payload.get("network_state", {}), "filesystem_state": payload.get("filesystem_state", [])[:50]}
         return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"environment:{environment_id}:{environment_version}", ConfidenceLevel.MEDIUM, 0.7, 0.65, architecture_version=payload.get("architecture_version", ""), metadata=metadata))
 
+    def capture_external(self, evidence: dict[str, Any]) -> MemoryRecord:
+        """Persist bounded external-operation metadata only; external content is never trusted as policy."""
+        safe = {key: value for key, value in dict(evidence).items() if key not in {"content", "body", "response", "payload"}}
+        operation_id = str(safe.get("operation_id", new_memory_id()))
+        integration_id = str(safe.get("integration_id", "unknown"))
+        status = str(safe.get("status", "unknown"))
+        summary = f"External operation {operation_id} via {integration_id} ended with {status}."
+        safe["untrusted_external_evidence"] = True
+        safe["executable"] = False
+        return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"external:{operation_id}", ConfidenceLevel.MEDIUM, 0.6, 0.55, architecture_version=safe.get("architecture_version", ""), metadata=safe))
+
     def capture_user_memory(self, content: str, summary: str = "", key: str = "", source_id: str = "user", importance: float = 0.8, expiration: str | None = None) -> MemoryRecord:
         return self.store(self._record(MemoryType.USER, content, summary or _summary(content), ProvenanceSource.USER_INPUT, source_id, ConfidenceLevel.HIGH, 0.95, importance, expiration=expiration, key=key, metadata={"user_owned": True, "explicit_action_required": True}))
 

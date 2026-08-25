@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .models import Event, Goal, TaskStatus, new_id
+from .models import Event, Goal, TaskStatus, new_id, utc_now
 
 
 class SQLiteStore:
@@ -419,6 +419,113 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_approvals_task ON runtime_approvals(task_id, status);
                 CREATE INDEX IF NOT EXISTS idx_runtime_approvals_status ON runtime_approvals(status);
+                CREATE TABLE IF NOT EXISTS integrations (
+                    integration_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    integration_type TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    lifecycle_state TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    health_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_integrations_enabled ON integrations(enabled, lifecycle_state);
+                CREATE TABLE IF NOT EXISTS integration_capabilities (
+                    capability_id TEXT PRIMARY KEY,
+                    integration_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    risk TEXT NOT NULL,
+                    supported_operations TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_integration_capabilities_integration ON integration_capabilities(integration_id);
+                CREATE TABLE IF NOT EXISTS integration_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    integration_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    request_payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_integration_operations_fingerprint ON integration_operations(request_fingerprint);
+                CREATE INDEX IF NOT EXISTS idx_integration_operations_status ON integration_operations(status);
+                CREATE TABLE IF NOT EXISTS external_access_policies (
+                    policy_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_external_policies_enabled ON external_access_policies(enabled);
+                CREATE TABLE IF NOT EXISTS external_observations (
+                    observation_id TEXT PRIMARY KEY,
+                    integration_id TEXT NOT NULL,
+                    resource_identity TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    freshness TEXT NOT NULL,
+                    trust_level TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_external_observations_resource ON external_observations(integration_id, resource_identity, timestamp);
+                CREATE TABLE IF NOT EXISTS external_resources (
+                    resource_id TEXT PRIMARY KEY,
+                    integration_id TEXT NOT NULL,
+                    resource_identity TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    etag TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    exists_flag INTEGER NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_external_resources_identity ON external_resources(integration_id, resource_identity, observed_at);
+                CREATE TABLE IF NOT EXISTS external_changes (
+                    change_id TEXT PRIMARY KEY,
+                    integration_id TEXT NOT NULL,
+                    resource_identity TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_external_changes_resource ON external_changes(integration_id, resource_identity, created_at);
+                CREATE TABLE IF NOT EXISTS external_operation_results (
+                    result_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    failure_class TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_external_results_operation ON external_operation_results(operation_id, created_at);
+                CREATE TABLE IF NOT EXISTS connector_health (
+                    health_id TEXT PRIMARY KEY,
+                    integration_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_connector_health_integration ON connector_health(integration_id, observed_at);
+                CREATE TABLE IF NOT EXISTS communication_records (
+                    communication_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL,
+                    integration_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_communication_records_operation ON communication_records(operation_id, created_at);
                 CREATE TABLE IF NOT EXISTS architecture_versions (
                     architecture_version TEXT PRIMARY KEY,
                     agent_version TEXT NOT NULL,
@@ -1870,3 +1977,160 @@ class SQLiteStore:
         with self._connect() as db:
             row = db.execute("SELECT COUNT(*) AS count FROM events").fetchone()
         return int(row["count"]) if row else 0
+
+    def save_integration(self, integration: Any) -> None:
+        payload = integration.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO integrations(integration_id, name, provider, integration_type, version, enabled, lifecycle_state, architecture_version, health_state, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (integration.integration_id, integration.name, integration.provider, integration.integration_type.value, integration.version, int(integration.enabled), integration.lifecycle_state.value, integration.architecture_version, integration.health.state.value, integration.created_at, integration.updated_at, json.dumps(payload)))
+            db.execute("DELETE FROM integration_capabilities WHERE integration_id = ?", (integration.integration_id,))
+            for capability in integration.capabilities:
+                db.execute("INSERT OR REPLACE INTO integration_capabilities(capability_id, integration_id, name, risk, supported_operations, payload) VALUES (?, ?, ?, ?, ?, ?)", (capability.capability_id, integration.integration_id, capability.name, capability.risk.value, json.dumps(capability.supported_operations), json.dumps(capability.to_dict())))
+
+    def integration_by_id(self, integration_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM integrations WHERE integration_id = ?", (integration_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_integrations(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM integrations ORDER BY name, integration_id LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_integration_capabilities(self, integration_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if integration_id:
+                rows = db.execute("SELECT * FROM integration_capabilities WHERE integration_id = ? ORDER BY name LIMIT ?", (integration_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM integration_capabilities ORDER BY name LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_external_access_policy(self, policy: Any) -> None:
+        payload = policy.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO external_access_policies(policy_id, name, version, enabled, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)", (policy.policy_id, policy.name, policy.version, int(policy.enabled), json.dumps(payload), policy.provenance.created_at))
+
+    def external_access_policy_by_id(self, policy_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM external_access_policies WHERE policy_id = ?", (policy_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_external_access_policies(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM external_access_policies ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_integration_operation(self, operation: Any, request_payload: dict[str, Any] | None = None) -> None:
+        payload = {"operation": operation.to_dict(), "request_payload": request_payload or {}}
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO integration_operations(operation_id, integration_id, operation, target, request_fingerprint, status, requested_at, updated_at, payload, request_payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (operation.operation_id, operation.integration_id, operation.operation, operation.target, operation.request_fingerprint, operation.status.value, operation.created_at, operation.updated_at, json.dumps(payload), json.dumps(request_payload or {})))
+
+    def integration_operation_by_id(self, operation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM integration_operations WHERE operation_id = ?", (operation_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_integration_operations(self, integration_id: str | None = None, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if integration_id:
+            clauses.append("integration_id = ?"); values.append(integration_id)
+        if status:
+            clauses.append("status = ?"); values.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM integration_operations {where} ORDER BY requested_at DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_external_operation_result(self, result: Any) -> None:
+        payload = result.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT INTO external_operation_results(result_id, operation_id, status, failure_class, created_at, payload) VALUES (?, ?, ?, ?, ?, ?)", (new_id("external_result"), result.operation_id, result.status.value, result.failure_class.value, result.created_at, json.dumps(payload)))
+
+    def external_operation_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT r.* FROM external_operation_results r JOIN integration_operations o ON o.operation_id = r.operation_id WHERE o.request_fingerprint = ? ORDER BY r.created_at DESC LIMIT 1", (fingerprint,)).fetchone()
+        return dict(row) if row else None
+
+    def find_external_operation_results(self, operation_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if operation_id:
+                rows = db.execute("SELECT * FROM external_operation_results WHERE operation_id = ? ORDER BY created_at DESC LIMIT ?", (operation_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM external_operation_results ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_external_observation(self, observation: Any) -> None:
+        payload = observation.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO external_observations(observation_id, integration_id, resource_identity, timestamp, freshness, trust_level, content_hash, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (observation.observation_id, observation.integration_id, observation.resource_identity, observation.timestamp, observation.freshness.value, observation.trust_level.value, observation.content_hash, json.dumps(payload)))
+
+    def external_observation_by_id(self, observation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM external_observations WHERE observation_id = ?", (observation_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_external_observations(self, integration_id: str | None = None, resource_identity: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if integration_id:
+            clauses.append("integration_id = ?"); values.append(integration_id)
+        if resource_identity:
+            clauses.append("resource_identity = ?"); values.append(resource_identity)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM external_observations {where} ORDER BY timestamp DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_external_resource(self, resource: Any) -> None:
+        payload = resource.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO external_resources(resource_id, integration_id, resource_identity, version, etag, content_hash, exists_flag, observed_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (resource.resource_id, resource.integration_id, resource.resource_identity, resource.version, resource.etag, resource.content_hash, int(resource.exists), resource.observed_at, json.dumps(payload)))
+
+    def find_external_resources(self, integration_id: str | None = None, resource_identity: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if integration_id:
+            clauses.append("integration_id = ?"); values.append(integration_id)
+        if resource_identity:
+            clauses.append("resource_identity = ?"); values.append(resource_identity)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM external_resources {where} ORDER BY observed_at DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_external_change(self, change: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO external_changes(change_id, integration_id, resource_identity, kind, created_at, payload) VALUES (?, ?, ?, ?, ?, ?)", (change.change_id, change.integration_id, change.resource_identity, change.kind.value, change.created_at, json.dumps(change.to_dict())))
+
+    def find_external_changes(self, integration_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if integration_id:
+                rows = db.execute("SELECT * FROM external_changes WHERE integration_id = ? ORDER BY created_at DESC LIMIT ?", (integration_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM external_changes ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_connector_health(self, integration_id: str, health: Any) -> None:
+        payload = health.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT INTO connector_health(health_id, integration_id, observed_at, state, payload) VALUES (?, ?, ?, ?, ?)", (new_id("connector_health"), integration_id, utc_now(), health.state.value, json.dumps(payload)))
+
+    def find_connector_health(self, integration_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if integration_id:
+                rows = db.execute("SELECT * FROM connector_health WHERE integration_id = ? ORDER BY observed_at DESC LIMIT ?", (integration_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM connector_health ORDER BY observed_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_communication_record(self, record: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO communication_records(communication_id, operation_id, integration_id, channel, target, status, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (record.communication_id, record.operation_id, record.integration_id, record.channel, record.target, record.status.value, record.created_at, json.dumps(record.to_dict())))
+
+    def find_communication_records(self, integration_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if integration_id:
+                rows = db.execute("SELECT * FROM communication_records WHERE integration_id = ? ORDER BY created_at DESC LIMIT ?", (integration_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM communication_records ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
