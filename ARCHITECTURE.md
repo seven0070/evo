@@ -1076,3 +1076,36 @@ Promotion / Rollback: separate activation and restoration authorities
 ```
 
 The strategic layer cannot approve itself, grant permissions, disable governance or kill switches, bypass verification, modify security or protected core, access credentials, execute arbitrary code/providers/tools, mutate production, deploy, promote, perform external irreversible actions, self-replicate, or alter any prior authority. Its records and decisions are advisory unless an existing authoritative subsystem independently admits and executes the work. This invariant is enforced by code, persisted provenance, bounded queues, fail-closed safety parsing, and the unchanged protected-core subsystems.
+
+
+## Evo V1 Integration Hardening and Release
+
+The V1 hardening milestone freezes the Phase 1–20 architecture. It introduces no new intelligence layer, authority, execution path, autonomous approval mechanism, or self-modification subsystem. Its purpose is verification and reliability of the existing interfaces:
+
+```text
+User goal
+   -> Cognitive planning
+   -> World/context validation
+   -> Capability / tool / model / specialist selection
+   -> Runtime scheduling and limits
+   -> Kernel execution and security policy
+   -> Verification
+   -> Experience / Evaluation / Memory
+   -> Self-Model / Learning evidence
+   -> Existing governed Evolution / Metamorphosis
+   -> Sandbox / Benchmark / Human Approval / Promotion / Rollback
+```
+
+### Startup integrity and recovery gates
+
+Every Runtime startup validates the existing SQLite database with SQLite integrity checking, verifies the frozen core schema, and parses bounded persisted JSON payloads before writing a startup-recovery record. Corrupt persistence is observable and fails closed; it is never silently overwritten with a fabricated healthy state. The Runtime then validates the source root and architecture context, observes the current environment, and applies the existing bounded interrupted-task recovery policy.
+
+Audit event payloads are capped at 64 KiB. Oversized payloads retain a SHA-256 digest, original byte count, and bounded top-level key summary rather than growing unbounded logs or retaining unrestricted output. This limits operational growth without changing event authority or deleting provenance from normal records.
+
+### Reliability and security invariant
+
+Runtime shutdown remains deterministic, restart recovery remains conservative, and the kill switch remains active across process restart. Safe mode prevents side-effecting execution; exact approval scope is invalidated when task or environment context changes; workspace paths remain confined; shell commands remain allowlisted and restricted; external operations remain default-deny and policy-gated; and protected-core and production immutability checks remain independent of strategic or learning recommendations.
+
+V1 release validation is reproducible through `scripts/validate_v1.py`, a clean editable installation, the complete regression suite, compilation, CLI smoke checks, security boundary tests, restart/recovery tests, protected-core digest checks, and production immutability checks. The validator is offline and bounded: it does not call external providers, approve changes, promote candidates, deploy, or create a daemon.
+
+> **BUILD → VERIFY → HARDEN → RELEASE.** V1 hardens the existing authorities; it does not expand the architecture.

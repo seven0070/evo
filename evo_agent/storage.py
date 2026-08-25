@@ -1,12 +1,51 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from .models import Event, Goal, TaskStatus, new_id, utc_now
+
+
+_MAX_EVENT_BYTES = 64 * 1024
+_EVENT_SECRET_KEY = re.compile(r"(?:api[_ -]?key|password|secret|token|credential|authorization|private[_ -]?key)", re.I)
+
+
+def _sanitize_event(value: Any, depth: int = 0) -> Any:
+    if depth > 5:
+        return "<bounded>"
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in list(value.items())[:256]:
+            name = str(key)[:160]
+            result[name] = "<redacted>" if _EVENT_SECRET_KEY.search(name) else _sanitize_event(item, depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_event(item, depth + 1) for item in list(value)[:256]]
+    if isinstance(value, str):
+        return value[:8192]
+    return value
+
+
+_V1_CORE_TABLES = {
+    "tasks", "events", "memories", "experiences", "evaluations", "checkpoints",
+    "evolution_proposals", "evolution_experiments", "evolution_evidence", "versions",
+    "promotion_requests", "promotion_records", "rollback_records", "components", "capabilities",
+    "environment_snapshots", "world_observations", "cognitive_goals", "cognitive_plans",
+    "cognitive_task_graphs", "cognitive_task_steps", "cognitive_states", "cognitive_observations",
+    "memory_records", "memory_history", "memory_links", "memory_procedures", "memory_events",
+    "evolution_opportunities", "evolution_work_items", "orchestration_events", "approval_requests",
+    "experiment_queue", "promotion_queue", "runtime_states", "runtime_tasks", "runtime_schedules",
+    "integrations", "integration_operations", "specialists", "specialist_tasks", "models",
+    "model_selection_records", "learning_cycles", "learning_patterns", "self_model_snapshots",
+    "self_model_claims", "goals", "goal_milestones", "goal_dependencies", "goal_blockers",
+    "goal_strategies", "goal_alternatives", "goal_decisions", "goal_progress", "goal_conflicts",
+    "goal_resource_allocations", "goal_reassessments", "goal_verification",
+}
 
 
 class SQLiteStore:
@@ -1221,10 +1260,15 @@ class SQLiteStore:
             db.execute("UPDATE tasks SET status = ?, summary = ?, updated_at = ? WHERE task_id = ?", (status.value, summary, now, task_id))
 
     def append_event(self, event: Event) -> None:
+        raw_payload = json.dumps(event.payload, default=str, separators=(",", ":"))
+        payload = json.dumps(_sanitize_event(event.payload), default=str, separators=(",", ":"))
+        raw_bytes = len(raw_payload.encode("utf-8"))
+        if raw_bytes > _MAX_EVENT_BYTES or len(payload.encode("utf-8")) > _MAX_EVENT_BYTES:
+            payload = json.dumps({"truncated": True, "sha256": hashlib.sha256(raw_payload.encode("utf-8")).hexdigest(), "original_bytes": raw_bytes, "keys": sorted(str(key) for key in event.payload)[:128]}, separators=(",", ":"))
         with self._connect() as db:
             db.execute(
                 "INSERT INTO events(event_id, task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?)",
-                (event.event_id, event.task_id, event.event_type.value, json.dumps(event.payload), event.created_at),
+                (event.event_id, event.task_id, event.event_type.value, payload, event.created_at),
             )
 
     def events_for_task(self, task_id: str) -> list[dict[str, Any]]:
@@ -3226,3 +3270,32 @@ class SQLiteStore:
         query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
         with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
         return self._phase20_rows(rows)
+
+    def database_integrity_report(self, payload_limit: int = 10000) -> dict[str, Any]:
+        payload_limit = max(1, min(100000, int(payload_limit)))
+        malformed: list[dict[str, Any]] = []
+        with self._connect() as db:
+            integrity_row = db.execute("PRAGMA integrity_check").fetchone()
+            sqlite_integrity = str(integrity_row[0]) if integrity_row else "unknown"
+            tables = {str(row["name"]) for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+            missing = sorted(_V1_CORE_TABLES - tables)
+            checked_rows = 0
+            for table in sorted(tables & _V1_CORE_TABLES):
+                columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info(\"{table}\")").fetchall()}
+                if "payload" not in columns:
+                    continue
+                rows = db.execute(f"SELECT rowid, payload FROM \"{table}\" WHERE payload IS NOT NULL LIMIT ?", (payload_limit,)).fetchall()
+                checked_rows += len(rows)
+                for row in rows:
+                    try:
+                        json.loads(row["payload"])
+                    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                        if len(malformed) < 100:
+                            malformed.append({"table": table, "rowid": row["rowid"], "error": type(exc).__name__})
+        return {"ok": sqlite_integrity == "ok" and not missing and not malformed, "sqlite_integrity": sqlite_integrity, "missing_tables": missing, "malformed_payloads": malformed, "checked_payload_rows": checked_rows, "payload_limit": payload_limit}
+
+    def validate_database_integrity(self) -> dict[str, Any]:
+        report = self.database_integrity_report()
+        if not report["ok"]:
+            raise RuntimeError("SQLite integrity validation failed: " + json.dumps(report, sort_keys=True))
+        return report

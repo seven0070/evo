@@ -7,6 +7,7 @@ from evo_agent.experience import ExperienceEngine
 from evo_agent.kernel import AgentKernel
 from evo_agent.model_adapter import ModelAdapter, RuleBasedAdapter
 from evo_agent.models import OutcomeType, Plan, PlanStep, RiskLevel, TaskStatus, new_id
+from evo_agent.version import __version__
 
 
 class FailThenRecoverAdapter(ModelAdapter):
@@ -33,7 +34,7 @@ def test_success_creates_persisted_experience_and_evaluation(tmp_path: Path):
     experience = experiences[0]
     assert experience.final_outcome is OutcomeType.SUCCESS
     assert experience.selected_strategy == "direct"
-    assert experience.agent_version == "0.4.0"
+    assert experience.agent_version == __version__
     assert experience.evaluation_id
     evaluation = kernel.store.evaluation_by_id(experience.evaluation_id)
     assert evaluation is not None

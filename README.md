@@ -671,3 +671,24 @@ evo --goal-verify GOAL_ID --goal-evidence '[{"task_id":"t1","verified":true}]' -
 ```
 
 > **Phase 20 invariant:** Strategic Autonomy may understand, decompose, prioritize, allocate within existing ceilings, recommend, coordinate, persist, reassess, and request bounded Runtime work. It may never become the authority that approves, executes, verifies, promotes, deploys, mutates production, modifies the protected core, changes governance, bypasses security, or creates uncontrolled autonomy.
+
+
+## Evo V1 hardening and release
+
+Evo V1 freezes the existing Phase 1–20 capability set. The V1 milestone adds no new intelligence layer or authority; it verifies and hardens the complete chain from Cognitive planning through Runtime, Kernel execution, Verification, Experience/Evaluation, Memory, Self-Model, and governed Evolution/Metamorphosis, Promotion, and Rollback.
+
+Startup validates SQLite integrity and persisted structured payloads before overwriting recovery state. Runtime recovery is bounded and conservative: interrupted work is revalidated, requeued only when safe, or marked failed/inconclusive. Safe mode blocks side-effecting execution, the kill switch remains active across restart, and exact task/environment approvals are invalidated when context changes. Event payloads are bounded to prevent unbounded audit-record growth while preserving a content hash and field summary for oversized records.
+
+Run the reproducible release validator from the repository root:
+
+```bash
+python scripts/validate_v1.py
+PYTHONPATH=. pytest -q
+python3 -m compileall -q evo_agent tests scripts
+git diff --check
+git diff --cached --check
+```
+
+Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), and [`docs/RELEASE.md`](docs/RELEASE.md). These documents cover clean installation, configuration, CLI consistency, recovery, rollback, security boundaries, V1 limitations, and the release gate.
+
+The stable package version is **1.0.0**. Offline operation remains the default and requires no provider credentials or network access. No V1 operation can approve itself, promote itself, bypass Governance or Verification, mutate production, execute arbitrary generated code, acquire credentials, disable the kill switch, grant permissions, or create an uncontrolled planning loop.

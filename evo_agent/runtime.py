@@ -808,6 +808,9 @@ class AgentRuntime:
                 self.runtime_record.metadata["previous_runtime_state"] = previous_state.value
                 self.runtime_record.metadata["startup_recovery"] = previous_state is not RuntimeState.STOPPED
                 self.runtime_record.state = RuntimeState.STARTING
+                # Validate persisted state before writing a startup-recovery record; a corrupt
+                # database must remain observable and fail closed rather than be overwritten.
+                self.store.validate_database_integrity()
                 self._persist_record()
                 if previous_state not in {RuntimeState.STOPPED, RuntimeState.STARTING, RuntimeState.READY}:
                     self._emit(EventType.RUNTIME_CRASH_RECOVERY, {"runtime_id": self.runtime_id, "previous_state": previous_state.value, "action": "startup_revalidation"}, self.runtime_id)
@@ -1474,6 +1477,8 @@ class AgentRuntime:
             return ""
 
     def _validate_database(self) -> None:
+        report = self.store.validate_database_integrity()
+        self.runtime_record.metadata["database_integrity"] = {"sqlite_integrity": report["sqlite_integrity"], "checked_payload_rows": report["checked_payload_rows"], "validated_at": utc_now()}
         with self.store._connect() as db:
             db.execute("SELECT COUNT(*) FROM runtime_states").fetchone()
             db.execute("SELECT COUNT(*) FROM runtime_tasks").fetchone()
