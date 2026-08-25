@@ -1,0 +1,12 @@
+{
+  "max_cycles_per_run": 1,
+  "max_total_runtime_seconds": 3600,
+  "cycle_sleep_seconds": 0.25,
+  "backup_retention": 3,
+  "max_journal_rows": 5000,
+  "health_stale_seconds": 120,
+  "lock_timeout_seconds": 0,
+  "backup_directory": ".evo/backups",
+  "log_level": "INFO",
+  "schema_version": 1
+}

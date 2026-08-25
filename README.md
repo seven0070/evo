@@ -57,6 +57,24 @@ A Windows-first Tauri desktop shell is available under [`desktop/`](desktop/) an
 
 For local development, run `cd desktop && pnpm install --frozen-lockfile && pnpm check`, then `cargo check` from `desktop/src-tauri`. A standalone Windows build uses the PyInstaller sidecar and can be produced with `./scripts/build_windows.ps1` on Windows or through `.github/workflows/desktop-windows.yml`. The current Linux development environment validates the source shell and a native AppImage smoke build; Windows NSIS/MSI artifacts require the Windows build pipeline.
 
+## Local-first production hardening
+
+The approved production path is documented in [`docs/PRODUCTION.md`](docs/PRODUCTION.md). It strengthens the existing SQLite/Runtime/Kernel/Governance control plane with strict operational configuration, durable production-run records, health and metrics reporting, atomic integrity-checked backups, process locking, bounded supervisor runs, adversarial security coverage, resilience tests, and governed evolution stress tests. It does not introduce a parallel execution engine, unrestricted background autonomy, autonomous approval or promotion, credential handling, or a governance bypass.
+
+Run the complete local production gate with:
+
+```bash
+python3 scripts/run_production_gate.py
+```
+
+For an explicit bounded local supervisor invocation:
+
+```bash
+evo --production-status --workspace ./workspace
+evo --runtime-submit "list the files" --workspace ./workspace
+evo --production-run --production-backup --workspace ./workspace
+```
+
 ## Project structure
 
 | Component | Responsibility |
@@ -74,12 +92,14 @@ For local development, run `cd desktop && pnpm install --frozen-lockfile && pnpm
 | `sandbox.py` | Proposal-gated isolated candidate experiments, bounded execution, comparison, and cleanup |
 | `benchmark.py` | Versioned benchmark trials, metrics, regression/safety gates, and evidence decisions |
 | `promotion.py` | Version registry, explicit promotion approvals, atomic activation, health checks, and native rollback |
+| `production.py` | Local-first operational configuration, durable run journal, health, metrics, backups, process locking, and bounded supervisor |
 | `metamorphosis.py` | Governed structural proposals, component/capability registries, architecture manifests, deterministic compatibility analysis, and pipeline handoff |
 
 ## Verification
 
 ```bash
 python3 -m pytest -q
+python3 scripts/run_production_gate.py
 ```
 
 The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, version registry bootstrap and lineage, separate promotion approval, eligibility rejection, candidate integrity and TOCTOU checks, atomic activation, health verification, native rollback, manual rollback, audit records, previous-version retention, governed component and capability registries, deterministic architecture manifests, dependency affected-subgraphs, protected-core rejection, compatibility checks, capability-regression detection, structural candidate isolation, metamorphosis approval separation, Phase 7 handoff, and Phase 1–7 regression behavior.

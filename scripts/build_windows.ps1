@@ -4,11 +4,30 @@ $desktop = Join-Path $repo "desktop"
 $bridgeOut = Join-Path $desktop "src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $bridgeOut | Out-Null
 
-python -m pip install --upgrade pyinstaller platformdirs
+python -m pip install --upgrade "pyinstaller==6.22.2" "platformdirs==4.11.4"
 python -m PyInstaller --clean --noconfirm --onefile --name evo-bridge --paths $repo --collect-submodules evo_agent --exclude-module setuptools --exclude-module pkg_resources (Join-Path $desktop "bridge\evo_desktop_bridge.py")
 Copy-Item (Join-Path $repo "dist\evo-bridge.exe") (Join-Path $bridgeOut "evo-bridge-x86_64-pc-windows-msvc.exe") -Force
 
 pnpm --dir $desktop install --frozen-lockfile
 pnpm --dir $desktop run check
 pnpm --dir $desktop exec tauri build
-Write-Host "Windows installers are under desktop/src-tauri/target/release/bundle/"
+
+$bundle = Join-Path $desktop "src-tauri\target\release\bundle"
+$artifacts = @(Get-ChildItem -Path (Join-Path $bundle "nsis\*.exe"), (Join-Path $bundle "msi\*.msi") -File | ForEach-Object {
+    $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    [ordered]@{ name = $_.Name; path = $_.FullName.Substring($repo.Path.Length + 1); bytes = $_.Length; sha256 = $hash }
+})
+$manifest = [ordered]@{
+    product = "Evo"
+    version = "1.0.0"
+    commit = (git -C $repo rev-parse HEAD)
+    python = (python --version)
+    rust = (rustc --version)
+    node = (node --version)
+    tauri_cli = (pnpm --dir $desktop exec tauri --version)
+    pyinstaller = "6.22.2"
+    platformdirs = "4.11.4"
+    artifacts = $artifacts
+}
+$manifest | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $bundle "release-manifest.json") -Encoding UTF8
+Write-Host "Windows installers and release-manifest.json are under desktop/src-tauri/target/release/bundle/"

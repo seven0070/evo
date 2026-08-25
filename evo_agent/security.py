@@ -27,6 +27,11 @@ class SecurityPolicy:
         return candidate
 
     def validate_command(self, command: str) -> tuple[bool, str]:
+        if not isinstance(command, str) or len(command) > 4096:
+            return False, "Command is invalid or exceeds the bounded size"
+        shell_metacharacters = (";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\\n", "\\r")
+        if any(marker in command for marker in shell_metacharacters):
+            return False, "Shell chaining, expansion, redirection, and control operators are restricted"
         try:
             parts = shlex.split(command)
         except ValueError as exc:
@@ -39,6 +44,17 @@ class SecurityPolicy:
         dangerous_tokens = {"sudo", "rm", "rmdir", "chmod", "chown", "mkfs", "shutdown", "reboot", "curl", "wget", "git", "ssh"}
         if dangerous_tokens.intersection(parts):
             return False, "Command contains a restricted operation"
+        if executable in {"python3", "pytest"} and any(token in {"-c", "-m", "-"} for token in parts[1:]):
+            return False, "Interpreter code and module execution flags are restricted"
+        for token in parts[1:]:
+            if token.startswith("-"):
+                continue
+            if token.startswith("/") or token.startswith("~") or ".." in Path(token).parts:
+                try:
+                    candidate = (self.workspace / token).expanduser().resolve()
+                    candidate.relative_to(self.workspace)
+                except (OSError, ValueError):
+                    return False, "Command references a path outside the allowlisted workspace"
         return True, "Command allowed"
 
     def requires_approval(self, tool_call: ToolCall) -> bool:

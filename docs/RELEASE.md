@@ -29,7 +29,13 @@ From the repository root, run the bounded offline release validator:
 python scripts/validate_v1.py
 ```
 
-Then run the complete test suite, compilation, and patch checks:
+Then run the complete production gate, which includes the full test suite, compilation, release validators, readiness matrix, offline pilot, clean-install check, protected-core digest proof, and patch checks:
+
+```bash
+python3 scripts/run_production_gate.py
+```
+
+For the underlying checks, run the complete test suite, compilation, and patch checks:
 
 ```bash
 PYTHONPATH=. pytest -q
@@ -39,11 +45,13 @@ git diff --check
 git diff --cached --check
 ```
 
-The release validator checks stable version metadata, fresh SQLite schema integrity, bounded security policy behavior, fresh-workspace CLI persistence, deterministic Runtime startup/shutdown, and protected-core immutability. The test suite additionally covers the full cross-phase integration, failure injection, restart behavior, approval boundaries, false-success prevention, production immutability, and governed evolution/promotion/rollback paths.
+The release validator checks stable version metadata, fresh SQLite schema integrity, bounded security policy behavior, fresh-workspace CLI persistence, deterministic Runtime startup/shutdown, and protected-core immutability. The production gate additionally exercises strict operational configuration, durable production-run journaling, atomic backup validation, process-lock serialization, clean installation, adversarial shell and external-operation cases, resilience recovery, and repeated governed-evolution stress. The test suite additionally covers the full cross-phase integration, failure injection, restart behavior, approval boundaries, false-success prevention, production immutability, and governed evolution/promotion/rollback paths.
 
 ## Release gate
 
-A release is eligible only when all tests pass, the fresh-install check passes, CLI smoke checks pass, restart/recovery checks pass, protected-core and production immutability checks pass, no unapproved external or provider operation is required, and the working tree is clean. The release commit must be pushed and fetched so that `HEAD` equals `origin/main`.
+A release is eligible only when all tests pass, the fresh-install check passes, CLI smoke checks pass, restart/recovery checks pass, protected-core and production immutability checks pass, no unapproved external or provider operation is required, the Windows installer pipeline succeeds, and the working tree is clean. The release commit must be pushed and fetched so that `HEAD` equals `origin/main`.
+
+The local production path remains intentionally unsigned until a user-supplied Windows code-signing certificate is available. A real Windows clean-install, upgrade, WebView2, SmartScreen, and extended pilot test are required before calling the product generally production-ready.
 
 > BUILD → VERIFY → HARDEN → RELEASE.
 
