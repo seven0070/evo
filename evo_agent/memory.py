@@ -672,6 +672,14 @@ class MemoryManager:
         safe["executable"] = False
         return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"external:{operation_id}", ConfidenceLevel.MEDIUM, 0.6, 0.55, architecture_version=safe.get("architecture_version", ""), metadata=safe))
 
+    def capture_specialist(self, evidence: dict[str, Any]) -> MemoryRecord:
+        """Persist bounded specialist metadata only; context and outputs remain isolated and non-authoritative."""
+        safe = {key: value for key, value in dict(evidence).items() if key not in {"context", "input", "output", "claim", "observations", "inference", "payload"}}
+        specialist_id = str(safe.get("specialist_id", "unknown"))
+        task_id = str(safe.get("specialist_task_id", new_memory_id()))
+        summary = f"Specialist {specialist_id} completed task {task_id}: success={bool(safe.get('success', False))}, verified={bool(safe.get('verified', False))}."
+        return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"specialist:{task_id}", ConfidenceLevel.MEDIUM, min(1.0, max(0.0, float(safe.get("quality_score", 0.5)))), 0.55, metadata=safe))
+
     def capture_user_memory(self, content: str, summary: str = "", key: str = "", source_id: str = "user", importance: float = 0.8, expiration: str | None = None) -> MemoryRecord:
         return self.store(self._record(MemoryType.USER, content, summary or _summary(content), ProvenanceSource.USER_INPUT, source_id, ConfidenceLevel.HIGH, 0.95, importance, expiration=expiration, key=key, metadata={"user_owned": True, "explicit_action_required": True}))
 

@@ -487,3 +487,34 @@ These commands inspect or create modeled records only. Actual external execution
 > **External systems can provide data or perform explicitly authorized actions. They cannot become authorities.**
 
 Phase 15 does not implement arbitrary plugin installation, unrestricted external access, autonomous approval or promotion, arbitrary webhook execution, unrestricted generated-code execution, or Phase 16 functionality.
+
+
+## Phase 16: Multi-Agent & Specialist Intelligence Layer
+
+Phase 16 adds a bounded specialist and multi-agent intelligence layer beneath the sovereign Evo agent. Specialists are registered subordinate roles, not independent agents with authority. The persistent `SpecialistRegistry` records specialist identity, purpose, type, capabilities, risk classification, model metadata, version lineage, architecture version, provenance, health, lifecycle, and bounded filesystem scope. Built-in provider-neutral roles include research, planning, coding, analysis, verification, documentation, and data.
+
+A parent task may create a `SpecialistTaskContract` that fixes the subordinate goal, scope, allowed capabilities, tools, integrations, workspace scope, output schema, success criteria, resource limits, timeout, deadline, dependencies, approval requirements, prohibited actions, verification requirements, risk, architecture version, and immutable scope hash. Context is constructed by `ContextIsolation` using least privilege and bounded memory, environment, capability, external-observation, and parent-constraint evidence. Specialists never receive the full SQLite store, credentials, governance state, approval authority, production source, or arbitrary executable context.
+
+`SpecialistDelegationEngine` supports bounded task execution, optional bounded parallelism, deterministic specialist selection, structured internal messages, cancellation, restart recovery, retry budgets, circuit breakers, specialist health, resource ceilings, evidence extraction, evidence fusion, conflict preservation, and conflict resolution requests. Specialist output is data. It is not a Kernel result, permission, approval, verification, promotion decision, governance change, or evidence of success until the existing verification authority confirms it.
+
+Cognitive planning may record advisory specialist discovery for complex goals. It does not execute specialists directly. Explicit specialist tasks can enter the existing Phase 14 runtime queue through `AgentRuntime.enqueue_specialist_task`, where Runtime remains responsible for lifecycle, dependencies, deadlines, resource limits, safe mode, kill switch, recovery, and shutdown. Any tools or external integrations required by a specialist remain subject to the existing Phase 12 Capability Intelligence, Phase 15 External Access Policy, Kernel-owned execution, approval, and verification paths.
+
+Specialist outputs are classified as claims, observations, evidence, or inferences and retain trust and provenance metadata. `EvidenceFusionEngine` compares independent claims, records conflicts instead of silently selecting a winner, and produces supported claims, unsupported claims, uncertainty, confidence, and verification requirements. Historical MemoryManager capture is metadata-only and cannot become policy or executable instructions. Experience and Evaluation include specialist-task, delegation, evidence, and conflict metrics.
+
+Phase 16 deliberately does not create autonomous approval, autonomous promotion, specialist governance, specialist tool execution, specialist external access outside registered integrations, arbitrary code execution, unrestricted filesystem access, protected-core mutation, production mutation, independent kill-switch removal, or uncontrolled self-replication. The authority chain remains: **Sovereign Evo and Governance authorize; Runtime bounds and schedules; the Kernel executes; Verification confirms; specialists advise and provide bounded evidence.**
+
+Useful inspection commands include:
+
+```bash
+evo --list-specialists --workspace ./workspace
+evo --show-specialist specialist_analysis --workspace ./workspace
+evo --specialist-health specialist_analysis --workspace ./workspace
+evo --specialist-stats --workspace ./workspace
+evo --specialist-task "analyze the bounded workspace records" --specialist-id specialist_analysis --workspace ./workspace
+evo --list-specialist-tasks --workspace ./workspace
+evo --list-delegations --workspace ./workspace
+evo --list-specialist-evidence --workspace ./workspace
+evo --list-specialist-conflicts --workspace ./workspace
+evo --queue-specialist-task SPECIALIST_TASK_ID --workspace ./workspace
+evo --cancel-specialist-task SPECIALIST_TASK_ID --workspace ./workspace
+```

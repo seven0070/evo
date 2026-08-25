@@ -44,6 +44,10 @@ class Experience:
     external_operations: list[dict[str, Any]] = field(default_factory=list)
     external_failures: list[dict[str, Any]] = field(default_factory=list)
     communication_records: list[dict[str, Any]] = field(default_factory=list)
+    specialist_tasks: list[dict[str, Any]] = field(default_factory=list)
+    delegation_records: list[dict[str, Any]] = field(default_factory=list)
+    specialist_evidence: list[dict[str, Any]] = field(default_factory=list)
+    specialist_conflicts: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -86,6 +90,11 @@ class ExperienceEngine:
         external_operations = [event.payload for event in events if event.event_type in external_events]
         external_failures = [event.payload for event in events if event.event_type in {EventType.EXTERNAL_OPERATION_FAILED, EventType.EXTERNAL_OPERATION_BLOCKED}]
         communication_records = [event.payload for event in events if event.event_type is EventType.EXTERNAL_COMMUNICATION_RECORDED]
+        specialist_events = {EventType.SPECIALIST_TASK_CONTRACT_CREATED, EventType.SPECIALIST_TASK_QUEUED, EventType.SPECIALIST_TASK_STARTED, EventType.SPECIALIST_TASK_COMPLETED, EventType.SPECIALIST_TASK_FAILED, EventType.SPECIALIST_TASK_BLOCKED, EventType.SPECIALIST_TASK_CANCELLED, EventType.SPECIALIST_TASK_RECOVERED}
+        specialist_tasks = [event.payload for event in events if event.event_type in specialist_events]
+        delegation_records = [event.payload for event in events if event.event_type in {EventType.DELEGATION_STARTED, EventType.DELEGATION_COMPLETED, EventType.DELEGATION_FAILED}]
+        specialist_evidence = [event.payload for event in events if event.event_type in {EventType.SPECIALIST_RESULT_COLLECTED, EventType.SPECIALIST_EVIDENCE_COLLECTED, EventType.SPECIALIST_EVIDENCE_VERIFIED}]
+        specialist_conflicts = [event.payload for event in events if event.event_type in {EventType.SPECIALIST_CONFLICT_DETECTED, EventType.SPECIALIST_CONFLICT_RESOLVED}]
         return Experience(
             experience_id=f"exp_{outcome.task_id}",
             task_id=outcome.task_id,
@@ -102,11 +111,15 @@ class ExperienceEngine:
             verification_result=verification,
             final_outcome=self._outcome(outcome),
             duration_ms=duration_ms,
-            resource_information={"event_count": len(events), "step_count": outcome.steps_completed, "capability_selection_count": len(capability_selection), "capability_gap_count": sum(1 for event in events if event.event_type is EventType.CAPABILITY_GAP_DETECTED), "external_operation_count": len(external_operations)},
+            resource_information={"event_count": len(events), "step_count": outcome.steps_completed, "capability_selection_count": len(capability_selection), "capability_gap_count": sum(1 for event in events if event.event_type is EventType.CAPABILITY_GAP_DETECTED), "external_operation_count": len(external_operations), "specialist_task_count": len(specialist_tasks), "delegation_count": len(delegation_records), "specialist_evidence_count": len(specialist_evidence), "specialist_conflict_count": len(specialist_conflicts)},
             approval_events=[event.payload for event in events if event.event_type in {EventType.APPROVAL_REQUESTED, EventType.APPROVAL_GRANTED, EventType.APPROVAL_DENIED, EventType.EXTERNAL_APPROVAL_REQUESTED, EventType.EXTERNAL_APPROVAL_RECEIVED}],
             external_operations=external_operations,
             external_failures=external_failures,
             communication_records=communication_records,
+            specialist_tasks=specialist_tasks,
+            delegation_records=delegation_records,
+            specialist_evidence=specialist_evidence,
+            specialist_conflicts=specialist_conflicts,
             timestamp=timestamp,
             agent_version=agent_version,
             model_identifier=model_identifier,

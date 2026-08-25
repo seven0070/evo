@@ -48,6 +48,10 @@ class EvaluationEngine:
         environment_failure = any(token in failure_text for token in ("environment", "workspace unavailable", "filesystem", "provider unavailable", "network policy"))
         resource_limitation = any(token in failure_text for token in ("resource limit", "timeout", "memory", "cpu", "disk"))
         external_dependency_failure = any(token in failure_text for token in ("provider", "external dependency", "network"))
+        specialist_task_count = len(getattr(experience, "specialist_tasks", []))
+        delegation_count = len(getattr(experience, "delegation_records", []))
+        specialist_evidence_count = len(getattr(experience, "specialist_evidence", []))
+        specialist_conflict_count = len(getattr(experience, "specialist_conflicts", []))
         verified = bool(experience.verification_result.get("success", False))
         human_interventions = len([item for item in experience.approval_events if item.get("reason")])
 
@@ -87,9 +91,9 @@ class EvaluationEngine:
             outcome=experience.final_outcome,
             verified=verified,
             success_score=score,
-            efficiency_metrics={"step_count": len(events), "duration_ms": experience.duration_ms, "tool_count": len(experience.selected_tools)},
+            efficiency_metrics={"step_count": len(events), "duration_ms": experience.duration_ms, "tool_count": len(experience.selected_tools), "specialist_task_count": specialist_task_count, "delegation_count": delegation_count, "specialist_evidence_count": specialist_evidence_count},
             recovery_metrics={"attempt_count": len(experience.recovery_attempts), "recovery_succeeded": recovery_succeeded, "failed_tool_calls": failed_tool_calls},
-            reliability_metrics={"outcome": experience.final_outcome.value, "human_interventions": human_interventions, "approval_event_count": len(experience.approval_events), "agent_failure": bool(failed_tool_calls == 0 and not environment_failure and not resource_limitation and not external_dependency_failure and experience.final_outcome not in {OutcomeType.SUCCESS, OutcomeType.PARTIAL_SUCCESS}), "tool_failure": failed_tool_calls > 0 and not environment_failure, "environment_failure": environment_failure, "resource_limitation": resource_limitation, "external_dependency_failure": external_dependency_failure},
+            reliability_metrics={"outcome": experience.final_outcome.value, "human_interventions": human_interventions, "approval_event_count": len(experience.approval_events), "agent_failure": bool(failed_tool_calls == 0 and not environment_failure and not resource_limitation and not external_dependency_failure and experience.final_outcome not in {OutcomeType.SUCCESS, OutcomeType.PARTIAL_SUCCESS}), "tool_failure": failed_tool_calls > 0 and not environment_failure, "environment_failure": environment_failure, "resource_limitation": resource_limitation, "external_dependency_failure": external_dependency_failure, "specialist_task_count": specialist_task_count, "specialist_evidence_count": specialist_evidence_count, "specialist_conflict_count": specialist_conflict_count, "delegation_conflict_rate": specialist_conflict_count / max(1, delegation_count)},
             step_count=len(events),
             retry_count=retry_count,
             replan_count=replan_count,

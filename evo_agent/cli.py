@@ -23,6 +23,7 @@ from .storage import SQLiteStore
 from .world import EnvironmentObserver, WorldModelEngine, WorldRefreshEngine
 from .runtime import AgentRuntime, RuntimeSchedule, ScheduleKind, TaskPriority, TaskSource
 from .external import ExternalAccessPolicy, ExternalIntegrationManager, ExternalOperationRisk, integration_operation_from_row
+from .specialist import SpecialistDelegationEngine, SpecialistRisk
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -165,6 +166,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--after-external-observation", default="", help="Newer observation ID used with --external-diff")
     parser.add_argument("--list-external-changes", action="store_true", help="List external resource changes")
     parser.add_argument("--external-stats", action="store_true", help="Show external integration statistics")
+    parser.add_argument("--list-specialists", action="store_true", help="List registered specialist roles")
+    parser.add_argument("--show-specialist", metavar="SPECIALIST_ID", help="Show one specialist role")
+    parser.add_argument("--specialist-health", nargs="?", const="", default=None, metavar="SPECIALIST_ID", help="Show specialist health, optionally for one specialist")
+    parser.add_argument("--specialist-stats", action="store_true", help="Show specialist and delegation statistics")
+    parser.add_argument("--specialist-task", metavar="GOAL", help="Create a bounded specialist task contract")
+    parser.add_argument("--specialist-id", default="specialist_analysis", help="Specialist role used with --specialist-task")
+    parser.add_argument("--specialist-parent-task", default="cli-parent", help="Parent task ID for a specialist contract")
+    parser.add_argument("--specialist-scope", default="", help="Explicit specialist contract scope")
+    parser.add_argument("--specialist-risk", choices=[item.value for item in SpecialistRisk], default=SpecialistRisk.READ_ONLY.value, help="Risk class for --specialist-task")
+    parser.add_argument("--queue-specialist-task", metavar="SPECIALIST_TASK_ID", help="Queue a persisted specialist task in the bounded runtime")
+    parser.add_argument("--delegate-task", dest="delegate_task", metavar="SPECIALIST_TASK_ID", help="Delegate a persisted specialist task through the bounded runtime")
+    parser.add_argument("--cancel-specialist-task", metavar="SPECIALIST_TASK_ID", help="Cancel a specialist task")
+    parser.add_argument("--list-specialist-tasks", action="store_true", help="List persisted specialist tasks")
+    parser.add_argument("--show-specialist-task", metavar="SPECIALIST_TASK_ID", help="Show one specialist task")
+    parser.add_argument("--list-delegations", action="store_true", help="List persisted delegation runs")
+    parser.add_argument("--show-delegation", metavar="DELEGATION_ID", help="Show one delegation run")
+    parser.add_argument("--list-specialist-evidence", action="store_true", help="List persisted specialist evidence")
+    parser.add_argument("--show-specialist-evidence", dest="show_specialist_evidence", metavar="EVIDENCE_ID", help="Show one specialist evidence record")
+    parser.add_argument("--list-specialist-conflicts", action="store_true", help="List specialist evidence conflicts")
+    parser.add_argument("--show-conflicts", dest="show_conflicts", action="store_true", help="Show specialist evidence conflicts")
     return parser
 
 
@@ -178,7 +199,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -201,14 +222,17 @@ def inspect_command(args: argparse.Namespace) -> bool:
     external_manager = None
     if args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats:
         external_manager = ExternalIntegrationManager(workspace, store=store, memory=memory)
+    specialist_manager = None
+    if args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.run_goal:
+        specialist_manager = SpecialistDelegationEngine(store, workspace, memory=memory, capability_intelligence=capability_intelligence, external_integrations=external_manager)
     runtime = None
-    if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.external_enqueue or args.approve_external_operation:
-        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager)
+    if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.external_enqueue or args.approve_external_operation or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task:
+        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager, specialist_delegation=specialist_manager)
     cognitive = None
     if args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal:
         adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
         kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
-        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator, external_integrations=external_manager)
+        cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator, external_integrations=external_manager, specialist_delegation=specialist_manager)
     if args.runtime_start:
         print_json(runtime.start().to_dict())
     elif args.runtime_stop:
@@ -242,6 +266,40 @@ def inspect_command(args: argparse.Namespace) -> bool:
         print_json(runtime.heartbeat.beat().to_dict())
     elif args.runtime_health:
         print_json(runtime.health().to_dict())
+    elif args.list_specialists:
+        print_json([item.to_dict() for item in specialist_manager.registry.list()])
+    elif args.show_specialist:
+        item = specialist_manager.registry.get(args.show_specialist)
+        print_json(item.to_dict() if item else {"error": "specialist not found", "specialist_id": args.show_specialist})
+    elif args.specialist_health is not None:
+        if args.specialist_health:
+            print_json(specialist_manager.registry.health(args.specialist_health).to_dict())
+        else:
+            print_json([{"specialist_id": item.specialist_id, "health": item.health.to_dict()} for item in specialist_manager.registry.list()])
+    elif args.specialist_stats:
+        print_json(specialist_manager.stats())
+    elif args.specialist_task:
+        task, contract = specialist_manager.create_contract(args.specialist_parent_task, args.specialist_task, args.specialist_id, scope=args.specialist_scope or None, risk=SpecialistRisk(args.specialist_risk))
+        print_json({"task": task.to_dict(), "contract": contract.to_dict()})
+    elif args.queue_specialist_task or args.delegate_task:
+        print_json(runtime.enqueue_specialist_task(args.queue_specialist_task or args.delegate_task).to_dict())
+    elif args.cancel_specialist_task:
+        print_json(specialist_manager.cancel_task(args.cancel_specialist_task).to_dict())
+    elif args.list_specialist_tasks:
+        print_json([row for row in store.find_specialist_tasks(limit=200)])
+    elif args.show_specialist_task:
+        print_json(store.specialist_task_by_id(args.show_specialist_task) or {"error": "specialist task not found", "specialist_task_id": args.show_specialist_task})
+    elif args.list_delegations:
+        print_json(store.find_delegation_runs(limit=200))
+    elif args.show_delegation:
+        print_json(store.delegation_by_id(args.show_delegation) or {"error": "delegation not found", "delegation_id": args.show_delegation})
+    elif args.list_specialist_evidence:
+        print_json(store.find_specialist_evidence(limit=200))
+    elif args.show_specialist_evidence:
+        rows = store.find_specialist_evidence(limit=1000)
+        print_json(next((row for row in rows if row.get("evidence_id") == args.show_specialist_evidence), {"error": "specialist evidence not found", "evidence_id": args.show_specialist_evidence}))
+    elif args.list_specialist_conflicts or args.show_conflicts:
+        print_json(store.find_evidence_conflicts(limit=200))
     elif args.list_integrations:
         print_json([item.to_dict() for item in external_manager.list_integrations()])
     elif args.show_integration:

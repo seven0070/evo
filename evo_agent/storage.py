@@ -868,6 +868,109 @@ class SQLiteStore:
                     payload TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS specialists (
+                    specialist_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    specialist_type TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    lifecycle_state TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    risk_classification TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_specialists_type_state ON specialists(specialist_type, lifecycle_state);
+                CREATE TABLE IF NOT EXISTS specialist_capabilities (
+                    capability_id TEXT PRIMARY KEY,
+                    specialist_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS specialist_tasks (
+                    specialist_task_id TEXT PRIMARY KEY,
+                    parent_task_id TEXT NOT NULL,
+                    specialist_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_specialist_tasks_parent_status ON specialist_tasks(parent_task_id, status);
+                CREATE TABLE IF NOT EXISTS specialist_contracts (
+                    contract_id TEXT PRIMARY KEY,
+                    specialist_task_id TEXT NOT NULL UNIQUE,
+                    specialist_id TEXT NOT NULL,
+                    parent_task_id TEXT NOT NULL,
+                    scope_hash TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS specialist_messages (
+                    message_id TEXT PRIMARY KEY,
+                    parent_task_id TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    recipient TEXT NOT NULL,
+                    message_type TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    trust_level TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_specialist_messages_parent ON specialist_messages(parent_task_id, created_at);
+                CREATE TABLE IF NOT EXISTS specialist_results (
+                    result_id TEXT PRIMARY KEY,
+                    specialist_task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    verified INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS specialist_evidence (
+                    evidence_id TEXT PRIMARY KEY,
+                    result_id TEXT NOT NULL,
+                    specialist_task_id TEXT NOT NULL,
+                    evidence_kind TEXT NOT NULL,
+                    trust_level TEXT NOT NULL,
+                    verification_status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS delegation_runs (
+                    delegation_id TEXT PRIMARY KEY,
+                    parent_task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    active_specialists INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_delegation_runs_parent ON delegation_runs(parent_task_id, created_at);
+                CREATE TABLE IF NOT EXISTS evidence_fusions (
+                    fusion_id TEXT PRIMARY KEY,
+                    parent_task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS evidence_conflicts (
+                    conflict_id TEXT PRIMARY KEY,
+                    parent_task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS specialist_health (
+                    health_id TEXT PRIMARY KEY,
+                    specialist_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_specialist_health_specialist ON specialist_health(specialist_id, observed_at);
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
@@ -2134,3 +2237,174 @@ class SQLiteStore:
             else:
                 rows = db.execute("SELECT * FROM communication_records ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
+
+    def save_specialist(self, specialist: Any) -> None:
+        payload = specialist.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO specialists(specialist_id, name, specialist_type, version, lifecycle_state, enabled, risk_classification, architecture_version, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (specialist.specialist_id, specialist.name, specialist.specialist_type.value, specialist.version_lineage.version, specialist.lifecycle_state.value, int(specialist.enabled), specialist.risk_classification.value, specialist.architecture_version, json.dumps(payload), specialist.created_at, specialist.updated_at))
+            db.execute("DELETE FROM specialist_capabilities WHERE specialist_id = ?", (specialist.specialist_id,))
+            for capability in specialist.capabilities:
+                db.execute("INSERT OR REPLACE INTO specialist_capabilities(capability_id, specialist_id, name, payload, created_at) VALUES (?, ?, ?, ?, ?)", (capability.capability_id, specialist.specialist_id, capability.name, json.dumps(capability.to_dict()), capability.created_at))
+
+    def specialist_by_id(self, specialist_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM specialists WHERE specialist_id = ?", (specialist_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def find_specialists(self, specialist_type: str | None = None, enabled: bool | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if specialist_type:
+            clauses.append("specialist_type = ?")
+            values.append(specialist_type)
+        if enabled is not None:
+            clauses.append("enabled = ?")
+            values.append(int(enabled))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM specialists{where} ORDER BY name, specialist_id LIMIT ?", (*values, limit)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_specialist_task(self, task: Any) -> None:
+        payload = task.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO specialist_tasks(specialist_task_id, parent_task_id, specialist_id, status, goal, created_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (task.specialist_task_id, task.parent_task_id, task.specialist_id, task.status.value, task.goal, task.created_at, task.updated_at, json.dumps(payload)))
+
+    def specialist_task_by_id(self, specialist_task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM specialist_tasks WHERE specialist_task_id = ?", (specialist_task_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def find_specialist_tasks(self, parent_task_id: str | None = None, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if parent_task_id:
+            clauses.append("parent_task_id = ?")
+            values.append(parent_task_id)
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM specialist_tasks{where} ORDER BY created_at LIMIT ?", (*values, limit)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_specialist_contract(self, contract: Any) -> None:
+        payload = contract.to_dict()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO specialist_contracts(contract_id, specialist_task_id, specialist_id, parent_task_id, scope_hash, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (contract.contract_id, contract.specialist_task_id, contract.specialist_id, contract.parent_task_id, contract.scope_hash, json.dumps(payload), contract.created_at))
+
+    def specialist_contract_by_task(self, specialist_task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM specialist_contracts WHERE specialist_task_id = ?", (specialist_task_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def save_specialist_message(self, message: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO specialist_messages(message_id, parent_task_id, sender, recipient, message_type, correlation_id, trust_level, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (message.message_id, message.parent_task_id, message.sender, message.recipient, message.message_type.value, message.correlation_id, message.trust_level.value, json.dumps(message.to_dict()), message.created_at))
+
+    def find_specialist_messages(self, parent_task_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM specialist_messages WHERE parent_task_id = ? ORDER BY created_at LIMIT ?", (parent_task_id, limit)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_specialist_result(self, result: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO specialist_results(result_id, specialist_task_id, status, verified, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)", (result.result_id, result.specialist_task_id, result.status.value, int(result.verified), json.dumps(result.to_dict()), result.created_at))
+
+    def specialist_result_by_task(self, specialist_task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM specialist_results WHERE specialist_task_id = ? ORDER BY created_at DESC LIMIT 1", (specialist_task_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def save_specialist_evidence(self, evidence: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO specialist_evidence(evidence_id, result_id, specialist_task_id, evidence_kind, trust_level, verification_status, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (evidence.evidence_id, evidence.result_id, evidence.specialist_task_id, evidence.evidence_kind.value, evidence.trust_level.value, evidence.verification_status.value, json.dumps(evidence.to_dict()), evidence.created_at))
+
+    def find_specialist_evidence(self, parent_task_id: str | None = None, specialist_task_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT e.* FROM specialist_evidence e"
+        values: list[Any] = []
+        if parent_task_id:
+            query += " JOIN specialist_tasks t ON t.specialist_task_id = e.specialist_task_id WHERE t.parent_task_id = ?"
+            values.append(parent_task_id)
+        elif specialist_task_id:
+            query += " WHERE e.specialist_task_id = ?"
+            values.append(specialist_task_id)
+        query += " ORDER BY e.created_at LIMIT ?"
+        values.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, tuple(values)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_delegation_run(self, run: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO delegation_runs(delegation_id, parent_task_id, status, active_specialists, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (run.delegation_id, run.parent_task_id, run.status.value, run.active_specialists, json.dumps(run.to_dict()), run.created_at, run.updated_at))
+
+    def delegation_by_id(self, delegation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM delegation_runs WHERE delegation_id = ?", (delegation_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def find_delegation_runs(self, parent_task_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if parent_task_id:
+                rows = db.execute("SELECT * FROM delegation_runs WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?", (parent_task_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM delegation_runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_evidence_fusion(self, fusion: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO evidence_fusions(fusion_id, parent_task_id, status, payload, created_at) VALUES (?, ?, ?, ?, ?)", (fusion.fusion_id, fusion.parent_task_id, getattr(fusion.status, "value", fusion.status), json.dumps(fusion.to_dict()), fusion.created_at))
+
+    def find_evidence_fusions(self, parent_task_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if parent_task_id:
+                rows = db.execute("SELECT * FROM evidence_fusions WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?", (parent_task_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM evidence_fusions ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_evidence_conflict(self, conflict: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO evidence_conflicts(conflict_id, parent_task_id, status, payload, created_at) VALUES (?, ?, ?, ?, ?)", (conflict.conflict_id, conflict.parent_task_id, getattr(conflict.status, "value", conflict.status), json.dumps(conflict.to_dict()), conflict.created_at))
+
+    def find_evidence_conflicts(self, parent_task_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if parent_task_id:
+                rows = db.execute("SELECT * FROM evidence_conflicts WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?", (parent_task_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM evidence_conflicts ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_specialist_health(self, specialist_id: str, health: Any) -> None:
+        with self._connect() as db:
+            db.execute("INSERT INTO specialist_health(health_id, specialist_id, observed_at, state, payload) VALUES (?, ?, ?, ?, ?)", (new_id("specialist_health"), specialist_id, utc_now(), health.state.value, json.dumps(health.to_dict())))
+
+    def find_specialist_health(self, specialist_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if specialist_id:
+                rows = db.execute("SELECT * FROM specialist_health WHERE specialist_id = ? ORDER BY observed_at DESC LIMIT ?", (specialist_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM specialist_health ORDER BY observed_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]

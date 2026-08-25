@@ -747,3 +747,47 @@ Experience and Evaluation receive external operation, communication, latency, ap
 | Runtime | Queue, lifecycle, retry, safe mode, kill switch, shutdown | Cannot auto-approve, promote, mutate production, or bypass Kernel |
 
 Phase 15 persistence adds `integrations`, `integration_capabilities`, `integration_operations`, `external_access_policies`, `external_observations`, `external_resources`, `external_changes`, `external_operation_results`, `connector_health`, and `communication_records` to the single SQLite architecture. Phase 16 functionality is not included.
+
+
+## Phase 16 — Multi-Agent & Specialist Intelligence Layer
+
+Phase 16 adds subordinate specialist intelligence beneath the sovereign Evo agent. A specialist is a registered role with bounded capabilities, tools, integrations, filesystem scope, risk classification, model metadata, version lineage, health, and provenance. Specialist registration is persistent and provider-neutral; registration does not grant execution, approval, governance, promotion, metamorphosis, rollback, or protected-core authority.
+
+```text
+Sovereign Evo / Cognitive
+  → Capability Intelligence + Memory evidence + World context
+  → Specialist Registry / deterministic selection
+  → Specialist Task Contract + Context Isolation
+  → Runtime TaskQueue / resource ceilings / safe mode / kill switch
+  → Bounded Specialist Executor
+  → Structured Specialist Message / Result
+  → Evidence Collector
+  → Existing Verifier / Kernel-owned authorities
+  → Evidence Fusion / Conflict Resolver
+  → Experience / Evaluation / Memory evidence
+```
+
+`SpecialistTaskContract` is the least-privilege boundary for subordinate work. It fixes parent task identity, specialist identity, goal, scope, allowed capabilities, allowlisted tools and integrations, workspace scope, output schema, success criteria, resource limits, timeout, deadline, dependencies, approvals, prohibited actions, verification requirements, risk, architecture version, and an immutable scope hash. Context isolation exposes only bounded, relevant evidence; it excludes the full database, credentials, governance state, arbitrary external content, production source, and executable authority.
+
+`SpecialistDelegationEngine` is the sovereign-owned coordinator. It performs bounded selection, contract creation, optional bounded parallel execution, structured internal messaging, cancellation, restart recovery, retries, circuit-breaker health, evidence extraction, and fusion. It does not replace Cognitive, Runtime, Kernel, Governance, Approval, Verifier, Flexibility, Evolution, Metamorphosis, Promotion, Rollback, or External Integration authorities. Specialists cannot self-register, self-approve, alter their contracts, clear circuit breakers, modify protected components, install tools, or create further uncontrolled agents.
+
+Specialist results are untrusted data until existing verification confirms them. Result classes distinguish claims, observations, evidence, and inferences and preserve source, confidence, trust, verification status, contract identity, and provenance. `EvidenceFusionEngine` compares claims, ranks evidence conservatively, records conflicts, retains unsupported claims and uncertainty, and never silently converts a specialist opinion into current truth or policy. `ConflictResolver` can request clarification, additional evidence, verification, rerun, or human escalation; it cannot force a result.
+
+Cognitive planning may record advisory specialist discovery for complex goals. Direct specialist execution is never performed by Cognitive. Explicit specialist tasks enter the existing Phase 14 Runtime queue, which remains responsible for lifecycle, dependencies, deadlines, task concurrency, resource limits, safe mode, degraded mode, recovery, kill switch, and shutdown. Tools and integrations remain behind Phase 12 Capability Intelligence, Phase 15 External Access Policy, the Kernel execution gateway, exact approval, and verification.
+
+| Layer | Authority | Phase 16 boundary |
+|---|---|---|
+| Sovereign Evo / Governance | Goal authority, policy, approval, evolution, promotion, rollback, protected-core decisions | Never delegated to specialists |
+| Specialist Registry | Role, capability, version, provenance, health, and lifecycle metadata | Cannot authorize execution or modify itself |
+| Specialist Contract | Least-privilege task scope and resource boundary | Cannot expand after creation without sovereign reauthorization |
+| Context Isolation | Bounded task-relevant evidence | Does not expose credentials, full memory, governance, or executable authority |
+| Runtime | Queue, lifecycle, dependencies, limits, safe/degraded mode, recovery, kill switch, shutdown | Remains the only persistent execution coordinator |
+| Specialist Executor | Produces bounded structured data | Cannot execute tools or external operations directly |
+| Kernel / External Integration | Sole tool and registered-connector execution gateways | Preserves permission, approval, network, credential, timeout, and verification controls |
+| Verifier | Confirms actual requested outcomes | Specialist confidence never substitutes for verification |
+| Evidence Fusion | Combines evidence and preserves uncertainty/conflict | Cannot approve, promote, or change policy |
+| Experience / Evaluation / Memory | Historical specialist metrics and metadata | Never becomes policy or executable instruction |
+
+Phase 16 persistence adds `specialists`, `specialist_capabilities`, `specialist_tasks`, `specialist_contracts`, `specialist_messages`, `specialist_results`, `specialist_evidence`, `delegation_runs`, `evidence_fusions`, `evidence_conflicts`, and `specialist_health` to the existing SQLite architecture. The runtime and Cognitive layers consume these records through the existing shared store.
+
+The implementation intentionally excludes autonomous approval, autonomous promotion, specialist governance, unrestricted specialist tool or network access, arbitrary code execution, arbitrary provider installation, specialist self-replication, protected-core or production mutation, memory-to-policy conversion, and any Phase 17 functionality.

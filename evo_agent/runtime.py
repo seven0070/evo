@@ -70,6 +70,7 @@ class TaskSource(str, Enum):
     ENVIRONMENT = "environment"
     INTERNAL = "internal"
     EXTERNAL = "external"
+    SPECIALIST = "specialist"
 
 
 class RuntimeHealthStatus(str, Enum):
@@ -722,7 +723,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -734,14 +735,19 @@ class AgentRuntime:
         self.queue = TaskQueue(self.store, self.limits)
         self.evolution = evolution_orchestrator or EvolutionOrchestrator(self.store, self.source_root)
         self.external_integrations = external_integrations
+        self.specialist_delegation = specialist_delegation
+        if self.specialist_delegation is not None:
+            self.specialist_delegation.runtime = self
         self.kernel = kernel
         self.cognitive = cognitive
         if self.cognitive is None:
             from .kernel import AgentKernel
             self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback, external_integrations=self.external_integrations)
-            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations)
+            self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation)
         elif self.kernel is None:
             self.kernel = getattr(self.cognitive, "kernel", None)
+        if self.specialist_delegation is not None and getattr(self.cognitive, "specialist_delegation", None) is None:
+            self.cognitive.specialist_delegation = self.specialist_delegation
         if self.external_integrations is not None:
             self.external_integrations.memory = getattr(self.external_integrations, "memory", None) or getattr(self.cognitive, "memory", None)
             self.external_integrations.capability_intelligence = getattr(self.kernel, "capability_intelligence", None)
@@ -908,6 +914,27 @@ class AgentRuntime:
         return self.enqueue_task(f"external operation {operation.operation} for integration {operation.integration_id}", priority=priority, source=TaskSource.EXTERNAL, dependencies=dependencies, deadline=deadline, resource_budget=resource_budget, metadata={"external_operation_id": operation.operation_id})
 
     queue_external_operation = enqueue_external_operation
+
+    def enqueue_specialist_task(self, specialist_task_id: str, priority: TaskPriority | str = TaskPriority.NORMAL, dependencies: Iterable[str] | None = None, deadline: str | None = None, resource_budget: dict[str, Any] | None = None) -> RuntimeTask:
+        if self.specialist_delegation is None:
+            raise RuntimeError("specialist delegation engine is not configured")
+        row = self.store.specialist_task_by_id(specialist_task_id)
+        if not row:
+            raise KeyError(specialist_task_id)
+        from .specialist import specialist_task_from_row
+        specialist_task = specialist_task_from_row(row)
+        contract_row = self.store.specialist_contract_by_task(specialist_task_id)
+        if not contract_row:
+            raise KeyError("specialist task contract not found")
+        from .specialist import SpecialistRisk, specialist_contract_from_row
+        contract = specialist_contract_from_row(contract_row)
+        if self.kill_switch_active:
+            raise RuntimeError("runtime kill switch is active")
+        task = self.enqueue_task(specialist_task.goal, priority=priority, source=TaskSource.SPECIALIST, dependencies=dependencies or contract.dependencies, deadline=deadline or contract.deadline, resource_budget=resource_budget or contract.resource_limits, approval_requirement=contract.risk.requires_approval, metadata={"specialist_task_id": specialist_task_id, "specialist_id": specialist_task.specialist_id, "read_only": contract.risk is SpecialistRisk.READ_ONLY})
+        self._emit(EventType.SPECIALIST_TASK_QUEUED, {"runtime_task_id": task.task_id, "specialist_task_id": specialist_task_id, "parent_task_id": specialist_task.parent_task_id}, task.task_id)
+        return task
+
+    queue_specialist_task = enqueue_specialist_task
 
     def resume_external_operation(self, operation_id: str) -> list[RuntimeTask]:
         resumed: list[RuntimeTask] = []
@@ -1096,6 +1123,38 @@ class AgentRuntime:
             self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "approval_id": approval.approval_id, "reason": "approval required", "scope_hash": approval.scope_hash}, task.task_id)
             self._transition(RuntimeState.WAITING_APPROVAL, "task requires human approval")
             return "waiting"
+        specialist_task_id = task.metadata.get("specialist_task_id")
+        if specialist_task_id:
+            if self.specialist_delegation is None:
+                task.status = RuntimeTaskStatus.BLOCKED
+                task.last_error = "specialist delegation engine is not configured"
+                self.queue.update(task)
+                return "blocked"
+            if self.safe_mode and task.metadata.get("read_only") is not True:
+                task.status = RuntimeTaskStatus.WAITING
+                task.last_error = "safe mode blocks side-effecting specialist execution"
+                self.queue.update(task)
+                self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "reason": task.last_error, "specialist_task_id": specialist_task_id}, task.task_id)
+                return "waiting"
+            task.progress = "specialist_in_progress"
+            self.queue.update(task)
+            self._transition(RuntimeState.EXECUTING, "delegate specialist through bounded specialist engine")
+            specialist_output = self.specialist_delegation.execute_task(str(specialist_task_id))
+            task.metadata["specialist_result"] = specialist_output.to_dict()
+            task.metadata["verified"] = specialist_output.verification_status.value == "verified"
+            task.metadata["verification_required"] = not task.metadata["verified"]
+            if specialist_output.success:
+                task.status = RuntimeTaskStatus.COMPLETED
+                task.progress = "completed"
+                self.queue.update(task)
+                self._emit(EventType.RUNTIME_TASK_COMPLETED, {"task_id": task.task_id, "specialist_task_id": specialist_task_id, "verified": task.metadata["verified"]}, task.task_id)
+                return "completed"
+            task.status = RuntimeTaskStatus.FAILED
+            task.progress = "failed"
+            task.last_error = specialist_output.error or "specialist task failed"
+            self.queue.update(task)
+            self._emit(EventType.RUNTIME_TASK_FAILED, {"task_id": task.task_id, "specialist_task_id": specialist_task_id, "failure": task.last_error}, task.task_id)
+            return "failed"
         external_operation_id = task.metadata.get("external_operation_id")
         if external_operation_id:
             if self.external_integrations is None:

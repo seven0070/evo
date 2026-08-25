@@ -804,7 +804,7 @@ class CognitivePersistence:
 class CognitiveOrchestrator:
     """Bounded cognitive coordinator. Kernel, security, approvals, and Phase 9 remain authoritative."""
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None, specialist_delegation: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -834,6 +834,7 @@ class CognitiveOrchestrator:
         self._memory_context: CognitiveMemoryContext | None = None
         self.world_intelligence: WorldModelEngine | None = None
         self.external_integrations = external_integrations or integration_intelligence
+        self.specialist_delegation = specialist_delegation
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)
@@ -888,6 +889,12 @@ class CognitiveOrchestrator:
             if external_candidates:
                 plan.rationale += f" External integration discovery found {len(external_candidates)} registered candidate(s); execution remains Kernel-authorized."
         self._capability_analyses = self._analyze_capabilities(goal, graph)
+        if self.specialist_delegation is not None and self.specialist_delegation.is_complex_goal(goal.normalized_goal, len(graph.nodes)):
+            required = [str(item.requirement.capability_id) for item in self._capability_analyses]
+            specialist_candidates = self.specialist_delegation.discover_for_goal(goal.normalized_goal, required_capabilities=required or None)
+            decisions.append({"goal_id": goal.goal_id, "decision_type": "specialist_discovery", "complex_goal": True, "candidate_specialists": [item.specialist_id for item in specialist_candidates], "execution_authority": "runtime_specialist_engine", "verification_authority": "cognitive_verifier", "created_at": utc_now()})
+            if specialist_candidates:
+                plan.rationale += f" Specialist discovery found {len(specialist_candidates)} subordinate candidate(s); delegation remains bounded and advisory until explicitly contracted."
         plan.capability_requirements = [item.requirement.to_dict() for item in self._capability_analyses]
         plan.capability_selection = [item.selection.to_dict() for item in self._capability_analyses]
         plan.environment_id = world_model.environment.environment_id
