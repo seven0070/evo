@@ -1,0 +1,14 @@
+{
+  "name": "evo-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows-first Tauri desktop shell for the local Evo agent",
+  "scripts": {
+    "check": "node scripts/check-static.mjs",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  }
+}

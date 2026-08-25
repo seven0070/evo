@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#09111f" />
+    <title>Evo — Personal Agent</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LOCAL / BOUNDED AUTONOMY</p>
+          <h1>Evo</h1>
+          <p class="subtitle">Your independent local agent, with human authority where it matters.</p>
+        </div>
+        <div class="topbar-actions">
+          <span id="health-pill" class="pill neutral">Connecting</span>
+          <button id="safe-mode-button" class="button ghost">Safe mode</button>
+          <button id="kill-switch-button" class="button danger">Kill switch</button>
+        </div>
+      </header>
+
+      <section class="grid hero-grid">
+        <article class="panel goal-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">NEW GOAL</p>
+              <h2>What should Evo do?</h2>
+            </div>
+            <span class="badge">Offline by default</span>
+          </div>
+          <textarea id="goal-input" rows="5" placeholder="Example: list the files in my workspace"></textarea>
+          <div class="goal-footer">
+            <label class="check-label"><input id="approval-check" type="checkbox" /> Require approval before execution</label>
+            <button id="run-button" class="button primary">Run goal</button>
+          </div>
+          <p id="goal-message" class="muted">Evo will plan, execute through the Kernel, and claim success only after verification.</p>
+        </article>
+
+        <article class="panel status-panel">
+          <div class="panel-heading"><div><p class="eyebrow">RUNTIME</p><h2>Operating status</h2></div><button id="refresh-button" class="icon-button" title="Refresh status">↻</button></div>
+          <div class="status-list">
+            <div><span>State</span><strong id="runtime-state">—</strong></div>
+            <div><span>Health</span><strong id="runtime-health">—</strong></div>
+            <div><span>Queue</span><strong id="queue-depth">—</strong></div>
+            <div><span>Approvals</span><strong id="approval-count">—</strong></div>
+            <div><span>Workspace</span><strong id="workspace-name">—</strong></div>
+          </div>
+          <div class="profile-strip"><span class="dot"></span><span id="profile-summary">Personal profile loading…</span></div>
+        </article>
+      </section>
+
+      <section class="grid lower-grid">
+        <article class="panel approvals-panel">
+          <div class="panel-heading"><div><p class="eyebrow">HUMAN GATES</p><h2>Approval queue</h2></div><span id="approval-badge" class="badge">0 pending</span></div>
+          <div id="approval-list" class="empty-state">No approval requests.</div>
+        </article>
+
+        <article class="panel history-panel">
+          <div class="panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2>Recent work</h2></div><span class="badge">Verified only</span></div>
+          <div id="history-list" class="empty-state">No completed goals yet.</div>
+        </article>
+      </section>
+
+      <footer class="footer"><span>Evo 1.0.0</span><span>Governance → Runtime → Kernel → Verification</span><span id="last-updated">Not yet refreshed</span></footer>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

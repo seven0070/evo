@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Evo",
+  "version": "1.0.0",
+  "identifier": "im.evo.personal",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Evo — Personal Agent",
+        "width": 1180,
+        "height": 820,
+        "minWidth": 760,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "resources": ["../bridge/evo_desktop_bridge.py", "../../config/personal_profile.example.json"],
+    "externalBin": ["binaries/evo-bridge"]
+  }
+}

@@ -5,3 +5,13 @@ __pycache__/
 .evo/
 workspace/*
 !workspace/.gitkeep
+
+# Tauri desktop build output
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/*
+!desktop/src-tauri/binaries/.gitkeep
+dist/
+build/
+*.spec

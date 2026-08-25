@@ -51,6 +51,12 @@ evo --json --workspace ./workspace 'list the files in the workspace'
 
 The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint snapshots under `<workspace>/.evo/checkpoints/`.
 
+## Desktop application
+
+A Windows-first Tauri desktop shell is available under [`desktop/`](desktop/) and documented in [`docs/DESKTOP.md`](docs/DESKTOP.md). It provides focused goal entry, bounded Runtime status, explicit human approval prompts, verified task history, safe mode, and the existing kill switch. The desktop UI is not an independent agent authority: it delegates to the same personal profile, Governance, Runtime, Kernel, Verifier, and SQLite persistence as the CLI. It does not expose arbitrary shell/Python execution, credentials, external actions, self-approval, evolution administration, or production mutation.
+
+For local development, run `cd desktop && pnpm install --frozen-lockfile && pnpm check`, then `cargo check` from `desktop/src-tauri`. A standalone Windows build uses the PyInstaller sidecar and can be produced with `./scripts/build_windows.ps1` on Windows or through `.github/workflows/desktop-windows.yml`. The current Linux development environment validates the source shell and a native AppImage smoke build; Windows NSIS/MSI artifacts require the Windows build pipeline.
+
 ## Project structure
 
 | Component | Responsibility |
