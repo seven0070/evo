@@ -9,6 +9,7 @@ const html = readFileSync(join(root, "ui/index.html"), "utf8");
 const config = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"));
 if (!config.bundle.externalBin?.includes("binaries/evo-bridge")) throw new Error("Tauri manifest must package the Evo bridge sidecar");
 if (!config.bundle.icon?.includes("icons/icon.png")) throw new Error("Tauri manifest must declare the Evo icon");
+if (config.bundle.windows?.nsis?.installerIcon !== "icons/icon.ico") throw new Error("NSIS installer must use the Evo icon");
 if (String(config.app?.security?.csp || "").includes("http")) throw new Error("desktop CSP must not allow remote sources");
 for (const needle of ["goal-input", "approval-check", "safe-mode-button", "kill-switch-button", "history-list"]) {
   if (!html.includes(needle)) throw new Error(`UI is missing required control: ${needle}`);
