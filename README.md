@@ -689,6 +689,8 @@ git diff --check
 git diff --cached --check
 ```
 
-Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), [`docs/PILOT.md`](docs/PILOT.md), and [`docs/RELEASE.md`](docs/RELEASE.md). These documents cover clean installation, configuration, CLI consistency, pilot operation, recovery, rollback, security boundaries, V1 limitations, and the release gate.
+Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), [`docs/PILOT.md`](docs/PILOT.md), [`docs/READINESS.md`](docs/READINESS.md), and [`docs/RELEASE.md`](docs/RELEASE.md). These documents cover clean installation, configuration, CLI consistency, pilot operation, readiness validation, recovery, rollback, security boundaries, V1 limitations, and the release gate.
+
+Run the expanded local readiness matrix with `PYTHONPATH=. python3 scripts/run_v1_readiness.py --output /tmp/evo_v1_readiness_report.json`. It executes the 7-case offline pilot plus 12 bounded operational checks; it never calls external providers or authorizes production changes.
 
 The stable package version is **1.0.0**. Offline operation remains the default and requires no provider credentials or network access. No V1 operation can approve itself, promote itself, bypass Governance or Verification, mutate production, execute arbitrary generated code, acquire credentials, disable the kill switch, grant permissions, or create an uncontrolled planning loop.
