@@ -2,6 +2,10 @@
 
 The V1 pilot is a controlled offline exercise over the frozen Phase 1–20 architecture. It is finite, uses a temporary workspace, does not require provider credentials, and does not approve, promote, deploy, or mutate production candidates.
 
+## Prepare a real local-user pilot
+
+Use [`pilot/v1_user_pilot_template.json`](../pilot/v1_user_pilot_template.json) to record 15 candidate cases. The first five are safe deterministic examples; the remaining slots are intentionally marked `pending_user_input` so the operator can supply representative goals without the agent inventing them. Record actual outcomes in [`pilot/v1_user_results_template.md`](../pilot/v1_user_results_template.md). Use a dedicated non-production workspace and remove or protect any copy containing sensitive operator data.
+
 ## Run the corpus
 
 From the repository root:
@@ -12,7 +16,7 @@ PYTHONPATH=. python3 scripts/run_v1_pilot.py \
   --output /tmp/evo_v1_pilot_report.json
 ```
 
-The corpus version is recorded in `pilot/v1_task_corpus.json`. It covers simple read-only execution, case-sensitive multi-step reads, exact human approval, bounded shell execution, memory and experience persistence, safe-mode blocking, restart recovery, backup integrity, sustained Runtime cycles, and protected-core immutability.
+The corpus version is recorded in `pilot/v1_task_corpus.json`. It covers simple read-only execution, case-sensitive multi-step reads, exact human approval, bounded shell execution, memory and experience persistence, safe-mode blocking, restart recovery, backup integrity, sustained Runtime cycles, and protected-core immutability. The user-intake template is separate from the deterministic acceptance corpus so real goals cannot silently change the reproducible baseline.
 
 ## Interpret the report
 

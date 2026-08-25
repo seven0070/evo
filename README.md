@@ -689,7 +689,7 @@ git diff --check
 git diff --cached --check
 ```
 
-Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), [`docs/PILOT.md`](docs/PILOT.md), [`docs/READINESS.md`](docs/READINESS.md), and [`docs/RELEASE.md`](docs/RELEASE.md). These documents cover clean installation, configuration, CLI consistency, pilot operation, readiness validation, recovery, rollback, security boundaries, V1 limitations, and the release gate.
+Operational documentation is available in [`docs/CLI.md`](docs/CLI.md), [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/RECOVERY.md`](docs/RECOVERY.md), [`docs/PILOT.md`](docs/PILOT.md), [`docs/READINESS.md`](docs/READINESS.md), and [`docs/RELEASE.md`](docs/RELEASE.md). The local-user intake and results templates are [`pilot/v1_user_pilot_template.json`](pilot/v1_user_pilot_template.json) and [`pilot/v1_user_results_template.md`](pilot/v1_user_results_template.md). These documents cover clean installation, configuration, CLI consistency, pilot operation, readiness validation, recovery, rollback, security boundaries, V1 limitations, and the release gate.
 
 Run the expanded local readiness matrix with `PYTHONPATH=. python3 scripts/run_v1_readiness.py --output /tmp/evo_v1_readiness_report.json`. It executes the 7-case offline pilot plus 12 bounded operational checks; it never calls external providers or authorizes production changes.
 

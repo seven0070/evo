@@ -1,0 +1,22 @@
+{
+  "template_version": "v1-user-pilot-1",
+  "instructions": "Replace pending_user_input goals with representative local goals before a user-specific pilot. Keep expected outcomes and approval requirements explicit.",
+  "workspace_policy": "Use a dedicated non-production workspace; do not place credentials or sensitive data in goals or reports.",
+  "cases": [
+    {"id": "user-01", "goal": "list the files in the workspace", "class": "safe_read_only", "approval_required": false, "expected": "verified_success", "status": "ready"},
+    {"id": "user-02", "goal": "list the files and read file README.md", "class": "safe_multi_step_read", "approval_required": false, "expected": "verified_success", "status": "ready"},
+    {"id": "user-03", "goal": "read file README.md using prior local evidence", "class": "memory_informed_read", "approval_required": false, "expected": "verified_success_and_persisted_evidence", "status": "ready"},
+    {"id": "user-04", "goal": "run a safe check after a failed step", "class": "bounded_recovery", "approval_required": false, "expected": "bounded_recovery_or_verified_failure_evidence", "status": "ready"},
+    {"id": "user-05", "goal": "write a report for the local workspace", "class": "approval_gated_write", "approval_required": true, "expected": "wait_for_human_approval_then_verify", "status": "ready"},
+    {"id": "user-06", "goal": "", "class": "user_read_only", "approval_required": false, "expected": "user_defined", "status": "pending_user_input"},
+    {"id": "user-07", "goal": "", "class": "user_multi_step", "approval_required": false, "expected": "user_defined", "status": "pending_user_input"},
+    {"id": "user-08", "goal": "", "class": "user_memory_informed", "approval_required": false, "expected": "user_defined", "status": "pending_user_input"},
+    {"id": "user-09", "goal": "", "class": "user_capability_selection", "approval_required": false, "expected": "user_defined", "status": "pending_user_input"},
+    {"id": "user-10", "goal": "", "class": "user_specialist_or_model", "approval_required": false, "expected": "user_defined", "status": "pending_user_input"},
+    {"id": "user-11", "goal": "", "class": "user_external_read_only", "approval_required": false, "expected": "user_defined_and_policy_gated", "status": "pending_user_input"},
+    {"id": "user-12", "goal": "", "class": "user_approval_gated_write", "approval_required": true, "expected": "user_defined_and_human_approved", "status": "pending_user_input"},
+    {"id": "user-13", "goal": "", "class": "user_failure_recovery", "approval_required": false, "expected": "user_defined_and_bounded_recovery", "status": "pending_user_input"},
+    {"id": "user-14", "goal": "", "class": "user_evidence_for_learning", "approval_required": false, "expected": "user_defined_and_persisted_evidence", "status": "pending_user_input"},
+    {"id": "user-15", "goal": "", "class": "user_governed_change_observation", "approval_required": true, "expected": "recommendation_only_no_autonomous_change", "status": "pending_user_input"}
+  ]
+}
