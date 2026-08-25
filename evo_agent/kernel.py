@@ -33,11 +33,12 @@ class AgentKernel:
         flexibility: FlexibilityEngine | None = None,
         agent_version: str = __version__,
         external_integrations: Any | None = None,
+        security_policy: SecurityPolicy | None = None,
     ):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
-        self.policy = SecurityPolicy(self.workspace)
+        self.policy = security_policy or SecurityPolicy(self.workspace)
         self.tools = ToolRegistry(self.policy)
         self.model = model
         self.verifier = Verifier(self.policy)

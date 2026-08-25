@@ -1,0 +1,21 @@
+{
+  "profile_version": "personal-v1",
+  "profile_id": "personal-default",
+  "model": "offline",
+  "safe_mode_default": false,
+  "allowed_shell_commands": ["cat", "echo", "find", "grep", "head", "ls", "printf", "pytest", "python3", "pwd", "tail"],
+  "max_command_seconds": 30,
+  "max_concurrent_tasks": 1,
+  "max_task_duration": 120,
+  "max_total_runtime": 3600,
+  "max_retry_count": 2,
+  "max_recovery_cycles": 3,
+  "max_replans": 1,
+  "max_memory_bytes": 8000000,
+  "max_storage_bytes": 100000000,
+  "max_queue_size": 100,
+  "max_tasks_per_cycle": 1,
+  "max_event_growth": 1000,
+  "approval_required_for": ["medium", "high", "critical"],
+  "allow_external_actions": false
+}

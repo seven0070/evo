@@ -729,7 +729,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None, strategic_autonomy: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None, strategic_autonomy: Any | None = None, security_policy: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -756,7 +756,7 @@ class AgentRuntime:
         self.cognitive = cognitive
         if self.cognitive is None:
             from .kernel import AgentKernel
-            self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback, external_integrations=self.external_integrations)
+            self.kernel = self.kernel or AgentKernel(self.workspace, self.model, store=self.store, approval_callback=approval_callback, external_integrations=self.external_integrations, security_policy=security_policy)
             self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation, model_intelligence=self.model_intelligence, self_model=self.self_model, meta_reasoning=self.meta_reasoning)
         elif self.kernel is None:
             self.kernel = getattr(self.cognitive, "kernel", None)

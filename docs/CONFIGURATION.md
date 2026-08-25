@@ -30,3 +30,17 @@ python -m pip install -e '.[dev]'
 ```
 
 An optional provider adapter can be installed separately with `python -m pip install -e '.[llm]'`. Do not place API keys in workspaces, goals, prompts, memory, logs, or persisted strategic records.
+
+## Personal operating profile
+
+For personal independent use, copy `config/personal_profile.example.json` to `<workspace>/.evo/personal_profile.json`, then adjust only the bounded values appropriate for the local workspace. The profile defaults to the offline adapter, one concurrent task, one task per Runtime cycle, finite execution and recovery limits, approval for medium/high/critical-risk work, a restricted shell allowlist, and external actions disabled.
+
+```bash
+mkdir -p "$HOME/EvoWorkspace/.evo"
+cp config/personal_profile.example.json "$HOME/EvoWorkspace/.evo/personal_profile.json"
+evo --workspace "$HOME/EvoWorkspace" --show-profile
+```
+
+The loader rejects unknown fields, secret-bearing metadata, unsupported shell commands, missing critical-risk approval, limit values above Runtime ceilings, and any attempt to enable external actions. A profile can only tighten existing policy. The effective profile is shown without credentials or secret values.
+
+Use `--profile /path/to/profile.json` when the profile is stored outside the workspace. The profile affects Runtime resource limits, the Kernel’s existing SecurityPolicy, and the selected model; it does not grant permissions, bypass Governance or Verification, or create an uncontrolled background agent.
