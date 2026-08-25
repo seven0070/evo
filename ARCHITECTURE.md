@@ -616,3 +616,91 @@ The trust boundary is strict:
 | Phase 9/8 authorities | Governed evolution, metamorphosis, sandbox, benchmark, promotion, and rollback. |
 
 The World Layer cannot bypass permissions, grant permissions, approve actions, disable sandboxing or limits, execute external code, ingest arbitrary internet state, interpret observed text as instructions, modify protected core or production, approve Evolution or Metamorphosis, promote changes, or create persistent autonomous operation. It provides the environmental foundation required before any later autonomous-operation phase; Phase 14 functionality is intentionally not implemented.
+
+
+## Persistent Autonomous Agent Runtime
+
+Phase 14 introduces `AgentRuntime` as the lifecycle and scheduling coordinator above the existing Phase 1–13 authorities. It does not become another Kernel. Its subordinate services are `LifecycleManager`, `Scheduler`, `TaskQueue`, `EventLoop`, `RuntimeRecord`, `HeartbeatManager`, `RecoveryManager`, `RuntimeResourceManager`, and `ShutdownManager`. All durable runtime records use the existing `SQLiteStore`; no second database or execution plane is introduced.
+
+```text
+                         User / authorized event
+                                  |
+                                  v
+                         +-------------------+
+                         |   AgentRuntime    |
+                         | lifecycle         |
+                         | task queue        |
+                         | scheduler         |
+                         | heartbeat         |
+                         | recovery          |
+                         | resource bounds   |
+                         | shutdown/kill     |
+                         +---------+---------+
+                                   |
+             +---------------------+---------------------+
+             v                     v                     v
+        Phase 13 World       Phase 11 Memory       Phase 10 Cognitive
+        observe/refresh      advisory evidence     understand/plan
+             |                     |                     |
+             +---------------------+---------------------+
+                                   v
+                         Phase 12 Capability
+                                   |
+                                   v
+                         existing AgentKernel
+                         policy/tools/approval/
+                         timeout/checkpoint
+                                   |
+                                   v
+                         Verification + outcome
+                                   |
+                    +--------------+--------------+
+                    v                             v
+              Experience/Evaluation        Phase 9 Evolution
+                    |                       opportunity only
+                    v                             |
+                 Memory                 existing governed pipeline
+```
+
+### Lifecycle and restart contract
+
+The persisted runtime state machine is `STARTING -> READY -> OBSERVING -> PLANNING -> EXECUTING -> VERIFYING -> LEARNING -> READY`, with explicit branches for `WAITING_APPROVAL`, `RECOVERING`, `PAUSED`, `DEGRADED`, `STOPPING`, `STOPPED`, and `FAILED`. `LifecycleManager` rejects transitions not represented by the deterministic transition table. `STARTING` validates the database and architecture, observes current environment state through Phase 13, marks stale active tasks for revalidation, and reaches `READY` only after recovery checks complete.
+
+A new process never blindly resumes an old execution. A persisted `RUNNING` task becomes a recovery-marked `WAITING` task until current environment and actual outcome are revalidated. Side-effecting actions with unknown state are not automatically replayed. Read-only or otherwise explicitly safe work may be re-planned by the existing Cognitive/Kernel path. Runtime restart recovery is lifecycle management; action semantics remain owned by Kernel, Verification, and existing Phase 10 recovery boundaries.
+
+### Tasks, schedules, and fairness
+
+`RuntimeTask` stores the goal, deterministic priority, source, status, dependencies, deadline, resource budget, approval requirement, retry budget, attempt, plan, environment version, progress, error, and metadata. `TaskQueue` uses a bounded size and deterministic fingerprints to deduplicate logical work. Completed, cancelled, or expired work is not silently repeated; a new authorized enqueue creates a new identity. Expired tasks are marked `EXPIRED` and are never executed.
+
+`Scheduler` supports bounded one-shot, interval, and condition schedules. Condition evaluation is deliberately restricted to workspace-confined file existence/absence and bounded boolean composition. It does not evaluate shell, Python, arbitrary expressions, web content, memory text, or observed text as code. Dependencies must be `COMPLETED` before a task is runnable. Priority is combined with age, deadline pressure, deterministic creation order, and dependency readiness so high-priority work is honored without an unbounded lower-priority starvation path.
+
+The initial runtime permits one active execution. Work arriving faster than the configured queue limit is rejected with backpressure. Tasks per cycle, total runtime, task duration budgets, retry count, recovery cycles, replans, memory/storage pressure, event growth, and queue size are hard bounds. The scheduler decides what may be considered next; it never grants permission or approval.
+
+### Approvals, modes, recovery, and shutdown
+
+Runtime-level approval records are tied to an exact task, plan, environment version, agent version, and scope hash. A human decision is required where configured; the runtime rejects self-approval and invalidates a stale scope. Kernel-level approvals remain independent and authoritative. Runtime approval cannot substitute for a Kernel approval, Governance decision, promotion approval, or metamorphosis approval.
+
+`RecoveryManager` classifies failures as transient, environment, resource, tool, permission, approval, logic, verification, or unknown. Only bounded eligible classes may retry. Permission, approval, governance, protected-core, and known destructive failures are not automatically retried. Repeated failures persist a circuit-breaker marker and pause the task. Flexibility remains the sole runtime adaptation engine; AgentRuntime never creates a parallel recovery or replanning system.
+
+Safe mode permits observation, inspection, planning, verification, and reporting while deferring side-effecting autonomous tasks. Degraded mode preserves state, reduces workload, and performs bounded recovery after database, environment, tool, resource, verification, or repeated-failure instability. `ShutdownManager` stops accepting work, persists state, stops future scheduling, records the shutdown event, and reaches `STOPPED`. The independent kill switch performs the same safe persistence path and cannot be removed through ordinary task planning or evolution.
+
+### Authority table
+
+| Layer | Sole responsibility | Explicit non-responsibility |
+|---|---|---|
+| `AgentRuntime` | Lifecycle, scheduling, queueing, bounded retries, recovery markers, heartbeat, modes, shutdown | Kernel execution, permission grants, approval decisions, verification, production mutation |
+| World Layer | Current bounded environment observation and change detection | Authority, credentials, arbitrary ingestion, permission changes |
+| Memory | Historical evidence and bounded retrieval | Policy, executable instructions, approval, production behavior |
+| Capability Intelligence | Capability/tool compatibility and recommendations | Permission, approval, execution, installation |
+| Cognitive Layer | Goal understanding, decomposition, planning, bounded replan | Direct tool execution, governance bypass, production edits |
+| Governance/Security Policy | Whether an operation is allowed | Scheduling, learning, uncontrolled autonomy |
+| Agent Kernel | Registered-tool execution, workspace confinement, approvals, limits, checkpoints | Long-term scheduling, evolution approval |
+| Verifier | Whether the requested result actually happened | Performance scoring, permission, promotion |
+| Evolution/Metamorphosis | Governed proposal and candidate pipelines | Runtime self-approval, production shortcut |
+| Promotion/Rollback | Explicit activation and restoration of known-good versions | Autonomous activation by runtime |
+
+### Audit and observability
+
+Runtime lifecycle, heartbeat, queue, task, recovery, degraded-mode, safe-mode, shutdown, crash-recovery, approval, circuit-breaker, and kill-switch events are written to the existing SQLite event stream. Runtime status reports state, uptime, current task/plan, queue depth, heartbeat and health, safe mode, bounded resource pressure, environment version, pending approvals, blocked tasks, and recent failures without exposing credentials. Health checks do not execute arbitrary work.
+
+The runtime can run one bounded cycle or an explicitly bounded `run_forever(max_cycles=...)` loop. No implicit daemon starts on import, and no Phase 15 functionality is included. Persistent operation remains subject to all prior protected-core, workspace, sandbox, verification, governance, promotion, rollback, prompt-injection, and credential-safety boundaries.

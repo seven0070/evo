@@ -21,6 +21,7 @@ from .security import SecurityPolicy
 from .tools import ToolRegistry
 from .storage import SQLiteStore
 from .world import EnvironmentObserver, WorldModelEngine, WorldRefreshEngine
+from .runtime import AgentRuntime, RuntimeSchedule, ScheduleKind, TaskPriority, TaskSource
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -119,6 +120,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-environment-changes", action="store_true", help="Show persisted environment differences")
     parser.add_argument("--refresh-environment", nargs="?", const="environment", default=None, metavar="KIND", help="Refresh a bounded environment subject")
     parser.add_argument("--environment-stats", action="store_true", help="Show environment and world statistics")
+    parser.add_argument("--runtime-start", action="store_true", help="Start or recover the persistent runtime")
+    parser.add_argument("--runtime-stop", action="store_true", help="Gracefully stop the persistent runtime")
+    parser.add_argument("--runtime-kill-switch", action="store_true", help="Activate the independent emergency stop")
+    parser.add_argument("--runtime-status", action="store_true", help="Show persistent runtime status")
+    parser.add_argument("--runtime-pause", action="store_true", help="Pause the persistent runtime")
+    parser.add_argument("--runtime-resume", action="store_true", help="Resume after environment revalidation")
+    parser.add_argument("--runtime-safe-mode", action="store_true", help="Enable safe mode")
+    parser.add_argument("--runtime-cancel-task", metavar="TASK_ID", help="Cancel a queued or waiting runtime task")
+    parser.add_argument("--runtime-pause-task", metavar="TASK_ID", help="Pause a runtime task")
+    parser.add_argument("--runtime-resume-task", metavar="TASK_ID", help="Resume a paused runtime task")
+    parser.add_argument("--runtime-list-tasks", action="store_true", help="List persistent runtime tasks")
+    parser.add_argument("--runtime-show-task", metavar="TASK_ID", help="Show one persistent runtime task")
+    parser.add_argument("--runtime-submit", metavar="GOAL", help="Submit one bounded goal to the persistent runtime queue")
+    parser.add_argument("--runtime-priority", choices=[item.value for item in TaskPriority], default="normal", help="Priority for --runtime-submit")
+    parser.add_argument("--runtime-approval", action="store_true", help="Require exact human approval before runtime execution")
+    parser.add_argument("--runtime-cycle", action="store_true", help="Run one bounded persistent-runtime cycle")
+    parser.add_argument("--runtime-heartbeat", action="store_true", help="Record and show one runtime heartbeat")
+    parser.add_argument("--runtime-health", action="store_true", help="Show runtime health")
     return parser
 
 
@@ -132,7 +151,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -152,12 +171,48 @@ def inspect_command(args: argparse.Namespace) -> bool:
     evolver = Evolver(store, experiences)
     metamorphosis = MetamorphosisEngine(store, Path(args.source_root)) if (args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item) else None
     orchestrator = EvolutionOrchestrator(store, Path(args.source_root), policy=OrchestrationPolicy()) if metamorphosis else None
+    runtime = None
+    if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health:
+        runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root))
     cognitive = None
     if args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal:
         adapter = RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)
         kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt)
         cognitive = CognitiveOrchestrator(workspace, store=store, kernel=kernel, evolution_orchestrator=orchestrator)
-    if args.show_environment:
+    if args.runtime_start:
+        print_json(runtime.start().to_dict())
+    elif args.runtime_stop:
+        print_json(runtime.stop().to_dict())
+    elif args.runtime_kill_switch:
+        print_json(runtime.kill_switch("CLI emergency stop").to_dict())
+    elif args.runtime_status:
+        print_json(runtime.status())
+    elif args.runtime_pause:
+        print_json(runtime.pause().to_dict())
+    elif args.runtime_resume:
+        print_json(runtime.resume().to_dict())
+    elif args.runtime_safe_mode:
+        print_json(runtime.set_safe_mode(True).to_dict())
+    elif args.runtime_submit:
+        print_json(runtime.enqueue_task(args.runtime_submit, priority=args.runtime_priority, approval_requirement=args.runtime_approval).to_dict())
+    elif args.runtime_cycle:
+        print_json(runtime.run_cycle().to_dict())
+    elif args.runtime_cancel_task:
+        print_json(runtime.cancel_task(args.runtime_cancel_task).to_dict())
+    elif args.runtime_pause_task:
+        print_json(runtime.pause_task(args.runtime_pause_task).to_dict())
+    elif args.runtime_resume_task:
+        print_json(runtime.resume_task(args.runtime_resume_task).to_dict())
+    elif args.runtime_list_tasks:
+        print_json([task.to_dict() for task in runtime.tasks()])
+    elif args.runtime_show_task:
+        task = runtime.task(args.runtime_show_task)
+        print_json(task.to_dict() if task else {"error": "runtime task not found", "task_id": args.runtime_show_task})
+    elif args.runtime_heartbeat:
+        print_json(runtime.heartbeat.beat().to_dict())
+    elif args.runtime_health:
+        print_json(runtime.health().to_dict())
+    elif args.show_environment:
         model = world.observe("CLI bounded environment inspection")
         world.save_observations(model)
         print_json(model.environment.to_dict())

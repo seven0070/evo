@@ -335,6 +335,90 @@ class SQLiteStore:
                     observed_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS runtime_states (
+                    runtime_id TEXT PRIMARY KEY,
+                    runtime_version TEXT NOT NULL,
+                    agent_version TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    started_at TEXT,
+                    last_heartbeat TEXT,
+                    last_observation TEXT,
+                    current_task TEXT,
+                    current_plan TEXT,
+                    current_environment TEXT,
+                    current_world_snapshot TEXT,
+                    shutdown_reason TEXT,
+                    failure_reason TEXT,
+                    restart_count INTEGER NOT NULL,
+                    metadata TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS runtime_tasks (
+                    task_id TEXT PRIMARY KEY,
+                    goal TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    deadline TEXT,
+                    resource_budget TEXT NOT NULL,
+                    approval_requirement TEXT NOT NULL,
+                    retry_budget INTEGER NOT NULL,
+                    current_attempt INTEGER NOT NULL,
+                    plan_id TEXT,
+                    environment_version TEXT,
+                    agent_version TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    progress TEXT NOT NULL,
+                    last_error TEXT,
+                    metadata TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_tasks_status ON runtime_tasks(status);
+                CREATE INDEX IF NOT EXISTS idx_runtime_tasks_priority ON runtime_tasks(priority, created_at);
+                CREATE INDEX IF NOT EXISTS idx_runtime_tasks_fingerprint ON runtime_tasks(fingerprint);
+                CREATE TABLE IF NOT EXISTS runtime_schedules (
+                    schedule_id TEXT PRIMARY KEY,
+                    goal TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    run_at TEXT,
+                    interval_seconds INTEGER,
+                    condition TEXT NOT NULL,
+                    dependencies TEXT NOT NULL,
+                    deadline_seconds INTEGER,
+                    resource_budget TEXT NOT NULL,
+                    approval_requirement TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    next_run_at TEXT,
+                    last_enqueued_at TEXT,
+                    run_count INTEGER NOT NULL,
+                    max_runs INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_schedules_due ON runtime_schedules(enabled, next_run_at);
+                CREATE TABLE IF NOT EXISTS runtime_approvals (
+                    approval_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    scope_hash TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_approvals_task ON runtime_approvals(task_id, status);
+                CREATE INDEX IF NOT EXISTS idx_runtime_approvals_status ON runtime_approvals(status);
                 CREATE TABLE IF NOT EXISTS architecture_versions (
                     architecture_version TEXT PRIMARY KEY,
                     agent_version TEXT NOT NULL,
@@ -1641,3 +1725,148 @@ class SQLiteStore:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM world_provider_states ORDER BY observed_at DESC LIMIT ?", (limit,)).fetchall()
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_runtime_state(self, record: Any) -> None:
+        payload = record.to_dict()
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO runtime_states(
+                    runtime_id, runtime_version, agent_version, architecture_version, state,
+                    started_at, last_heartbeat, last_observation, current_task, current_plan,
+                    current_environment, current_world_snapshot, shutdown_reason, failure_reason,
+                    restart_count, metadata, payload, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record.runtime_id, record.runtime_version, record.agent_version,
+                    record.architecture_version, record.state.value, record.started_at,
+                    record.last_heartbeat, record.last_observation, record.current_task,
+                    record.current_plan, record.current_environment,
+                    record.current_world_snapshot, record.shutdown_reason,
+                    record.failure_reason, record.restart_count,
+                    json.dumps(record.metadata), json.dumps(payload), now,
+                ),
+            )
+
+    def runtime_state_by_id(self, runtime_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM runtime_states WHERE runtime_id = ?", (runtime_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_runtime_states(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM runtime_states ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_runtime_task(self, task: Any) -> None:
+        payload = task.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO runtime_tasks(
+                    task_id, goal, priority, source, status, created_at, updated_at,
+                    dependencies, deadline, resource_budget, approval_requirement,
+                    retry_budget, current_attempt, plan_id, environment_version,
+                    agent_version, fingerprint, progress, last_error, metadata, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    task.task_id, task.goal, task.priority.value, task.source.value,
+                    task.status.value, task.created_at, task.updated_at,
+                    json.dumps(task.dependencies), task.deadline,
+                    json.dumps(task.resource_budget), json.dumps(task.approval_requirement),
+                    task.retry_budget, task.current_attempt, task.plan_id,
+                    task.environment_version, task.agent_version, task.fingerprint,
+                    task.progress, task.last_error, json.dumps(task.metadata),
+                    json.dumps(payload),
+                ),
+            )
+
+    def runtime_task_by_id(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM runtime_tasks WHERE task_id = ?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def runtime_task_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM runtime_tasks WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        return dict(row) if row else None
+
+    def find_runtime_tasks(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if status:
+                rows = db.execute("SELECT * FROM runtime_tasks WHERE status = ? ORDER BY updated_at DESC LIMIT ?", (status, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM runtime_tasks ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_runtime_schedule(self, schedule: Any) -> None:
+        payload = schedule.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO runtime_schedules(
+                    schedule_id, goal, kind, priority, source, run_at, interval_seconds,
+                    condition, dependencies, deadline_seconds, resource_budget,
+                    approval_requirement, enabled, next_run_at, last_enqueued_at,
+                    run_count, max_runs, created_at, updated_at, metadata, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    schedule.schedule_id, schedule.goal, schedule.kind.value,
+                    schedule.priority.value, schedule.source.value, schedule.run_at,
+                    schedule.interval_seconds, json.dumps(schedule.condition),
+                    json.dumps(schedule.dependencies), schedule.deadline_seconds,
+                    json.dumps(schedule.resource_budget),
+                    json.dumps(schedule.approval_requirement), int(schedule.enabled),
+                    schedule.next_run_at, schedule.last_enqueued_at, schedule.run_count,
+                    schedule.max_runs, schedule.created_at, schedule.updated_at,
+                    json.dumps(schedule.metadata), json.dumps(payload),
+                ),
+            )
+
+    def runtime_schedule_by_id(self, schedule_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM runtime_schedules WHERE schedule_id = ?", (schedule_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_runtime_schedules(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM runtime_schedules ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_runtime_approval(self, approval: Any) -> None:
+        payload = approval.to_dict()
+        with self._connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO runtime_approvals(
+                    approval_id, task_id, status, actor, scope_hash, reason,
+                    created_at, updated_at, metadata, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    approval.approval_id, approval.task_id, approval.status,
+                    approval.actor, approval.scope_hash, approval.reason,
+                    approval.created_at, approval.updated_at,
+                    json.dumps(approval.metadata), json.dumps(payload),
+                ),
+            )
+
+    def runtime_approval_by_id(self, approval_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM runtime_approvals WHERE approval_id = ?", (approval_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_runtime_approvals(self, task_id: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if task_id:
+            clauses.append("task_id = ?")
+            values.append(task_id)
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM runtime_approvals {where} ORDER BY updated_at DESC LIMIT ?", (*values, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def total_event_count(self) -> int:
+        with self._connect() as db:
+            row = db.execute("SELECT COUNT(*) AS count FROM events").fetchone()
+        return int(row["count"]) if row else 0

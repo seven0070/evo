@@ -365,3 +365,43 @@ The World & Environment Intelligence Layer is observational and advisory. It can
 > **The World Layer observes current conditions. Memory preserves history. Capability intelligence recommends methods. Governance authorizes. The Kernel executes. Verification confirms what actually happened.**
 
 The initial implementation intentionally remains local-first. It does not add unrestricted external-world ingestion, a general AGI world model, autonomous continuous sensing, or persistent autonomous operation.
+
+
+## Persistent Autonomous Agent Runtime
+
+Phase 14 adds an **AgentRuntime** that coordinates persistent lifecycle management without becoming a second Kernel. Runtime state, queued tasks, schedules, approvals, heartbeats, recovery markers, and bounded metrics are stored in the existing `<workspace>/.evo/agent.sqlite3` database. The runtime can remain active across multiple bounded cycles, but a process must be explicitly started; importing the package never starts a daemon.
+
+The lifecycle state machine is deterministic: `STARTING`, `READY`, `OBSERVING`, `PLANNING`, `WAITING_APPROVAL`, `EXECUTING`, `VERIFYING`, `LEARNING`, `RECOVERING`, `PAUSED`, `DEGRADED`, `STOPPING`, `STOPPED`, and `FAILED`. Invalid transitions are rejected. Startup validates the database and architecture, observes the current Phase 13 environment, marks interrupted work for revalidation, restores durable queue state, and reaches `READY` only after those checks. A previous `RUNNING` task is never assumed complete and is not blindly replayed.
+
+`TaskQueue` persists bounded tasks with goal, source, priority, dependencies, deadline, resource budget, approval requirement, retry budget, attempt, plan, environment version, progress, and a deterministic deduplication fingerprint. The `Scheduler` supports one-shot, interval, and deterministic workspace condition schedules, dependency ordering, priority with age/deadline fairness, task expiration, and bounded backpressure. Condition evaluation supports only safe workspace-relative file existence or absence and bounded `and`/`or` composition; arbitrary expressions, shell commands, Python, and observed text are never evaluated.
+
+`HeartbeatManager` checks runtime state, database accessibility, queue depth, resource pressure, and environment freshness without executing work. `RuntimeResourceManager` enforces hard ceilings for concurrent tasks, task duration, total runtime, retries, recovery cycles, replans, memory/storage pressure, queue size, and tasks per cycle. The runtime defaults to a single active execution and one bounded task per cycle. It never increases or overrides Kernel limits.
+
+Runtime execution delegates goals to `CognitiveOrchestrator`, which continues to use Phase 13 World observation, Phase 11 Memory, Phase 12 Capability Intelligence, the existing Flexibility Engine, and the authoritative Kernel. Verified completion is required before a task becomes `COMPLETED`; tool execution alone is never treated as proof. Failure classification permits only bounded retries for eligible transient, environment, resource, tool, or verification failures. Permission, approval, governance, protected-core, and known destructive failures are not automatically retried. Repeated failures enter a persisted circuit breaker and pause the task rather than creating an infinite loop. Evolution analysis may be invoked through the existing Phase 9 `EvolutionOrchestrator`, but the runtime cannot approve evolution, metamorphosis, promotion, or governance changes.
+
+Runtime pause/resume preserves queue, plans, memory, environment evidence, and approvals. Resume re-observes the environment and revalidates state. Safe mode permits observation, inspection, planning, verification, and reporting while deferring side-effecting autonomous execution. Degraded mode reduces work and preserves state after database, environment, tool, resource, verification, or repeated-failure instability. The independent kill switch stops acceptance of new work, persists state, safely stops future work, and enters `STOPPED`; it cannot be cleared through normal runtime evolution or task planning.
+
+Phase 14 controls include:
+
+```bash
+evo --runtime-start --workspace ./workspace
+evo --runtime-status --workspace ./workspace
+evo --runtime-submit "list the files" --workspace ./workspace
+evo --runtime-cycle --workspace ./workspace
+evo --runtime-heartbeat --workspace ./workspace
+evo --runtime-health --workspace ./workspace
+evo --runtime-list-tasks --workspace ./workspace
+evo --runtime-show-task TASK_ID --workspace ./workspace
+evo --runtime-pause-task TASK_ID --workspace ./workspace
+evo --runtime-resume-task TASK_ID --workspace ./workspace
+evo --runtime-cancel-task TASK_ID --workspace ./workspace
+evo --runtime-pause --workspace ./workspace
+evo --runtime-resume --workspace ./workspace
+evo --runtime-safe-mode --workspace ./workspace
+evo --runtime-kill-switch --workspace ./workspace
+evo --runtime-stop --workspace ./workspace
+```
+
+> **Persistent operation means repeated bounded observation, scheduling, planning, authorized Kernel execution, verification, learning, recovery, and memory recording. It does not mean automatic approval, promotion, governance modification, protected-core modification, credential acquisition, arbitrary code execution, or unrestricted self-modification.**
+
+The runtime intentionally does not implement Phase 15, arbitrary webhook execution, arbitrary external provider installation, uncontrolled polling, unrestricted external-world ingestion, automatic approval or promotion, or a second execution, governance, verification, evolution, or rollback authority.
