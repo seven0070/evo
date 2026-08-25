@@ -20,6 +20,9 @@ from evo_agent.runtime import AgentRuntime, RuntimeState, RuntimeTaskStatus
 from evo_agent.storage import SQLiteStore
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 def make_engine(tmp_path: Path) -> SelfModelEngine:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -137,7 +140,7 @@ def test_self_model_restart_recovery(tmp_path):
 
 def test_bounded_runtime_refresh_and_diagnostics(tmp_path):
     engine = make_engine(tmp_path)
-    runtime = AgentRuntime(engine.workspace, store=engine.store, source_root=Path("/home/ubuntu/evo"), self_model=engine)
+    runtime = AgentRuntime(engine.workspace, store=engine.store, source_root=REPO_ROOT, self_model=engine)
     task = runtime.enqueue_self_model_refresh()
     result = runtime.run_cycle()
     assert result.tasks_completed == 1
@@ -147,7 +150,7 @@ def test_bounded_runtime_refresh_and_diagnostics(tmp_path):
 
 def test_runtime_kill_switch_blocks_self_model_admission(tmp_path):
     engine = make_engine(tmp_path)
-    runtime = AgentRuntime(engine.workspace, store=engine.store, source_root=Path("/home/ubuntu/evo"), self_model=engine)
+    runtime = AgentRuntime(engine.workspace, store=engine.store, source_root=REPO_ROOT, self_model=engine)
     runtime.kill_switch("test")
     with pytest.raises(RuntimeError):
         runtime.enqueue_self_model_refresh()
@@ -155,7 +158,7 @@ def test_runtime_kill_switch_blocks_self_model_admission(tmp_path):
 
 def test_safe_mode_keeps_self_model_read_only(tmp_path):
     engine = make_engine(tmp_path)
-    runtime = AgentRuntime(engine.workspace, store=engine.store, source_root=Path("/home/ubuntu/evo"), self_model=engine, safe_mode=True)
+    runtime = AgentRuntime(engine.workspace, store=engine.store, source_root=REPO_ROOT, self_model=engine, safe_mode=True)
     task = runtime.enqueue_self_model_operation("diagnostics")
     runtime.run_cycle()
     assert runtime.task(task.task_id).status is RuntimeTaskStatus.COMPLETED
@@ -210,7 +213,7 @@ def test_database_schema_contains_all_phase19_tables(tmp_path):
 
 
 def test_protected_source_digest_unchanged(tmp_path):
-    path = Path("/home/ubuntu/evo/evo_agent/kernel.py")
+    path = REPO_ROOT / "evo_agent" / "kernel.py"
     before = hashlib.sha256(path.read_bytes()).hexdigest()
     engine = make_engine(tmp_path)
     engine.refresh(); engine.diagnostics(); engine.reflect("task", {"verified": False})

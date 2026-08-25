@@ -5,6 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 import pytest
 
 from evo_agent.runtime import AgentRuntime, TaskSource
@@ -193,8 +196,8 @@ def test_runtime_kill_switch_blocks_strategic_enqueue(tmp_path: Path) -> None:
 def test_cli_create_and_list(tmp_path: Path) -> None:
     workspace = tmp_path / "cli-workspace"
     base = [sys.executable, "-m", "evo_agent.cli", "--workspace", str(workspace)]
-    created = subprocess.run(base + ["--goal-create", "persist this CLI strategic goal", "--goal-human-priority", "91", "--json"], cwd="/home/ubuntu/evo", text=True, capture_output=True, check=True)
+    created = subprocess.run(base + ["--goal-create", "persist this CLI strategic goal", "--goal-human-priority", "91", "--json"], cwd=REPO_ROOT, text=True, capture_output=True, check=True)
     record = json.loads(created.stdout)
     assert record["human_priority"] == 91
-    listed = subprocess.run(base + ["--goal-list", "--json"], cwd="/home/ubuntu/evo", text=True, capture_output=True, check=True)
+    listed = subprocess.run(base + ["--goal-list", "--json"], cwd=REPO_ROOT, text=True, capture_output=True, check=True)
     assert record["goal_id"] in {item["goal_id"] for item in json.loads(listed.stdout)}
