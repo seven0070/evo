@@ -885,9 +885,12 @@ class ModelRouter:
             if task.get("tool_use") and not model.tool_use_support: rejected = True; rejection = "tool use is unsupported"
             historical = self._historical(model.model_id, historical_evidence)
             learning_bonus = float(self.learning.score(model.model_id, requirements) if self.learning and hasattr(self.learning, "score") else 0.0)
+            adaptive_learning = getattr(self, "adaptive_learning", None)
+            adaptive_bonus = float(adaptive_learning.score(f"model:{model.model_id}", "preference")) if adaptive_learning and hasattr(adaptive_learning, "score") else 0.0
+            if adaptive_bonus: reasons.append(f"bounded adaptive preference adjustment {adaptive_bonus:+.4f} from persisted evidence")
             capability_score = matched / max(1, len(requirements)); quality = sum(item.quality for item in model.capabilities if item.name in requirements) / max(1, matched)
             health_score = model.health.reliability; latency_penalty = min(0.25, (model.performance_profile.average_latency_ms / 10000.0) if model.performance_profile.average_latency_ms else 0.0); cost_penalty = min(0.15, (model.cost_profile.input_cost_per_million + model.cost_profile.output_cost_per_million) / 100.0)
-            score = round(0.40 * capability_score + 0.20 * quality + 0.18 * model.performance_profile.reliability + 0.12 * health_score + 0.08 * historical + learning_bonus - latency_penalty - cost_penalty, 6)
+            score = round(0.40 * capability_score + 0.20 * quality + 0.18 * model.performance_profile.reliability + 0.12 * health_score + 0.08 * historical + learning_bonus + adaptive_bonus - latency_penalty - cost_penalty, 6)
             candidates.append(ModelCandidate(model, score, reasons, rejected, rejection))
         accepted = [item for item in candidates if not item.rejected]
         accepted.sort(key=lambda item: (-item.score, item.model.name, item.model.version, item.model.model_id))
@@ -1050,8 +1053,8 @@ class LearningEngine:
 
 class ModelIntelligence:
     """Sovereign Evo facade: model intelligence advises; Kernel and Verifier remain authoritative."""
-    def __init__(self, store: SQLiteStore, workspace: Path | None = None, registry: ModelRegistry | None = None, adapters: Mapping[str, ProviderAdapter] | None = None, memory: Any | None = None, policy: LearningPolicy | None = None, verifier: Callable[[InferenceRequest, ModelResponse], bool] | None = None, external_integrations: Any | None = None, evolution_orchestrator: Any | None = None):
-        self.store = store; self.workspace = workspace; self.registry = registry or ModelRegistry(store, workspace); self.adapters = dict(adapters or {}); self.learning = LearningEngine(store, policy, memory); self.router = ModelRouter(self.registry, self.learning, store); self.fallback = ModelFallbackEngine(self.router); self.context = ModelContextManager(); self.evaluator = ModelEvaluationEngine(self.registry, store, verifier=verifier); self.safe_mode = False; self.kill_switch = False; self.verifier = verifier; self.external_integrations = external_integrations; self.evolution_orchestrator = evolution_orchestrator
+    def __init__(self, store: SQLiteStore, workspace: Path | None = None, registry: ModelRegistry | None = None, adapters: Mapping[str, ProviderAdapter] | None = None, memory: Any | None = None, policy: LearningPolicy | None = None, verifier: Callable[[InferenceRequest, ModelResponse], bool] | None = None, external_integrations: Any | None = None, evolution_orchestrator: Any | None = None, adaptive_learning: Any | None = None):
+        self.store = store; self.workspace = workspace; self.registry = registry or ModelRegistry(store, workspace); self.adapters = dict(adapters or {}); self.learning = LearningEngine(store, policy, memory); self.adaptive_learning = adaptive_learning; self.router = ModelRouter(self.registry, self.learning, store); self.router.adaptive_learning = adaptive_learning; self.fallback = ModelFallbackEngine(self.router); self.context = ModelContextManager(); self.evaluator = ModelEvaluationEngine(self.registry, store, verifier=verifier); self.safe_mode = False; self.kill_switch = False; self.verifier = verifier; self.external_integrations = external_integrations; self.evolution_orchestrator = evolution_orchestrator
         self.model_registry = self.registry; self.model_router = self.router; self.learning_engine = self.learning; self.model_evaluator = self.evaluator
 
     def register_provider(self, provider: ModelProvider, actor: str = "system") -> ModelProvider: return self.registry.register_provider(provider, actor)

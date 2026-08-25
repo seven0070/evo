@@ -1023,6 +1023,53 @@ class SQLiteStore:
                     policy_id TEXT PRIMARY KEY, version TEXT NOT NULL, enabled INTEGER NOT NULL,
                     payload TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS learning_patterns (
+                    pattern_id TEXT PRIMARY KEY, pattern_type TEXT NOT NULL, frequency INTEGER NOT NULL,
+                    confidence REAL NOT NULL, lifecycle_state TEXT NOT NULL, architecture_version TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_patterns_type ON learning_patterns(pattern_type, created_at);
+                CREATE TABLE IF NOT EXISTS learning_hypotheses (
+                    hypothesis_id TEXT PRIMARY KEY, pattern_id TEXT NOT NULL, status TEXT NOT NULL,
+                    risk TEXT NOT NULL, confidence REAL NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_hypotheses_status ON learning_hypotheses(status, created_at);
+                CREATE TABLE IF NOT EXISTS adaptive_policies (
+                    policy_id TEXT PRIMARY KEY, version TEXT NOT NULL, enabled INTEGER NOT NULL,
+                    lifecycle_state TEXT NOT NULL, architecture_version TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS adaptive_adjustments (
+                    adjustment_id TEXT PRIMARY KEY, policy_id TEXT, status TEXT NOT NULL,
+                    affected_component TEXT NOT NULL, risk TEXT NOT NULL, payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_adaptive_adjustments_status ON adaptive_adjustments(status, created_at);
+                CREATE TABLE IF NOT EXISTS adjustment_evaluations (
+                    evaluation_id TEXT PRIMARY KEY, adjustment_id TEXT NOT NULL, decision TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS learning_feedback (
+                    feedback_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, feedback_type TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS counterfactual_evaluations (
+                    counterfactual_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, alternative_type TEXT NOT NULL,
+                    decision TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS learning_conflicts (
+                    conflict_id TEXT PRIMARY KEY, target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+                    status TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS learning_rollbacks (
+                    rollback_id TEXT PRIMARY KEY, adjustment_id TEXT NOT NULL, status TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS learning_cycles (
+                    cycle_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL,
+                    completed_at TEXT, payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_cycles_status ON learning_cycles(status, started_at);
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
@@ -2611,3 +2658,142 @@ class SQLiteStore:
         with self._connect() as db:
             row = db.execute("SELECT COUNT(*) AS count FROM models").fetchone()
         return int(row["count"]) if row else 0
+
+    # Phase 18 Continuous Learning & Adaptive Intelligence persistence.
+    def _save_phase18_record(self, table: str, columns: list[str], values: list[Any]) -> None:
+        placeholders = ", ".join("?" for _ in columns)
+        names = ", ".join(columns)
+        with self._connect() as db:
+            db.execute(f"INSERT OR REPLACE INTO {table}({names}) VALUES ({placeholders})", tuple(values))
+
+    @staticmethod
+    def _phase18_rows(rows: list[Any]) -> list[dict[str, Any]]:
+        result = []
+        for row in rows:
+            item = dict(row)
+            if isinstance(item.get("payload"), str):
+                try: item["payload"] = json.loads(item["payload"])
+                except (TypeError, ValueError): item["payload"] = {"malformed": True}
+            result.append(item)
+        return result
+
+    def save_learning_pattern(self, record: Any) -> None:
+        payload = record.to_dict()
+        self._save_phase18_record("learning_patterns", ["pattern_id", "pattern_type", "frequency", "confidence", "lifecycle_state", "architecture_version", "payload", "created_at", "updated_at"], [record.pattern_id, record.pattern_type.value, record.frequency, record.confidence, record.lifecycle_state, record.architecture_version, json.dumps(payload), record.created_at, record.updated_at])
+
+    def learning_pattern_by_id(self, pattern_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM learning_patterns WHERE pattern_id = ?", (pattern_id,)).fetchone()
+        return self._phase18_rows([row])[0] if row else None
+
+    def find_learning_patterns(self, pattern_type: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_patterns"; values: list[Any] = []
+        if pattern_type: query += " WHERE pattern_type = ?"; values.append(pattern_type)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_learning_hypothesis(self, record: Any) -> None:
+        self._save_phase18_record("learning_hypotheses", ["hypothesis_id", "pattern_id", "status", "risk", "confidence", "payload", "created_at"], [record.hypothesis_id, record.pattern_id, record.status.value, record.risk, record.confidence, json.dumps(record.to_dict()), record.created_at])
+
+    def learning_hypothesis_by_id(self, hypothesis_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM learning_hypotheses WHERE hypothesis_id = ?", (hypothesis_id,)).fetchone()
+        return self._phase18_rows([row])[0] if row else None
+
+    def find_learning_hypotheses(self, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_hypotheses"; values: list[Any] = []
+        if status: query += " WHERE status = ?"; values.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_adaptive_policy(self, record: Any) -> None:
+        self._save_phase18_record("adaptive_policies", ["policy_id", "version", "enabled", "lifecycle_state", "architecture_version", "payload", "created_at", "updated_at"], [record.policy_id, record.version, int(record.enabled), record.lifecycle_state, record.architecture_version, json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def adaptive_policy_by_id(self, policy_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM adaptive_policies WHERE policy_id = ?", (policy_id,)).fetchone()
+        return self._phase18_rows([row])[0] if row else None
+
+    def find_adaptive_policies(self, enabled: bool | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM adaptive_policies"; values: list[Any] = []
+        if enabled is not None: query += " WHERE enabled = ?"; values.append(int(enabled))
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_adaptive_adjustment(self, record: Any) -> None:
+        self._save_phase18_record("adaptive_adjustments", ["adjustment_id", "policy_id", "status", "affected_component", "risk", "payload", "created_at", "updated_at"], [record.adjustment_id, record.policy_id, record.status.value, record.affected_component, record.risk, json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def adaptive_adjustment_by_id(self, adjustment_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM adaptive_adjustments WHERE adjustment_id = ?", (adjustment_id,)).fetchone()
+        return self._phase18_rows([row])[0] if row else None
+
+    def find_adaptive_adjustments(self, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM adaptive_adjustments"; values: list[Any] = []
+        if status: query += " WHERE status = ?"; values.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_adjustment_evaluation(self, record: Any) -> None:
+        self._save_phase18_record("adjustment_evaluations", ["evaluation_id", "adjustment_id", "decision", "payload", "created_at"], [record.evaluation_id, record.adjustment_id, record.decision.value, json.dumps(record.to_dict()), record.created_at])
+
+    def find_adjustment_evaluations(self, adjustment_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM adjustment_evaluations"; values: list[Any] = []
+        if adjustment_id: query += " WHERE adjustment_id = ?"; values.append(adjustment_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_learning_feedback(self, record: Any) -> None:
+        self._save_phase18_record("learning_feedback", ["feedback_id", "task_id", "feedback_type", "payload", "created_at"], [record.feedback_id, record.task_id, record.feedback_type.value, json.dumps(record.to_dict()), record.created_at])
+
+    def find_learning_feedback(self, task_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_feedback"; values: list[Any] = []
+        if task_id: query += " WHERE task_id = ?"; values.append(task_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_counterfactual_evaluation(self, record: Any) -> None:
+        self._save_phase18_record("counterfactual_evaluations", ["counterfactual_id", "task_id", "alternative_type", "decision", "payload", "created_at"], [record.counterfactual_id, record.task_id, record.alternative_type, record.decision.value, json.dumps(record.to_dict()), record.created_at])
+
+    def find_counterfactual_evaluations(self, task_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM counterfactual_evaluations"; values: list[Any] = []
+        if task_id: query += " WHERE task_id = ?"; values.append(task_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_learning_conflict(self, record: Any) -> None:
+        self._save_phase18_record("learning_conflicts", ["conflict_id", "target_type", "target_id", "status", "payload", "created_at"], [record.conflict_id, record.target_type, record.target_id, record.status, json.dumps(record.to_dict()), record.created_at])
+
+    def find_learning_conflicts(self, target_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_conflicts"; values: list[Any] = []
+        if target_id: query += " WHERE target_id = ?"; values.append(target_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_learning_rollback(self, record: Any) -> None:
+        self._save_phase18_record("learning_rollbacks", ["rollback_id", "adjustment_id", "status", "payload", "created_at"], [record.rollback_id, record.adjustment_id, record.status, json.dumps(record.to_dict()), record.created_at])
+
+    def find_learning_rollbacks(self, adjustment_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_rollbacks"; values: list[Any] = []
+        if adjustment_id: query += " WHERE adjustment_id = ?"; values.append(adjustment_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)
+
+    def save_learning_cycle(self, record: Any) -> None:
+        self._save_phase18_record("learning_cycles", ["cycle_id", "status", "started_at", "completed_at", "payload"], [record.cycle_id, record.status.value, record.started_at, record.completed_at, json.dumps(record.to_dict())])
+
+    def learning_cycle_by_id(self, cycle_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM learning_cycles WHERE cycle_id = ?", (cycle_id,)).fetchone()
+        return self._phase18_rows([row])[0] if row else None
+
+    def find_learning_cycles(self, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM learning_cycles"; values: list[Any] = []
+        if status: query += " WHERE status = ?"; values.append(status)
+        query += " ORDER BY started_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase18_rows(rows)

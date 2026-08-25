@@ -813,8 +813,9 @@ class ToolDiscoveryEngine:
 
 
 class ToolSelectionEngine:
-    def __init__(self, memory: MemoryManager | None = None):
+    def __init__(self, memory: MemoryManager | None = None, adaptive_learning: Any | None = None):
         self.memory = memory
+        self.adaptive_learning = adaptive_learning
         self.selection_count = 0
         self.total_score = 0.0
 
@@ -826,7 +827,9 @@ class ToolSelectionEngine:
             risk_penalty = list(RiskLevel).index(candidate.tool.risk_level) * 0.04
             health_score = candidate.tool.health.success_rate if candidate.tool.health else 0.5
             compatibility_score = 1.0 if candidate.compatibility.status is CompatibilityResultStatus.COMPATIBLE else 0.65
-            candidate.score = round(0.45 * compatibility_score + 0.2 * candidate.tool.reliability + 0.18 * historical + 0.12 * health_score - risk_penalty, 6)
+            learned = float(self.adaptive_learning.score(f"tool:{candidate.tool.tool_id}", "preference")) if self.adaptive_learning and hasattr(self.adaptive_learning, "score") else 0.0
+            candidate.score = round(0.45 * compatibility_score + 0.2 * candidate.tool.reliability + 0.18 * historical + 0.12 * health_score + learned - risk_penalty, 6)
+            if learned: candidate.reasons = list(getattr(candidate, "reasons", [])) + [f"bounded adaptive preference {learned:+.4f}"]
         accepted.sort(key=lambda item: (-item.score, -item.tool.reliability, list(RiskLevel).index(item.tool.risk_level), item.tool.name, item.tool.tool_id))
         selected_candidate = accepted[0] if accepted else None
         selected = selected_candidate.tool if selected_candidate else None

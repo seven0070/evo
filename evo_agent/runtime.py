@@ -14,6 +14,7 @@ from .cognitive import CognitiveOutcome, CognitiveOrchestrator, CognitiveResult
 from .models import Event, EventType, utc_now, new_id
 from .model_adapter import RuleBasedAdapter
 from .model_intelligence import InferenceStatus
+from .adaptive_learning import CycleStatus
 from .orchestrator import EvolutionOrchestrator
 from .storage import SQLiteStore
 from .version import __version__
@@ -73,6 +74,7 @@ class TaskSource(str, Enum):
     EXTERNAL = "external"
     SPECIALIST = "specialist"
     MODEL = "model"
+    LEARNING = "learning"
 
 
 class RuntimeHealthStatus(str, Enum):
@@ -725,7 +727,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -739,6 +741,7 @@ class AgentRuntime:
         self.external_integrations = external_integrations
         self.specialist_delegation = specialist_delegation
         self.model_intelligence = model_intelligence
+        self.adaptive_learning = adaptive_learning
         self._model_requests: dict[str, Any] = {}
         if self.specialist_delegation is not None:
             self.specialist_delegation.runtime = self
@@ -956,6 +959,22 @@ class AgentRuntime:
 
     queue_model_inference = enqueue_model_inference
 
+    def enqueue_learning_cycle(self, priority: TaskPriority | str = TaskPriority.BACKGROUND, resource_budget: dict[str, Any] | None = None) -> RuntimeTask:
+        if self.adaptive_learning is None:
+            raise RuntimeError("adaptive learning is not configured")
+        return self.enqueue_task("bounded adaptive learning cycle", priority=priority, source=TaskSource.LEARNING, resource_budget=resource_budget or {"max_records": 200}, metadata={"learning_cycle": True, "read_only": True})
+
+    queue_learning_cycle = enqueue_learning_cycle
+
+    def run_learning_cycle(self, resource_budget: int | None = None) -> Any:
+        if self.adaptive_learning is None:
+            raise RuntimeError("adaptive learning is not configured")
+        if self.kill_switch_active:
+            raise RuntimeError("runtime kill switch is active")
+        if hasattr(self.adaptive_learning, "set_safe_mode"): self.adaptive_learning.set_safe_mode(self.safe_mode)
+        if hasattr(self.adaptive_learning, "kill_switch"): self.adaptive_learning.kill_switch = self.kill_switch_active
+        return self.adaptive_learning.run_cycle(resource_budget=resource_budget)
+
     def resume_external_operation(self, operation_id: str) -> list[RuntimeTask]:
         resumed: list[RuntimeTask] = []
         for task in self.tasks():
@@ -1143,6 +1162,20 @@ class AgentRuntime:
             self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "approval_id": approval.approval_id, "reason": "approval required", "scope_hash": approval.scope_hash}, task.task_id)
             self._transition(RuntimeState.WAITING_APPROVAL, "task requires human approval")
             return "waiting"
+        if task.metadata.get("learning_cycle"):
+            if self.adaptive_learning is None:
+                task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "adaptive learning is not configured"; self.queue.update(task); return "blocked"
+            if self.kill_switch_active:
+                task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "learning cycle blocked by runtime kill switch"; self.queue.update(task); return "blocked"
+            if hasattr(self.adaptive_learning, "set_safe_mode"): self.adaptive_learning.set_safe_mode(self.safe_mode)
+            if hasattr(self.adaptive_learning, "kill_switch"): self.adaptive_learning.kill_switch = self.kill_switch_active
+            self._transition(RuntimeState.EXECUTING, "bounded learning cycle admitted by Runtime")
+            self._transition(RuntimeState.LEARNING, "bounded adaptive learning cycle")
+            cycle = self.adaptive_learning.run_cycle(resource_budget=int(task.resource_budget.get("max_records", 200)))
+            task.metadata["learning_cycle"] = cycle.to_dict()
+            if cycle.status is CycleStatus.COMPLETED:
+                task.status = RuntimeTaskStatus.COMPLETED; task.progress = "completed"; self.queue.update(task); self._emit(EventType.RUNTIME_TASK_COMPLETED, {"task_id": task.task_id, "learning_cycle_id": cycle.cycle_id}, task.task_id); return "completed"
+            task.status = RuntimeTaskStatus.BLOCKED if cycle.status is CycleStatus.BLOCKED else RuntimeTaskStatus.FAILED; task.progress = "blocked" if task.status is RuntimeTaskStatus.BLOCKED else "failed"; task.last_error = cycle.reason; self.queue.update(task); return "blocked" if task.status is RuntimeTaskStatus.BLOCKED else "failed"
         model_request_id = task.metadata.get("model_request_id")
         if model_request_id:
             request = self._model_requests.get(str(model_request_id))

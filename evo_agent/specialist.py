@@ -744,7 +744,7 @@ class SpecialistDelegationEngine:
 
     ENGINE_VERSION = "delegation-v1"
 
-    def __init__(self, store: SQLiteStore, workspace: Path, registry: SpecialistRegistry | None = None, memory: Any | None = None, capability_intelligence: Any | None = None, flexibility: Any | None = None, external_integrations: Any | None = None, runtime: Any | None = None, verifier: Callable[[SpecialistTaskContract, SpecialistOutput], bool | VerificationStatus] | None = None, limits: SpecialistLimits | None = None, executor: Callable[[SpecialistTaskContract, SpecialistContext], Any] | None = None):
+    def __init__(self, store: SQLiteStore, workspace: Path, registry: SpecialistRegistry | None = None, memory: Any | None = None, capability_intelligence: Any | None = None, flexibility: Any | None = None, external_integrations: Any | None = None, runtime: Any | None = None, verifier: Callable[[SpecialistTaskContract, SpecialistOutput], bool | VerificationStatus] | None = None, limits: SpecialistLimits | None = None, executor: Callable[[SpecialistTaskContract, SpecialistContext], Any] | None = None, adaptive_learning: Any | None = None):
         self.store = store
         self.workspace = Path(workspace).expanduser().resolve()
         self.registry = registry or SpecialistRegistry(store, self.workspace)
@@ -752,6 +752,7 @@ class SpecialistDelegationEngine:
         self.capability_intelligence = capability_intelligence
         self.flexibility = flexibility
         self.external_integrations = external_integrations
+        self.adaptive_learning = adaptive_learning
         self.runtime = runtime
         self.verifier = verifier
         self.default_executor = executor
@@ -770,7 +771,10 @@ class SpecialistDelegationEngine:
 
     def discover_for_goal(self, goal: str, required_capabilities: Iterable[str] | None = None, limit: int = 3) -> list[Specialist]:
         requirements = list(required_capabilities or (["research"] if any(token in str(goal).lower() for token in ("research", "investigate", "external")) else ["analysis"]))
-        return self.registry.select(requirements, limit=limit)
+        candidates = self.registry.select(requirements, limit=max(limit, 8))
+        if self.adaptive_learning and hasattr(self.adaptive_learning, "score"):
+            candidates.sort(key=lambda item: (-float(self.adaptive_learning.score(f"specialist:{item.specialist_id}", "preference")), item.specialist_id))
+        return candidates[:limit]
 
     def create_contract(self, parent_task_id: str, goal: str, specialist_id: str, scope: str | None = None, allowed_capabilities: Iterable[str] | None = None, allowed_tools: Iterable[str] | None = None, allowed_integrations: Iterable[str] | None = None, expected_output_schema: dict[str, Any] | None = None, success_criteria: Iterable[str] | None = None, resource_limits: dict[str, Any] | None = None, timeout_seconds: float | None = None, deadline: str | None = None, approval_requirements: Iterable[str] | None = None, dependencies: Iterable[str] | None = None, risk: SpecialistRisk = SpecialistRisk.READ_ONLY) -> tuple[SpecialistTask, SpecialistTaskContract]:
         specialist = self.registry.get(specialist_id)

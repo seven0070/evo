@@ -577,3 +577,27 @@ evo --model-routing-report --workspace ./workspace
 > **Models provide intelligence; they do not become authorities.**
 
 Phase 17 intentionally does not add autonomous model training, unrestricted weight modification, arbitrary provider or plugin installation, unrestricted endpoint access, credential storage, silent learning, irreversible routing changes, autonomous approval, autonomous promotion, protected-core mutation, production mutation, or Phase 18 functionality.
+
+
+## Continuous Learning & Adaptive Intelligence Layer
+
+Phase 18 adds a persistent, bounded **Continuous Learning & Adaptive Intelligence Layer** above the verified Phase 1–17 systems. Its lifecycle is:
+
+```text
+Experience → Evaluation → Learning Observation → Pattern Detection
+→ Hypothesis → Adjustment Candidate → Evidence/Risk/Policy Gates
+→ Controlled Application → Outcome Monitoring → Learning Evaluation
+→ Keep / Decay / Rollback
+```
+
+The `AdaptiveLearningEngine` consumes structured experience, evaluation, model, tool, capability, specialist, environment, recovery, fallback, verification, and explicitly supplied user-feedback evidence. It detects recurring positive and negative patterns, creates explicit hypotheses, evaluates evidence quality, creates bounded adjustment candidates, records rollback checkpoints, and applies only low-risk, policy-compatible changes. Historical evidence, model outputs, external content, specialist messages, memory text, user text, and tool output remain data rather than executable instructions.
+
+Adaptive policies may influence model, fallback, tool, capability, specialist, strategy, recovery, context, decomposition, and resource recommendations. They cannot modify Kernel authority, Verifier authority, Governance, permissions, approval requirements, Sandbox isolation, protected core, kill switch, rollback authority, promotion authority, or security boundaries. **Learning adapts decisions; it does not become an authority.**
+
+Phase 18 supports explicit user feedback as evidence, bounded historical counterfactual evaluation, deterministic exploration with a risk ceiling and budget, explainable baseline-versus-adapted decisions, confidence decay, contradictory-evidence conflicts, automatic bounded rollback after harmful evaluation, and evidence-only routing into the existing Phase 9 EvolutionOrchestrator or Phase 8/9 Metamorphosis pipeline. It never executes arbitrary counterfactual actions against production and never creates a second evolution system.
+
+Learning cycles are finite, persistent, restart-safe, pausable, cancellable through Runtime, resource-limited, safe-mode-aware, and kill-switch-aware. They reuse the existing AgentRuntime queue and lifecycle; no uncontrolled daemon is created. Phase 18 extends the single SQLiteStore with `learning_patterns`, `learning_hypotheses`, `adaptive_policies`, `adaptive_adjustments`, `adjustment_evaluations`, `learning_feedback`, `counterfactual_evaluations`, `learning_conflicts`, `learning_rollbacks`, and `learning_cycles`.
+
+Phase 18 inspection commands include `--learning-status`, `--learning-cycle`, `--list-learning-patterns`, `--show-learning-pattern`, `--list-learning-hypotheses`, `--show-learning-hypothesis`, `--list-adaptive-policies`, `--show-adaptive-policy`, `--list-adjustments`, `--show-adjustment`, `--learning-evaluate`, `--learning-rollback`, `--learning-feedback`, and `--learning-stats`.
+
+Phase 18 intentionally excludes autonomous approval, promotion, deployment, governance or security modification, unrestricted training or weight modification, arbitrary code or plugin execution, credential storage, unrestricted network access, protected-core or production mutation, self-replication, uncontrolled agent spawning, and uncontrolled learning daemons. The Kernel remains the sole execution authority and the Verifier remains the sole authority for determining whether requested outcomes actually occurred.

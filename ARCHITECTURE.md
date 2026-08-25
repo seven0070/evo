@@ -880,3 +880,88 @@ Evolver may propose; existing approvals and promotion remain separate
 ```
 
 Phase 17 intentionally does not add autonomous model training, unrestricted weight modification, arbitrary endpoint access, arbitrary provider/plugin installation, credential storage, silent learning, irreversible routing changes, autonomous approval, autonomous promotion, protected-core mutation, production mutation, or Phase 18 functionality.
+
+
+## Continuous Learning & Adaptive Intelligence Layer
+
+Phase 18 transforms bounded model learning into a persistent, governed continuous-learning layer without introducing a new authority. The lifecycle is:
+
+```text
+Experience
+    ↓
+Evaluation
+    ↓
+Learning Observation
+    ↓
+Pattern Detection
+    ↓
+Hypothesis
+    ↓
+Adaptive Adjustment Candidate
+    ↓
+Evidence / Risk / Policy Evaluation
+    ↓
+Controlled Application
+    ↓
+Outcome Monitoring
+    ↓
+Learning Evaluation
+    ↓
+Keep / Decay / Rollback
+    ↓
+Evolution or Metamorphosis Evidence when configuration cannot solve the limitation
+```
+
+The required architectural statement is:
+
+> **Learning adapts decisions; it does not become an authority.**
+
+`AdaptiveLearningEngine` consumes structured Experience/Evaluation records and bounded model, tool, capability, specialist, environment, recovery, fallback, verification, and explicit feedback evidence. It detects repeated positive and negative patterns, generates explicit hypotheses, creates finite adjustment candidates, applies evidence and policy thresholds, monitors adapted outcomes, decays stale or ineffective values, records contradictions, and performs auditable rollback. Negative evidence is retained rather than discarded.
+
+| Layer | Phase 18 responsibility | Authority retained elsewhere |
+|---|---|---|
+| Experience | Supplies records of what happened | Runtime and Kernel determine observable task lifecycle |
+| Evaluation | Supplies quality, reliability, latency, recovery, safety, and feedback metrics | Verifier remains sole outcome authority |
+| Adaptive learning | Detects patterns, proposes hypotheses, ranks bounded decisions, and records evidence | Governance, permissions, approval, promotion, rollback authority, and protected boundaries remain unchanged |
+| Model/Tool/Capability/Specialist selection | May receive bounded, explainable learned preference adjustments | Existing registries, health, contracts, allowlists, and Kernel execution gates remain authoritative |
+| Runtime | Schedules finite learning cycles and enforces resources, pause, cancel, safe mode, and kill switch | Runtime lifecycle and queue remain authoritative |
+| Evolution | Receives evidence for limitations beyond configuration | Existing Phase 9 proposal, approval, Sandbox, Benchmark, Promotion, and Rollback pipeline remains sole evolution path |
+| Metamorphosis | Receives evidence for structural requirements | Existing Phase 8/9 governed structural pipeline remains sole architecture-change path |
+
+Every adaptive decision exposes its baseline decision, learned adjustment, evidence IDs, confidence, policy, adjustment magnitude, reason, and fallback. Deterministic exploration has a risk ceiling, task eligibility, resource and approval preservation, rate, budget, seed, and cooldown. It never explores by bypassing safety controls. Counterfactuals use historical evidence, benchmark evidence, or sandbox evidence only; no arbitrary production counterfactual action is executed.
+
+Phase 18 persists its state in the existing SQLiteStore. The added records are `learning_patterns`, `learning_hypotheses`, `adaptive_policies`, `adaptive_adjustments`, `adjustment_evaluations`, `learning_feedback`, `counterfactual_evaluations`, `learning_conflicts`, `learning_rollbacks`, and `learning_cycles`. Records include identifiers, timestamps, versions, provenance, architecture version, lifecycle/status, source evidence, confidence, risk, and integrity metadata. Learning cycles use the existing Runtime queue and remain finite and restart-safe; no uncontrolled daemon is created.
+
+User feedback is evidence, not absolute truth. Where feedback conflicts with current verification, governance, model health, tool health, specialist health, capability state, or environment state, the authoritative current state wins and the conflict is persisted without erasing historical evidence. Learned content is untrusted data. Model output, external content, specialist messages, memory text, user text, and tool output cannot request governance disablement, approval bypass, protected-core modification, verification bypass, kill-switch changes, sandbox disablement, arbitrary code, credential extraction, unrestricted network access, autonomous promotion, or other protected behavior.
+
+The final authority chain is:
+
+```text
+World / Task
+    ↓
+Cognitive Intelligence
+    ↓
+Memory + Experience
+    ↓
+Evaluation
+    ↓
+Adaptive Learning
+    ↓
+Bounded Adaptive Decision
+    ↓
+Model / Tool / Specialist / Strategy
+    ↓
+Runtime
+    ↓
+Kernel
+    ↓
+Verification
+    ↓
+Outcome
+    ↓
+Experience → Evaluation → Adaptive Learning
+```
+
+If learning identifies a structural limitation, it emits evidence to the existing EvolutionOrchestrator or MetamorphosisEngine. Learning never directly modifies architecture, source, permissions, governance, verification, production, or protected core.
+
+Phase 18 intentionally excludes autonomous approval, autonomous promotion, autonomous deployment, unrestricted self-modification, protected-core modification, governance modification, verification bypass, unrestricted model training or weight modification, arbitrary code execution, arbitrary provider/plugin installation, unrestricted network access, credential storage, self-replication, uncontrolled agent spawning, uncontrolled learning daemons, and direct production mutation. The Kernel remains the sole execution authority, the Verifier remains the sole authority for determining whether requested outcomes actually occurred, and Governance remains authoritative over permissions, approvals, promotion, rollback, and safety.
