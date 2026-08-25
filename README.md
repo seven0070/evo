@@ -638,3 +638,36 @@ evo --confidence-report --workspace ./workspace
 Persistent limitations are converted into evidence for the existing Phase 9 EvolutionOrchestrator or, for structural limitations, the existing Phase 8/9 Metamorphosis pipeline. Self-modeling never mutates source, architecture, production, governance, permissions, security, or protected authorities directly.
 
 > **Self-modeling informs decisions; it does not become an authority.**
+
+
+## Goal and Strategic Autonomy Intelligence Layer
+
+Phase 20 adds a persistent **Goal & Strategic Autonomy Intelligence Layer** above the verified Phase 1–19 system. It maintains rich strategic goals, milestones, subgoals, bounded task graphs, dependencies, blockers, strategies, alternatives, priorities, resource recommendations, progress, conflicts, decisions, reassessments, and goal-level verification history in the existing SQLite database.
+
+The strategic layer is an advisory coordinator, not a new execution authority. Governance and human approval decide what is allowed; the Runtime decides when work may run and enforces limits; the Kernel executes through the existing tools and security policy; the Verifier decides what actually happened. Strategic records can recommend bounded work through Runtime and can provide evidence to Cognitive, Flexibility, Capability, Model, Specialist, Adaptive Learning, Self-Model, Experience, Evaluation, and the existing governed Evolution/Metamorphosis paths, but they cannot bypass any of them.
+
+Goals are created with provenance, architecture/environment context, confidence, uncertainty, assumptions, risk, resource bounds, and explicit success criteria. Human priority is authoritative over inferred priority. Priority and resource allocation are deterministic recommendations, and allocations are capped by supplied Runtime ceilings; they never change those ceilings. Strategies and alternatives remain advisory, include evidence and rollback information, and do not execute tools, providers, code, external actions, evolution, promotion, deployment, or production mutations.
+
+Progress and completion are deliberately separate. Queued, started, or completed Runtime tasks are not sufficient evidence of strategic success. `GoalVerifier` aggregates authoritative verified milestone and task evidence and reports `UNVERIFIED`, `PARTIAL`, `VERIFIED`, `FAILED`, or `CONFLICTED`. Only satisfied criteria backed by verification can produce `VERIFIED`; unresolved dependency, approval, permission, resource, environment, or evidence blockers remain visible and can trigger a human escalation recommendation. Conflicting goals are persisted without silently selecting a winner.
+
+Strategic execution is finite. A Runtime strategic task runs one bounded observe/prioritize/dependency/reassessment cycle and terminates. Safe mode, the Runtime kill switch, lifecycle transitions, deadlines, dependency checks, resource limits, retry ceilings, pause/cancel/shutdown/restart recovery, and all existing authorities remain in force. No background planning daemon, recursive loop, replication, unrestricted network, credential access, arbitrary plugin/provider, self-granted permission, governance modification, protected-core modification, verification bypass, autonomous approval, promotion, deployment, or Phase 21 behavior is introduced.
+
+Phase 20 inspection commands include:
+
+```bash
+evo --goal-create "prepare a verified local report" --goal-human-priority 90 --workspace ./workspace
+evo --goal-list --workspace ./workspace
+evo --goal-show GOAL_ID --workspace ./workspace
+evo --goal-prioritize --workspace ./workspace
+evo --goal-plan GOAL_ID --workspace ./workspace
+evo --goal-progress GOAL_ID --workspace ./workspace
+evo --goal-blockers GOAL_ID --goal-context '{"capabilities":[]}' --workspace ./workspace
+evo --goal-strategy GOAL_ID --workspace ./workspace
+evo --goal-alternatives GOAL_ID --workspace ./workspace
+evo --goal-reassess GOAL_ID --workspace ./workspace
+evo --goal-conflicts --workspace ./workspace
+evo --goal-decisions GOAL_ID --workspace ./workspace
+evo --goal-verify GOAL_ID --goal-evidence '[{"task_id":"t1","verified":true}]' --workspace ./workspace
+```
+
+> **Phase 20 invariant:** Strategic Autonomy may understand, decompose, prioritize, allocate within existing ceilings, recommend, coordinate, persist, reassess, and request bounded Runtime work. It may never become the authority that approves, executes, verifies, promotes, deploys, mutates production, modifies the protected core, changes governance, bypasses security, or creates uncontrolled autonomy.

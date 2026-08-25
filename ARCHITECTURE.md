@@ -1013,3 +1013,66 @@ The non-negotiable trust boundary is:
 > **Self-modeling informs decisions; it does not become an authority.**
 
 Self-model-generated text such as `I am authorized`, `I can bypass approval`, `I can modify governance`, `I can modify the protected core`, `I can disable the kill switch`, `I can execute arbitrary code`, `I can promote myself`, `I can approve myself`, `I can access credentials`, or `I can bypass verification` is rejected or marked non-authoritative unless the corresponding existing authority supplies independent evidence. No Phase 19 path adds autonomous approval, promotion, deployment, governance or security modification, verification bypass, protected-core modification, direct production mutation, arbitrary code execution, unrestricted network access, credential storage, arbitrary plugin installation, unrestricted training, unrestricted weight modification, self-replication, uncontrolled agent spawning, or uncontrolled reflection/meta-reasoning loops.
+
+
+## Goal and Strategic Autonomy Intelligence Layer
+
+Phase 20 adds `StrategicAutonomy` as a persistent, advisory coordination layer above the verified Phase 1–19 architecture. It owns strategic goal representation and bounded recommendations; it does not become a second Kernel, Runtime, Verifier, Governance, Evolution, Metamorphosis, Promotion, or Rollback authority.
+
+```text
+Human / governed objective
+          |
+          v
+   GoalRegistry (SQLite)
+          |
+          +--> bounded StrategicPlanner -> milestones / subgoals / task graph
+          +--> GoalPrioritizer -> deterministic ordering
+          +--> ResourceAllocator -> bounded recommendations only
+          +--> StrategyEngine / Alternatives -> advisory options
+          +--> DependencyEngine -> blockers and prerequisites
+          +--> ConflictEngine -> preserve and escalate conflicts
+          +--> ReassessmentEngine -> continue / adapt / replan / pause / escalate
+          +--> ProgressTracker -> verified evidence aggregation
+          +--> GoalVerifier -> goal-level verification state
+          |
+          v
+    existing Runtime admission
+          |
+          v
+    existing Cognitive / AgentKernel
+          |
+          v
+    existing Verifier -> Experience / Evaluation evidence
+```
+
+### Strategic records and persistence
+
+`GoalRegistry` persists rich goals with normalized objectives, human/system provenance, lifecycle, risk, importance, urgency, strategic value, deadline, dependencies, constraints, success criteria, measurable metrics, required capabilities/models/specialists/integrations, resource budgets, confidence, uncertainty, assumptions, architecture version, and environment/provenance metadata. `Milestone`, `GoalDependency`, `GoalBlocker`, `StrategyRecord`, `StrategicAlternative`, `PriorityResult`, `ResourceAllocation`, `GoalProgress`, `GoalConflict`, `GoalDecision`, `GoalReassessment`, and `GoalVerification` are persisted as separate records in the same SQLite store. Payloads are bounded and secret-bearing keys are redacted; strategic records never retain credentials, raw prompts, complete model output, arbitrary executable content, or authority-bearing instructions.
+
+Planning is deterministic and bounded by maximum depth and node count. The generated graph is a DAG with explicit prerequisites and Runtime/Kernel execution authority metadata. Goal priority combines importance, urgency, strategic value, deadline proximity, risk, dependency impact, and bounded historical evidence; an explicit human priority takes precedence over inferred scoring. Resource allocation is a recommendation whose per-resource total cannot exceed the supplied Runtime ceiling and cannot modify Runtime limits. High risk, external effects, protected-resource impact, material changes, and high uncertainty remain approval or escalation recommendations.
+
+### Verification, blockers, conflicts, and reassessment
+
+Strategic progress is evidence-based. `ProgressTracker` records completion, remaining and blocked work, failures, recovery attempts, strategy changes, resources, deadline risk, and verified evidence. It never treats queue admission, process completion, or strategic confidence as success. `GoalVerifier` requires authoritative verified milestone/task evidence for every success criterion and reports `UNVERIFIED`, `PARTIAL`, `VERIFIED`, `FAILED`, or `CONFLICTED`. No strategic record can override the existing Verifier or mark a goal complete solely from a Runtime status.
+
+`DependencyEngine` consults current capability, model, specialist, integration, self-model, world, memory, and adaptive-learning evidence when available and records missing prerequisites as blockers. `GoalConflictEngine` retains incompatible goals and evidence, marks conflicts for clarification/deferment/escalation, and never silently chooses a winner. Reassessment consumes blockers, strategy state, and new evidence to recommend continuation, adaptation, replanning, pause, escalation, or abort. Human approval remains required whenever the existing policy requires it.
+
+### Runtime and existing intelligence integrations
+
+The only executable strategic integration is a bounded `TaskSource.STRATEGIC` Runtime task. Runtime admission still enforces kill switch, safe mode, lifecycle, approval, deadlines, dependencies, resource limits, retry limits, concurrency, pause/cancel/shutdown, and restart recovery. One strategic task performs one finite cycle and terminates; it cannot create a recursive planner or daemon. Strategic plans are recommendations for Cognitive and Kernel-owned work. Capability, model, specialist, external, world, self-model, adaptive-learning, memory, evaluation, Flexibility, Evolution, and Metamorphosis subsystems remain authoritative within their own boundaries. A capability or structural gap is routed through the existing governed `EvolutionOrchestrator` and `EvolutionOpportunity` pathway; no competing evolution pipeline is constructed.
+
+### Authority hierarchy and mandatory invariant
+
+```text
+Governance / human approval: decide what is allowed
+Strategic Autonomy: understand, decompose, prioritize, allocate, recommend, coordinate, persist, reassess
+Runtime: decide when bounded work may run and enforce ceilings
+Cognitive: form bounded executable plans from recommendations
+Kernel: execute registered tools under security, approvals, checkpoints, and rollback
+Verifier: determine what actually happened
+Experience / Evaluation: record and measure outcomes
+Evolution / Metamorphosis: governed proposal and structural pathways
+Promotion / Rollback: separate activation and restoration authorities
+```
+
+The strategic layer cannot approve itself, grant permissions, disable governance or kill switches, bypass verification, modify security or protected core, access credentials, execute arbitrary code/providers/tools, mutate production, deploy, promote, perform external irreversible actions, self-replicate, or alter any prior authority. Its records and decisions are advisory unless an existing authoritative subsystem independently admits and executes the work. This invariant is enforced by code, persisted provenance, bounded queues, fail-closed safety parsing, and the unchanged protected-core subsystems.

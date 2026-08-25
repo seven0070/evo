@@ -76,6 +76,7 @@ class TaskSource(str, Enum):
     MODEL = "model"
     LEARNING = "learning"
     SELF_MODEL = "self_model"
+    STRATEGIC = "strategic"
 
 
 class RuntimeHealthStatus(str, Enum):
@@ -728,7 +729,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None, strategic_autonomy: Any | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -745,6 +746,7 @@ class AgentRuntime:
         self.adaptive_learning = adaptive_learning
         self.self_model = self_model
         self.meta_reasoning = meta_reasoning
+        self.strategic_autonomy = strategic_autonomy
         self._model_requests: dict[str, Any] = {}
         if self.specialist_delegation is not None:
             self.specialist_delegation.runtime = self
@@ -766,6 +768,9 @@ class AgentRuntime:
             if self.kernel is not None:
                 self.kernel.external_integrations = self.external_integrations
                 self.external_integrations.flexibility = getattr(self.kernel, "flexibility", None)
+        if self.strategic_autonomy is None:
+            from .strategic_autonomy import StrategicAutonomy
+            self.strategic_autonomy = StrategicAutonomy(self.store, self.workspace, capability_intelligence=getattr(self.kernel, "capability_intelligence", None), model_intelligence=self.model_intelligence, specialist_intelligence=self.specialist_delegation, external_integrations=self.external_integrations, memory=getattr(self.cognitive, "memory", None), adaptive_learning=self.adaptive_learning, self_model=self.self_model, runtime=self, evolution_orchestrator=self.evolution, cognitive=self.cognitive)
         self.scheduler = Scheduler(self.queue, self.workspace, self.store)
         self.resources = RuntimeResourceManager(self, self.limits)
         self.heartbeat = HeartbeatManager(self)
@@ -978,6 +983,12 @@ class AgentRuntime:
         return self.enqueue_task(goal, priority=priority, source=TaskSource.SELF_MODEL, resource_budget=resource_budget, metadata=metadata)
 
     queue_self_model_operation = enqueue_self_model_operation
+    def enqueue_strategic_cycle(self, goal_ids: Iterable[str] | None = None, priority: TaskPriority | str = TaskPriority.BACKGROUND, resource_budget: dict[str, Any] | None = None) -> RuntimeTask:
+        if self.strategic_autonomy is None:
+            raise RuntimeError("strategic autonomy is not configured")
+        return self.enqueue_task("bounded strategic autonomy cycle", priority=priority, source=TaskSource.STRATEGIC, resource_budget=resource_budget or {"max_goals": 3}, metadata={"strategic_cycle": True, "goal_ids": list(goal_ids or [])[:8], "read_only": True})
+
+    queue_strategic_cycle = enqueue_strategic_cycle
     enqueue_self_model_refresh = lambda self, **kwargs: self.enqueue_self_model_operation("refresh", "bounded self-model refresh", **kwargs)
     enqueue_self_diagnostics = lambda self, **kwargs: self.enqueue_self_model_operation("diagnostics", "bounded self-diagnostics", **kwargs)
     enqueue_self_consistency = lambda self, **kwargs: self.enqueue_self_model_operation("consistency", "bounded self-model consistency check", **kwargs)
@@ -1179,6 +1190,20 @@ class AgentRuntime:
             self._emit(EventType.RUNTIME_TASK_WAITING, {"task_id": task.task_id, "approval_id": approval.approval_id, "reason": "approval required", "scope_hash": approval.scope_hash}, task.task_id)
             self._transition(RuntimeState.WAITING_APPROVAL, "task requires human approval")
             return "waiting"
+        if task.metadata.get("strategic_cycle"):
+            if self.strategic_autonomy is None:
+                task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "strategic autonomy is not configured"; self.queue.update(task); return "blocked"
+            if self.kill_switch_active or self.safe_mode:
+                task.status = RuntimeTaskStatus.BLOCKED if self.kill_switch_active else RuntimeTaskStatus.WAITING; task.last_error = "strategic cycle blocked by runtime safety state"; self.queue.update(task); return "blocked" if self.kill_switch_active else "waiting"
+            self._transition(RuntimeState.EXECUTING, "bounded strategic cycle admitted by Runtime")
+            try:
+                result = self.strategic_autonomy.strategic_cycle(task.metadata.get("goal_ids") or None, {"runtime_id": self.runtime_id, "runtime_limits": {"max_goals": int(task.resource_budget.get("max_goals", 3))}})
+                task.metadata["strategic_cycle_result"] = result
+                if result.get("status") == "completed":
+                    task.status = RuntimeTaskStatus.COMPLETED; task.progress = "completed"; self.queue.update(task); self._emit(EventType.STRATEGIC_CYCLE_COMPLETED, {"task_id": task.task_id, "goal_count": result.get("goal_count", 0)}, task.task_id); return "completed"
+                task.status = RuntimeTaskStatus.BLOCKED; task.progress = "blocked"; task.last_error = str(result.get("reason", "strategic cycle blocked")); self.queue.update(task); self._emit(EventType.STRATEGIC_CYCLE_BLOCKED, {"task_id": task.task_id, "reason": task.last_error}, task.task_id); return "blocked"
+            except Exception as exc:
+                task.status = RuntimeTaskStatus.FAILED; task.progress = "failed"; task.last_error = f"{type(exc).__name__}: {exc}"; self.queue.update(task); return "failed"
         if task.metadata.get("self_model_operation"):
             if self.self_model is None:
                 task.status = RuntimeTaskStatus.BLOCKED; task.last_error = "self-model is not configured"; self.queue.update(task); return "blocked"

@@ -27,6 +27,7 @@ from .specialist import SpecialistDelegationEngine, SpecialistRisk
 from .model_intelligence import DeterministicTestAdapter, ModelBenchmark, ModelIntelligence
 from .adaptive_learning import AdaptiveLearningEngine, AdaptivePolicy, FeedbackType
 from .self_model import MetaReasoningEngine, SelfModelEngine
+from .strategic_autonomy import GoalStatus, StrategicAutonomy
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -228,6 +229,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--self-diagnostics", action="store_true", help="Run bounded self-diagnostics")
     parser.add_argument("--self-reflect", metavar="TASK_ID", help="Inspect a bounded post-task reflection record")
     parser.add_argument("--confidence-report", action="store_true", help="Show confidence calibration records")
+    parser.add_argument("--goal-create", metavar="OBJECTIVE", help="Register one persistent strategic goal")
+    parser.add_argument("--goal-title", default=None, help="Optional strategic goal title")
+    parser.add_argument("--goal-list", action="store_true", help="List persistent strategic goals")
+    parser.add_argument("--goal-show", metavar="GOAL_ID", help="Show one strategic goal")
+    parser.add_argument("--goal-prioritize", action="store_true", help="Compute bounded deterministic goal priorities")
+    parser.add_argument("--goal-plan", metavar="GOAL_ID", help="Create a bounded milestone/task graph recommendation")
+    parser.add_argument("--goal-progress", metavar="GOAL_ID", help="Show or record verified strategic progress")
+    parser.add_argument("--goal-blockers", metavar="GOAL_ID", help="Analyze goal blockers and dependencies")
+    parser.add_argument("--goal-strategy", metavar="GOAL_ID", help="Assess and select a bounded advisory strategy")
+    parser.add_argument("--goal-alternatives", metavar="GOAL_ID", help="Generate bounded advisory alternatives")
+    parser.add_argument("--goal-reassess", metavar="GOAL_ID", help="Reassess one goal after bounded evidence/context")
+    parser.add_argument("--goal-conflicts", action="store_true", help="Detect and preserve unresolved strategic conflicts")
+    parser.add_argument("--goal-decisions", metavar="GOAL_ID", nargs="?", const="", help="List strategic decisions")
+    parser.add_argument("--goal-verify", metavar="GOAL_ID", help="Verify a goal using explicit verified evidence")
+    parser.add_argument("--goal-human-priority", type=int, default=None, help="Explicit human priority for --goal-create")
+    parser.add_argument("--goal-risk", choices=["low", "medium", "high", "critical"], default="low", help="Risk class for --goal-create")
+    parser.add_argument("--goal-context", default="{}", help="Bounded JSON context for blocker/reassessment commands")
+    parser.add_argument("--goal-evidence", default="[]", help="Bounded JSON verified outcome evidence")
     return parser
 
 
@@ -241,7 +260,7 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.list_models or args.show_model or args.model_health is not None or args.find_models or args.analyze_model_selection or args.model_evaluation or args.compare_models or args.list_learning or args.show_learning or args.learning_stats or args.model_routing_report or args.learning_status or args.learning_cycle or args.list_learning_patterns or args.show_learning_pattern or args.list_learning_hypotheses or args.show_learning_hypothesis or args.list_adaptive_policies or args.show_adaptive_policy or args.list_adjustments or args.show_adjustment or args.learning_evaluate or args.learning_rollback or args.learning_feedback or args.learning_counterfactual or args.self_model or args.self_model_refresh or args.self_model_status or args.self_model_claims or args.self_model_limitations or args.self_model_assumptions or args.self_model_uncertainty or args.self_model_conflicts or args.decision_readiness or args.meta_reason or args.self_diagnostics or args.self_reflect or args.confidence_report):
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.list_models or args.show_model or args.model_health is not None or args.find_models or args.analyze_model_selection or args.model_evaluation or args.compare_models or args.list_learning or args.show_learning or args.learning_stats or args.model_routing_report or args.learning_status or args.learning_cycle or args.list_learning_patterns or args.show_learning_pattern or args.list_learning_hypotheses or args.show_learning_hypothesis or args.list_adaptive_policies or args.show_adaptive_policy or args.list_adjustments or args.show_adjustment or args.learning_evaluate or args.learning_rollback or args.learning_feedback or args.learning_counterfactual or args.self_model or args.self_model_refresh or args.self_model_status or args.self_model_claims or args.self_model_limitations or args.self_model_assumptions or args.self_model_uncertainty or args.self_model_conflicts or args.decision_readiness or args.meta_reason or args.self_diagnostics or args.self_reflect or args.confidence_report or args.goal_create or args.goal_list or args.goal_show or args.goal_prioritize or args.goal_plan or args.goal_progress or args.goal_blockers or args.goal_strategy or args.goal_alternatives or args.goal_reassess or args.goal_conflicts or args.goal_decisions is not None or args.goal_verify):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
@@ -285,6 +304,9 @@ def inspect_command(args: argparse.Namespace) -> bool:
     if args.self_model or args.self_model_refresh or args.self_model_status or args.self_model_claims or args.self_model_limitations or args.self_model_assumptions or args.self_model_uncertainty or args.self_model_conflicts or args.decision_readiness or args.meta_reason or args.self_diagnostics or args.self_reflect or args.confidence_report:
         self_model = SelfModelEngine(store, workspace, capability_intelligence=capability_intelligence, model_intelligence=model_intelligence, specialist_delegation=specialist_manager, external_integrations=external_manager, world_intelligence=world, adaptive_learning=adaptive_learning, evolution_orchestrator=orchestrator, memory=memory)
         meta_reasoning = MetaReasoningEngine(store, self_model, adaptive_learning=adaptive_learning)
+    strategic = None
+    if args.goal_create or args.goal_list or args.goal_show or args.goal_prioritize or args.goal_plan or args.goal_progress or args.goal_blockers or args.goal_strategy or args.goal_alternatives or args.goal_reassess or args.goal_conflicts or args.goal_decisions is not None or args.goal_verify:
+        strategic = StrategicAutonomy(store, workspace, capability_intelligence=capability_intelligence, model_intelligence=model_intelligence, specialist_intelligence=specialist_manager, external_integrations=external_manager, memory=memory, adaptive_learning=adaptive_learning, self_model=self_model, evolution_orchestrator=orchestrator)
     runtime = None
     if args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.external_enqueue or args.approve_external_operation or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.learning_cycle or self_model:
         runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if args.model == "offline" else OpenAICompatibleAdapter(args.model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager, specialist_delegation=specialist_manager, model_intelligence=model_intelligence, adaptive_learning=adaptive_learning, self_model=self_model, meta_reasoning=meta_reasoning)
@@ -408,6 +430,41 @@ def inspect_command(args: argparse.Namespace) -> bool:
         print_json(store.find_self_reflections(task_id=args.self_reflect, limit=20))
     elif args.confidence_report:
         print_json(store.find_confidence_calibration(limit=300))
+    elif args.goal_create:
+        goal = strategic.create_goal(args.goal_create, title=args.goal_title, human_priority=args.goal_human_priority, risk=args.goal_risk)
+        print_json(goal.to_dict())
+    elif args.goal_list:
+        print_json([item.to_dict() for item in strategic.registry.list()])
+    elif args.goal_show:
+        goal = strategic.registry.get(args.goal_show)
+        print_json(goal.to_dict() if goal else {"error": "strategic goal not found", "goal_id": args.goal_show})
+    elif args.goal_prioritize:
+        print_json([item.to_dict() for item in strategic.prioritize_goals()])
+    elif args.goal_plan:
+        print_json(strategic.plan_goal(args.goal_plan).to_dict())
+    elif args.goal_progress:
+        rows = store.find_goal_progress(args.goal_progress, limit=50)
+        print_json(rows)
+    elif args.goal_blockers:
+        try: context = json.loads(args.goal_context)
+        except json.JSONDecodeError: context = {}
+        print_json([item.to_dict() for item in strategic.find_blockers(args.goal_blockers, context)])
+    elif args.goal_strategy:
+        print_json(strategic.select_strategy(args.goal_strategy).to_dict())
+    elif args.goal_alternatives:
+        print_json([item.to_dict() for item in strategic.generate_alternatives(args.goal_alternatives)])
+    elif args.goal_reassess:
+        try: context = json.loads(args.goal_context)
+        except json.JSONDecodeError: context = {}
+        print_json(strategic.reassess_goal(args.goal_reassess, context=context).to_dict())
+    elif args.goal_conflicts:
+        print_json([item.to_dict() for item in strategic.find_conflicts()])
+    elif args.goal_decisions is not None:
+        print_json(store.find_goal_decisions(args.goal_decisions or None, limit=300))
+    elif args.goal_verify:
+        try: evidence = json.loads(args.goal_evidence)
+        except json.JSONDecodeError: evidence = []
+        print_json(strategic.verify_goal(args.goal_verify, task_outcomes=evidence).to_dict())
     elif args.list_specialists:
         print_json([item.to_dict() for item in specialist_manager.registry.list()])
     elif args.show_specialist:

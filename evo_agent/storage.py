@@ -1130,11 +1130,78 @@ class SQLiteStore:
                     verified INTEGER NOT NULL, architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL,
                     payload TEXT NOT NULL, created_at TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS self_diagnostics (
-                    diagnostic_id TEXT PRIMARY KEY, status TEXT NOT NULL, architecture_version TEXT NOT NULL,
-                    environment_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                                CREATE TABLE IF NOT EXISTS self_diagnostics (
+                    diagnostic_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+                    architecture_version TEXT NOT NULL, environment_id TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS goals (
+                    goal_id TEXT PRIMARY KEY, parent_goal_id TEXT, title TEXT NOT NULL,
+                    normalized_objective TEXT NOT NULL, owner TEXT NOT NULL, priority INTEGER NOT NULL,
+                    importance REAL NOT NULL, urgency REAL NOT NULL, strategic_value REAL NOT NULL,
+                    risk TEXT NOT NULL, status TEXT NOT NULL, lifecycle TEXT NOT NULL,
+                    deadline TEXT, current_strategy TEXT, current_milestone TEXT,
+                    architecture_version TEXT NOT NULL, provenance TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status, priority, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_goals_parent ON goals(parent_goal_id);
+                CREATE TABLE IF NOT EXISTS goal_milestones (
+                    milestone_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+                    status TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_milestones_goal ON goal_milestones(goal_id, sequence);
+                CREATE TABLE IF NOT EXISTS goal_dependencies (
+                    dependency_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, depends_on_id TEXT NOT NULL,
+                    dependency_type TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_dependencies_goal ON goal_dependencies(goal_id, status);
+                CREATE TABLE IF NOT EXISTS goal_blockers (
+                    blocker_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, blocker_type TEXT NOT NULL,
+                    status TEXT NOT NULL, severity TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_blockers_goal ON goal_blockers(goal_id, status);
+                CREATE TABLE IF NOT EXISTS goal_strategies (
+                    strategy_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, status TEXT NOT NULL,
+                    confidence REAL NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_strategies_goal ON goal_strategies(goal_id, updated_at);
+                CREATE TABLE IF NOT EXISTS goal_alternatives (
+                    alternative_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, status TEXT NOT NULL,
+                    confidence REAL NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_alternatives_goal ON goal_alternatives(goal_id, confidence);
+                CREATE TABLE IF NOT EXISTS goal_decisions (
+                    decision_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, decision_type TEXT NOT NULL,
+                    selected_strategy TEXT, verification_status TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_decisions_goal ON goal_decisions(goal_id, created_at);
+                CREATE TABLE IF NOT EXISTS goal_progress (
+                    progress_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, verified_state TEXT NOT NULL,
+                    completion REAL NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_progress_goal ON goal_progress(goal_id, created_at);
+                CREATE TABLE IF NOT EXISTS goal_conflicts (
+                    conflict_id TEXT PRIMARY KEY, goal_a_id TEXT NOT NULL, goal_b_id TEXT NOT NULL,
+                    status TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS goal_resource_allocations (
+                    allocation_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, resource_type TEXT NOT NULL,
+                    fraction REAL NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_allocations_goal ON goal_resource_allocations(goal_id, resource_type);
+                CREATE TABLE IF NOT EXISTS goal_reassessments (
+                    reassessment_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, recommendation TEXT NOT NULL,
+                    confidence REAL NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_reassessments_goal ON goal_reassessments(goal_id, created_at);
+                CREATE TABLE IF NOT EXISTS goal_verification (
+                    verification_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, state TEXT NOT NULL,
+                    verified INTEGER NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_verification_goal ON goal_verification(goal_id, created_at);
                 """
+
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
             if columns and "payload" not in columns:
@@ -3012,3 +3079,150 @@ class SQLiteStore:
     def find_self_diagnostics(self, limit: int = 200) -> list[dict[str, Any]]:
         with self._connect() as db: rows = db.execute("SELECT * FROM self_diagnostics ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return self._phase19_rows(rows)
+
+
+    # Phase 20 Goal & Strategic Autonomy persistence.
+    @staticmethod
+    def _phase20_rows(rows: Iterable[Any]) -> list[dict[str, Any]]:
+        result = []
+        for row in rows:
+            if not row: continue
+            item = dict(row)
+            if isinstance(item.get("payload"), str):
+                try: item["payload"] = json.loads(item["payload"])
+                except (TypeError, ValueError): pass
+            result.append(item)
+        return result
+
+    def _save_phase20(self, table: str, columns: list[str], values: list[Any]) -> None:
+        names = ", ".join(columns); placeholders = ", ".join("?" for _ in columns)
+        with self._connect() as db: db.execute(f"INSERT OR REPLACE INTO {table}({names}) VALUES ({placeholders})", tuple(values))
+
+    def save_strategic_goal(self, record: Any) -> None:
+        self._save_phase20("goals", ["goal_id", "parent_goal_id", "title", "normalized_objective", "owner", "priority", "importance", "urgency", "strategic_value", "risk", "status", "lifecycle", "deadline", "current_strategy", "current_milestone", "architecture_version", "provenance", "payload", "created_at", "updated_at"], [record.goal_id, record.parent_goal_id, record.title, record.normalized_objective, record.owner, record.priority, record.importance, record.urgency, record.strategic_value, record.risk.value, record.status.value, record.lifecycle.value, record.deadline, record.current_strategy, record.current_milestone, record.architecture_version, json.dumps(record.provenance), json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def strategic_goal_by_id(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM goals WHERE goal_id = ?", (goal_id,)).fetchone()
+        return self._phase20_rows([row])[0] if row else None
+
+    def find_strategic_goals(self, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goals"; values: list[Any] = []
+        if status: query += " WHERE status = ?"; values.append(status)
+        query += " ORDER BY priority DESC, updated_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_milestone(self, record: Any) -> None:
+        self._save_phase20("goal_milestones", ["milestone_id", "goal_id", "sequence", "status", "payload", "created_at", "updated_at"], [record.milestone_id, record.goal_id, record.sequence, record.status, json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def find_goal_milestones(self, goal_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as db: rows = db.execute("SELECT * FROM goal_milestones WHERE goal_id = ? ORDER BY sequence LIMIT ?", (goal_id, limit)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_dependency(self, record: Any) -> None:
+        self._save_phase20("goal_dependencies", ["dependency_id", "goal_id", "depends_on_id", "dependency_type", "status", "payload", "created_at"], [record.dependency_id, record.goal_id, record.depends_on_id, record.dependency_type, record.status, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_dependencies(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_dependencies"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_blocker(self, record: Any) -> None:
+        self._save_phase20("goal_blockers", ["blocker_id", "goal_id", "blocker_type", "status", "severity", "payload", "created_at", "updated_at"], [record.blocker_id, record.goal_id, record.blocker_type.value, record.status, record.severity, json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def find_goal_blockers(self, goal_id: str | None = None, status: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        clauses: list[str] = []; values: list[Any] = []
+        if goal_id: clauses.append("goal_id = ?"); values.append(goal_id)
+        if status: clauses.append("status = ?"); values.append(status)
+        query = "SELECT * FROM goal_blockers" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY updated_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_strategy(self, record: Any) -> None:
+        self._save_phase20("goal_strategies", ["strategy_id", "goal_id", "status", "confidence", "payload", "created_at", "updated_at"], [record.strategy_id, record.goal_id, record.status.value, record.confidence, json.dumps(record.to_dict()), record.created_at, record.updated_at])
+
+    def latest_goal_strategy(self, goal_id: str) -> dict[str, Any] | None:
+        with self._connect() as db: row = db.execute("SELECT * FROM goal_strategies WHERE goal_id = ? ORDER BY updated_at DESC LIMIT 1", (goal_id,)).fetchone()
+        return self._phase20_rows([row])[0] if row else None
+
+    def find_goal_strategies(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_strategies"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY updated_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_alternative(self, record: Any) -> None:
+        self._save_phase20("goal_alternatives", ["alternative_id", "goal_id", "status", "confidence", "payload", "created_at"], [record.alternative_id, record.goal_id, record.status, record.confidence, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_alternatives(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_alternatives"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY confidence DESC, created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_decision_metadata(self, goal_id: str, metadata: dict[str, Any]) -> None:
+        self._save_phase20("goal_decisions", ["decision_id", "goal_id", "decision_type", "selected_strategy", "verification_status", "payload", "created_at"], [new_id("decision"), goal_id, str(metadata.get("type", "priority")), metadata.get("selected_strategy"), str(metadata.get("verification_status", "advisory")), json.dumps(metadata), utc_now()])
+
+    def save_goal_decision(self, record: Any) -> None:
+        self._save_phase20("goal_decisions", ["decision_id", "goal_id", "decision_type", "selected_strategy", "verification_status", "payload", "created_at"], [record.decision_id, record.goal_id, record.decision_type, record.selected_strategy, record.verification_status, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_decisions(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_decisions"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_progress(self, record: Any) -> None:
+        self._save_phase20("goal_progress", ["progress_id", "goal_id", "verified_state", "completion", "payload", "created_at"], [record.progress_id, record.goal_id, record.verified_state.value, record.completion, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_progress(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_progress"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_conflict(self, record: Any) -> None:
+        self._save_phase20("goal_conflicts", ["conflict_id", "goal_a_id", "goal_b_id", "status", "payload", "created_at"], [record.conflict_id, record.goal_a_id, record.goal_b_id, record.status.value, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_conflicts(self, status: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_conflicts"; values: list[Any] = []
+        if status: query += " WHERE status = ?"; values.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_resource_allocation(self, record: Any) -> None:
+        self._save_phase20("goal_resource_allocations", ["allocation_id", "goal_id", "resource_type", "fraction", "payload", "created_at"], [record.allocation_id, record.goal_id, record.resource_type, record.fraction, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_resource_allocations(self, goal_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_resource_allocations"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_reassessment(self, record: Any) -> None:
+        self._save_phase20("goal_reassessments", ["reassessment_id", "goal_id", "recommendation", "confidence", "payload", "created_at"], [record.reassessment_id, record.goal_id, record.recommendation.value, record.confidence, json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_reassessments(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_reassessments"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
+
+    def save_goal_verification(self, record: Any) -> None:
+        self._save_phase20("goal_verification", ["verification_id", "goal_id", "state", "verified", "payload", "created_at"], [record.verification_id, record.goal_id, record.state.value, int(record.verified), json.dumps(record.to_dict()), record.created_at])
+
+    def find_goal_verification(self, goal_id: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+        query = "SELECT * FROM goal_verification"; values: list[Any] = []
+        if goal_id: query += " WHERE goal_id = ?"; values.append(goal_id)
+        query += " ORDER BY created_at DESC LIMIT ?"; values.append(limit)
+        with self._connect() as db: rows = db.execute(query, tuple(values)).fetchall()
+        return self._phase20_rows(rows)
