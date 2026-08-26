@@ -20,7 +20,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install sandbox isolation utility
-        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap util-linux
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap util-linux
+          # GitHub-hosted runners restrict unprivileged uid-map writes. Use the
+          # distro-trusted bwrap helper mode on this ephemeral runner so Evo can
+          # retain user, network, PID, and mount isolation instead of weakening it.
+          sudo chmod 4755 "$(command -v bwrap)"
+          stat -c '%A %a %n' "$(command -v bwrap)"
       - name: Install development package
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
       - name: Run production gate
