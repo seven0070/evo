@@ -494,8 +494,25 @@ class BenchmarkEngine:
             body = "assert True"
         return "from pathlib import Path\ndef test_benchmark_probe():\n    " + body + "\n"
 
+    @staticmethod
+    def _bwrap_usable() -> bool:
+        executable = shutil.which("bwrap")
+        if not executable:
+            return False
+        try:
+            probe = subprocess.run(
+                [executable, "--die-with-parent", "--unshare-user", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+            return probe.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
-        if shutil.which("bwrap"):
+        if self._bwrap_usable():
             experiment_dir = location.parent
             results_dir = experiment_dir / "results"
             home_dir = experiment_dir / "metadata" / "home"

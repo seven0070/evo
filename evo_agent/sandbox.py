@@ -483,10 +483,28 @@ class SandboxEngine:
             raise PermissionError("Only the fixed pytest runner is allowed; arbitrary generated code is not executable")
         return command_list
 
+    @staticmethod
+    def _bwrap_usable() -> bool:
+        executable = shutil.which("bwrap")
+        if not executable:
+            return False
+        try:
+            probe = subprocess.run(
+                [executable, "--die-with-parent", "--unshare-user", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+            return probe.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
-        # Bubblewrap is preferred because it provides a portable user/net/PID namespace
-        # interface on hosted runners. The unshare path remains a conservative fallback.
-        if shutil.which("bwrap"):
+        # Bubblewrap is preferred when its network namespace setup is usable. Some
+        # hosted runners ship bwrap but deny loopback configuration; probe first.
+        # The unshare path remains a conservative fallback with the same namespaces.
+        if self._bwrap_usable():
             location_bind = "--bind" if location.name == "candidate" else "--ro-bind"
             experiment_dir = location.parent
             results_dir = experiment_dir / "results"

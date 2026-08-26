@@ -274,3 +274,13 @@ def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, bac
     environment = engine._sanitized_environment(experiment)
     assert environment["TMPDIR"] == str(tmp_path / "experiment" / "results")
     assert environment["EVO_NETWORK_POLICY"] == "denied"
+
+
+def test_unusable_bwrap_probe_selects_namespace_fallback(tmp_path: Path, monkeypatch):
+    engine, _, _ = setup_engine(tmp_path, make_proposal())
+    experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
+    monkeypatch.setattr(engine, "_bwrap_usable", lambda: False)
+    command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
+    assert command[0] == "unshare"
+    assert {"--mount", "--net", "--pid", "--fork"}.issubset(command)
+    engine.destroy_sandbox(experiment)
