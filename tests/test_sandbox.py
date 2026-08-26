@@ -222,7 +222,7 @@ def test_bwrap_command_preserves_working_directory_and_private_writable_state(tm
     monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
     command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
     assert command[0] == "bwrap"
-    assert {"--unshare-user", "--unshare-net", "--unshare-pid"}.issubset(command)
+    assert {"--unshare-user-try", "--unshare-net", "--unshare-pid"}.issubset(command)
     assert command[command.index("--bind") + 1] == str(candidate_dir)
     assert command[command.index("--chdir") + 1] == str(candidate_dir)
     assert ["--bind", str(Path(experiment.sandbox_location) / "results")] == command[command.index("--bind", command.index("--bind") + 1):command.index("--bind", command.index("--bind") + 1) + 2]

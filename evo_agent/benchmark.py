@@ -501,7 +501,7 @@ class BenchmarkEngine:
             return False
         try:
             probe = subprocess.run(
-                [executable, "--die-with-parent", "--unshare-user", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
+                [executable, "--die-with-parent", "--unshare-user-try", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=3,
@@ -521,7 +521,7 @@ class BenchmarkEngine:
             args = [
                 "bwrap",
                 "--die-with-parent",
-                "--unshare-user",
+                "--unshare-user-try",
                 "--unshare-net",
                 "--unshare-pid",
                 "--ro-bind", "/", "/",
