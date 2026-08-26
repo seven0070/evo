@@ -21,7 +21,7 @@ The four-second UI refresh is status polling only. It never submits work or invo
 
 The bridge loads the personal operating profile from `<workspace>/.evo/personal_profile.json` when present. Without a custom profile, the safe offline defaults are used: one concurrent task, one task per cycle, bounded task and total Runtime durations, bounded retries/recovery/replanning, a confined workspace, an existing shell allowlist, explicit medium/high/critical approval, and external actions disabled. The UI does not expose profile weakening or credential configuration.
 
-On Windows the default workspace is `%USERPROFILE%\\EvoWorkspace`. On Linux and macOS development runs it is `$HOME/EvoWorkspace`. Set `EVO_WORKSPACE` to use another dedicated workspace. The bridge stores authoritative state in `<workspace>/.evo/agent.sqlite3`, using the same Runtime persistence as the CLI.
+On Windows the packaged application uses Tauri’s per-application data directory and stores the default workspace below `%APPDATA%` using the application identifier, typically `%APPDATA%\\im.evo.personal\\workspace`. Linux and macOS development runs use Tauri’s equivalent application-data directory. Set `EVO_WORKSPACE` to use another dedicated workspace. The bridge stores authoritative state in `<workspace>/.evo/agent.sqlite3`, using the same Runtime persistence as the CLI.
 
 ## Approval and execution flow
 
@@ -76,7 +76,7 @@ The current Linux environment cannot produce or validate a Windows PE executable
 
 The first UI deliberately does not expose evolution administration, benchmark controls, promotion, rollback, provider credentials, external integrations, arbitrary diagnostics, or unrestricted shell access. External actions remain disabled by the personal profile. The application has no localhost HTTP server and no resident hidden agent loop; each Tauri command starts one short-lived bridge process, and the UI refresh timer only reads state.
 
-The desktop project is developed under `/home/ubuntu/evo` in this task. It is not deployed to the user's local Windows machine automatically. After a Windows installer is produced, the operator must install it on the target machine and select or configure the intended dedicated workspace according to the release instructions.
+The desktop project is developed under `/home/ubuntu/evo` in this task. It is not deployed to the user's local Windows machine automatically. After a Windows installer is produced, the operator must install it on the target machine; the packaged app uses its per-application data directory by default, while `EVO_WORKSPACE` remains available for an explicitly selected dedicated workspace.
 
 ## Release checklist
 

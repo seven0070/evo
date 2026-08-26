@@ -11,9 +11,12 @@ struct AppState {
     bridge: PathBuf,
 }
 
-fn default_workspace() -> PathBuf {
+fn default_workspace(app: &AppHandle) -> PathBuf {
     if let Ok(value) = env::var("EVO_WORKSPACE") {
         return PathBuf::from(value).join(".").to_path_buf();
+    }
+    if let Ok(app_data) = app.path().app_data_dir() {
+        return app_data.join("workspace");
     }
     let home = if cfg!(windows) {
         env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string())
@@ -198,12 +201,12 @@ fn approve_task(
 }
 
 fn main() {
-    let workspace = default_workspace();
-    std::fs::create_dir_all(&workspace).expect("Evo workspace cannot be created");
     tauri::Builder::default()
-        .setup(move |app| {
+        .setup(|app| {
+            let workspace = default_workspace(app.handle());
+            std::fs::create_dir_all(&workspace).expect("Evo workspace cannot be created");
             app.manage(AppState {
-                workspace: workspace.clone(),
+                workspace,
                 bridge: resolve_bridge(app.handle()),
             });
             Ok(())
