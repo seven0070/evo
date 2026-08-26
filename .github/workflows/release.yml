@@ -1,0 +1,122 @@
+name: Evo V1 release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: evo-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Verify tag version
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tagVersion = $env:GITHUB_REF_NAME.Substring(1)
+          $packageVersion = (Get-Content "$env:GITHUB_WORKSPACE\desktop\src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json).version
+          if ($tagVersion -ne $packageVersion) {
+            throw "Tag version $tagVersion does not match package version $packageVersion"
+          }
+
+      - name: Run production gate
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python scripts/run_production_gate.py
+
+      - name: Build Windows installers
+        run: ./scripts/build_windows.ps1
+
+      - name: Prepare release assets and SHA-256 manifest
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundle = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle"
+          $releaseDir = Join-Path $env:RUNNER_TEMP "evo-release-assets"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          $nsis = Get-ChildItem (Join-Path $bundle "nsis/*.exe") -File | Select-Object -First 1
+          $msi = Get-ChildItem (Join-Path $bundle "msi/*.msi") -File | Select-Object -First 1
+          if (-not $nsis) { throw "NSIS installer not found" }
+          if (-not $msi) { throw "MSI installer not found" }
+          Copy-Item $nsis.FullName (Join-Path $releaseDir "Evo-Setup.exe")
+          Copy-Item $msi.FullName (Join-Path $releaseDir "Evo.msi")
+          $manifest = [ordered]@{
+            product = "Evo"
+            version = $env:GITHUB_REF_NAME.Substring(1)
+            commit = (git rev-parse HEAD)
+            tag = $env:GITHUB_REF_NAME
+            signed = $false
+            signing_status = "unsigned: production code-signing certificate not supplied"
+            artifacts = @(
+              [ordered]@{
+                name = "Evo-Setup.exe"
+                bytes = (Get-Item (Join-Path $releaseDir "Evo-Setup.exe")).Length
+                sha256 = (Get-FileHash (Join-Path $releaseDir "Evo-Setup.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+              },
+              [ordered]@{
+                name = "Evo.msi"
+                bytes = (Get-Item (Join-Path $releaseDir "Evo.msi")).Length
+                sha256 = (Get-FileHash (Join-Path $releaseDir "Evo.msi") -Algorithm SHA256).Hash.ToLowerInvariant()
+              }
+            )
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $releaseDir "release-manifest.json") -Encoding UTF8
+          Get-ChildItem $releaseDir -File | Select-Object Name, Length | Format-Table -AutoSize
+          Get-Content (Join-Path $releaseDir "release-manifest.json")
+
+      - name: Upload release assets as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: evo-v1-release-${{ github.ref_name }}
+          path: ${{ runner.temp }}/evo-release-assets
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = Join-Path $env:RUNNER_TEMP "evo-release-assets"
+          gh release create $env:GITHUB_REF_NAME `
+            (Join-Path $releaseDir "Evo-Setup.exe") `
+            (Join-Path $releaseDir "Evo.msi") `
+            (Join-Path $releaseDir "release-manifest.json") `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "Evo $env:GITHUB_REF_NAME" `
+            --generate-notes `
+            --verify-tag

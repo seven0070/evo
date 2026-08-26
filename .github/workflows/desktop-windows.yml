@@ -2,13 +2,14 @@ name: Evo desktop Windows build
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+
+permissions:
+  contents: read
 
 jobs:
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh

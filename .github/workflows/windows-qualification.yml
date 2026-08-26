@@ -1,0 +1,165 @@
+name: Evo Windows qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evo-windows-qualification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Verify Windows/WebView2 preconditions
+        run: |
+          $ErrorActionPreference = "Stop"
+          $os = Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumber, OsArchitecture
+          $os | Format-List | Tee-Object "$env:RUNNER_TEMP\evo-windows-preconditions.txt"
+          if ($os.WindowsProductName -notlike "*Windows 11*") { throw "Windows 11 is required" }
+          $webView2Roots = @(
+            (Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application"),
+            (Join-Path ${env:ProgramFiles} "Microsoft\EdgeWebView\Application")
+          )
+          $webView2Root = $webView2Roots | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $webView2Root) { throw "WebView2 runtime was not found" }
+          "WebView2Root=$webView2Root" | Tee-Object "$env:RUNNER_TEMP\evo-webview2.txt"
+          Get-ChildItem $webView2Root -Directory | Select-Object Name, FullName | Out-File "$env:RUNNER_TEMP\evo-webview2-versions.txt"
+
+      - name: Build Windows installers
+        run: ./scripts/build_windows.ps1
+
+      - name: Verify build manifest and signatures
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundle = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle"
+          $nsis = Get-ChildItem (Join-Path $bundle "nsis/*.exe") -File | Select-Object -First 1
+          $msi = Get-ChildItem (Join-Path $bundle "msi/*.msi") -File | Select-Object -First 1
+          $manifestPath = Join-Path $bundle "release-manifest.json"
+          if (-not $nsis) { throw "NSIS installer was not produced" }
+          if (-not $msi) { throw "MSI installer was not produced" }
+          if (-not (Test-Path $manifestPath)) { throw "release-manifest.json was not produced" }
+          $evidence = Join-Path $env:RUNNER_TEMP "evo-windows-qualification"
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          Get-FileHash $nsis.FullName -Algorithm SHA256 | Format-List | Out-File (Join-Path $evidence "nsis-hash.txt")
+          Get-FileHash $msi.FullName -Algorithm SHA256 | Format-List | Out-File (Join-Path $evidence "msi-hash.txt")
+          Get-AuthenticodeSignature $nsis.FullName | Format-List * | Out-File (Join-Path $evidence "nsis-authenticode.txt")
+          Get-AuthenticodeSignature $msi.FullName | Format-List * | Out-File (Join-Path $evidence "msi-authenticode.txt")
+          Copy-Item $manifestPath (Join-Path $evidence "release-manifest.json")
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.commit -ne (git rev-parse HEAD)) { throw "Manifest commit does not match checked-out commit" }
+          foreach ($artifact in $manifest.artifacts) {
+            $artifactPath = Join-Path $env:GITHUB_WORKSPACE ($artifact.path -replace '\\','/')
+            if (-not (Test-Path $artifactPath)) { throw "Manifest artifact missing: $($artifact.path)" }
+            $actual = Get-FileHash $artifactPath -Algorithm SHA256
+            if ($actual.Hash.ToLowerInvariant() -ne $artifact.sha256) { throw "Manifest hash mismatch for $($artifact.name)" }
+            if ((Get-Item $artifactPath).Length -ne [int64]$artifact.bytes) { throw "Manifest size mismatch for $($artifact.name)" }
+          }
+
+      - name: Run silent NSIS install, packaged bridge smoke test, launch, and uninstall
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundle = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle"
+          $nsis = Get-ChildItem (Join-Path $bundle "nsis/*.exe") -File | Select-Object -First 1
+          $evidence = Join-Path $env:RUNNER_TEMP "evo-windows-qualification"
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $installRoot = Join-Path $env:LOCALAPPDATA "Evo"
+          if (Test-Path $installRoot) { throw "Pre-existing install root found: $installRoot" }
+
+          $installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "NSIS silent install failed with exit code $($installer.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (-not (Test-Path $installRoot)) { throw "Expected per-user install root was not created: $installRoot" }
+          Get-ChildItem $installRoot -Recurse -Force | Select-Object FullName, Length | Out-File (Join-Path $evidence "installed-files.txt")
+
+          $bridge = Get-ChildItem $installRoot -Recurse -Filter "evo-bridge.exe" -File | Select-Object -First 1
+          if (-not $bridge) { throw "Packaged evo-bridge.exe was not found below $installRoot" }
+          $workspace = Join-Path $env:RUNNER_TEMP "evo-windows-qualification-workspace"
+          New-Item -ItemType Directory -Force -Path $workspace | Out-Null
+
+          # Evo intentionally uses JSONL over a short-lived local process rather than
+          # a localhost server. Test the exact shipped bridge contract without adding
+          # network authority to the application.
+          $psi = [System.Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName = $bridge.FullName
+          $psi.Arguments = '--workspace "' + $workspace + '"'
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $process = [System.Diagnostics.Process]::new()
+          $process.StartInfo = $psi
+          if (-not $process.Start()) { throw "Could not start packaged bridge" }
+          $process.StandardInput.WriteLine('{"command":"get_profile"}')
+          $process.StandardInput.Close()
+          $stdout = $process.StandardOutput.ReadToEnd()
+          $stderr = $process.StandardError.ReadToEnd()
+          $process.WaitForExit()
+          $stdout | Out-File (Join-Path $evidence "bridge-stdout.jsonl")
+          $stderr | Out-File (Join-Path $evidence "bridge-stderr.txt")
+          if ($process.ExitCode -ne 0) { throw "Packaged bridge exited with code $($process.ExitCode)" }
+          $response = $stdout.Trim() | ConvertFrom-Json
+          if (-not $response.ok) { throw "Packaged bridge returned an error: $stdout" }
+          if (-not (Test-Path (Join-Path $workspace ".evo/agent.sqlite3"))) { throw "Bridge did not create authoritative SQLite state" }
+          Get-ChildItem (Join-Path $env:APPDATA "im.evo.personal") -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File (Join-Path $evidence "appdata-files.txt")
+
+          $app = Get-ChildItem $installRoot -Recurse -Filter "Evo.exe" -File | Select-Object -First 1
+          if (-not $app) { throw "Packaged Evo.exe was not found below $installRoot" }
+          $desktop = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 5
+          if ($desktop.HasExited) { throw "Packaged Evo desktop process exited immediately with code $($desktop.ExitCode)" }
+          "Evo process started: PID $($desktop.Id)" | Out-File (Join-Path $evidence "launch.txt")
+          Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue
+
+          $uninstaller = Get-ChildItem $installRoot -Recurse -Filter "uninstall.exe" -File | Select-Object -First 1
+          if (-not $uninstaller) { throw "NSIS uninstaller was not found" }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path $installRoot) { throw "Runtime files remain after uninstall: $installRoot" }
+          "Install root removed: $installRoot" | Out-File (Join-Path $evidence "uninstall.txt")
+
+      - name: Upload Windows qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evo-windows-qualification-${{ github.run_id }}
+          path: ${{ runner.temp }}/evo-windows-qualification
+          if-no-files-found: warn
