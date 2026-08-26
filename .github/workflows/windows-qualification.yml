@@ -132,7 +132,7 @@ jobs:
           $process = [System.Diagnostics.Process]::new()
           $process.StartInfo = $psi
           if (-not $process.Start()) { throw "Could not start packaged bridge" }
-          $process.StandardInput.WriteLine('{"command":"get_profile"}')
+          $process.StandardInput.WriteLine('{"command":"get_status"}')
           $process.StandardInput.Close()
           $stdout = $process.StandardOutput.ReadToEnd()
           $stderr = $process.StandardError.ReadToEnd()
