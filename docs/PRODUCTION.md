@@ -30,12 +30,13 @@ No Temporal, Prefect, Celery, hosted worker, localhost HTTP service, or parallel
 | `ProductionHealth` | Database, Runtime, queue, safe-mode, kill-switch, and resource health | Reports state; cannot clear safety controls |
 | `ProductionSupervisor` | Process lock, startup reconciliation, bounded cycle execution, graceful stop | Delegates every task cycle to `AgentRuntime` |
 | `BackupManager` | Atomic SQLite backup, integrity validation, retention | Copies authoritative state; never rewrites it |
+| `CrashReporter` | Local atomic redacted incident records with bounded retention | Observational only; never executes, approves, promotes, or clears controls |
 | `SchemaManager` | Versioned operational metadata and forward-only migrations | Fails closed on unsupported versions |
 | `SecurityAudit` tests | Adversarial checks for tool, approval, sandbox, injection, and secret boundaries | Test-only; no runtime authority |
 
 ## Durability contract
 
-Every supervisor run records a start record before invoking Runtime and a terminal record after the Runtime result is persisted. Startup marks an unclosed prior run as interrupted and relies on Runtime’s existing crash-recovery logic to revalidate tasks. An interrupted external mutating operation remains unknown and is not replayed automatically. An interrupted Evolution or Promotion operation is reconciled through the existing persisted state and downstream integrity checks; no production mutation is inferred from an incomplete record.
+Every supervisor run records a start record before invoking Runtime and a terminal record after the Runtime result is persisted. An unexpected supervisor exception also creates a bounded, redacted local incident file under `.evo/incidents`; incident reporting is observational and does not change the failure outcome. Startup marks an unclosed prior run as interrupted and relies on Runtime’s existing crash-recovery logic to revalidate tasks. An interrupted external mutating operation remains unknown and is not replayed automatically. An interrupted Evolution or Promotion operation is reconciled through the existing persisted state and downstream integrity checks; no production mutation is inferred from an incomplete record.
 
 Operational writes use the same SQLite file as Runtime and are bounded in size. The journal is not a second event stream for execution semantics; it is a compact operational view linked to the existing Runtime cycle and task identifiers. Full authoritative task, event, evolution, benchmark, promotion, and rollback records remain in their existing tables.
 

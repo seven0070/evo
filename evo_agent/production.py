@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -52,6 +53,17 @@ def _safe_json(value: Any, depth: int = 0) -> Any:
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     return str(value)[:2048]
+
+
+def _safe_text(value: Any) -> str:
+    text = str(value)[:2048]
+    patterns = (
+        (r"(?i)(api[_-]?key|token|password|secret|authorization|credential)\s*[:=]\s*[^\s,;]+", r"\1=[REDACTED]"),
+        (r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]"),
+    )
+    for pattern, replacement in patterns:
+        text = re.sub(pattern, replacement, text)
+    return text
 
 
 @dataclass(frozen=True)
@@ -209,6 +221,54 @@ class OperationalJournal:
         db.execute("DELETE FROM production_runs WHERE run_id NOT IN (SELECT run_id FROM production_runs ORDER BY started_at DESC LIMIT ?)", (self.max_rows,))
 
 
+class CrashReporter:
+    """Local, bounded, redacted incident records; never an execution authority."""
+
+    def __init__(self, workspace: Path, max_reports: int = 100):
+        self.workspace = Path(workspace).resolve()
+        self.directory = self.workspace / ".evo" / "incidents"
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.max_reports = max(1, min(int(max_reports), 1000))
+        self._lock = threading.RLock()
+
+    def record(self, component: str, error: BaseException | str, context: dict[str, Any] | None = None) -> Path:
+        name = _safe_text(component).strip()[:120] or "unknown"
+        timestamp = _utc_now()
+        incident_id = f"incident_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}_{os.getpid()}"
+        payload = {
+            "incident_id": incident_id,
+            "recorded_at": timestamp,
+            "version": __version__,
+            "component": name,
+            "error_type": type(error).__name__ if isinstance(error, BaseException) else "Error",
+            "error": _safe_text(error),
+            "context": _safe_json(context or {}),
+        }
+        target = self.directory / f"{incident_id}.json"
+        with self._lock:
+            fd, temporary = tempfile.mkstemp(prefix=".incident-", suffix=".tmp", dir=self.directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, sort_keys=True, indent=2)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, target)
+                self._trim()
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+        return target
+
+    def list(self, limit: int = 50) -> list[Path]:
+        return sorted(self.directory.glob("incident_*.json"), key=lambda path: path.name, reverse=True)[:max(1, min(int(limit), self.max_reports))]
+
+    def _trim(self) -> None:
+        paths = sorted(self.directory.glob("incident_*.json"), key=lambda path: path.name, reverse=True)
+        for path in paths[self.max_reports:]:
+            path.unlink(missing_ok=True)
+
+
 class BackupManager:
     """Atomic SQLite backup and integrity validation using the authoritative database."""
 
@@ -344,6 +404,7 @@ class SupervisorReport:
     health: dict[str, Any] = field(default_factory=dict)
     backup: str | None = None
     error: str = ""
+    incident: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -358,6 +419,7 @@ class ProductionSupervisor:
         self.journal = OperationalJournal(runtime.store, self.config.max_journal_rows)
         self.health = ProductionHealth(runtime, self.journal, self.config)
         self.backups = BackupManager(runtime.store, runtime.workspace, self.config.backup_retention, self.config.backup_directory)
+        self.crash_reports = CrashReporter(runtime.workspace)
         self.lock_path = runtime.workspace / ".evo" / "production-supervisor.lock"
 
     def run(self, cycles: int | None = None, backup: bool = False) -> SupervisorReport:
@@ -405,6 +467,10 @@ class ProductionSupervisor:
             except Exception as exc:
                 report.status = "failed"
                 report.error = f"{type(exc).__name__}: {exc}"[:2048]
+                try:
+                    report.incident = str(self.crash_reports.record("production-supervisor", exc, {"run_id": run_id, "cycles_completed": report.cycles_completed}))
+                except Exception:
+                    report.incident = None
                 report.health = self.health.check()
                 self.journal.finish_run(run_id, report.status, report.cycles_completed, report.tasks_completed, report.tasks_failed, report.error, False, {"health": report.health})
                 raise

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from evo_agent import AgentRuntime, RuleBasedAdapter
-from evo_agent.production import BackupManager, OperationalJournal, ProductionConfig, ProductionSchemaManager, ProductionSupervisor
+from evo_agent.production import BackupManager, CrashReporter, OperationalJournal, ProductionConfig, ProductionSchemaManager, ProductionSupervisor
 
 
 def make_runtime(tmp_path: Path) -> AgentRuntime:
@@ -70,6 +70,24 @@ def test_supervisor_respects_kill_switch_and_does_not_clear_it(tmp_path: Path) -
     with pytest.raises(RuntimeError, match="kill switch"):
         supervisor.run()
     assert runtime.kill_switch_active is True
+    incidents = supervisor.crash_reports.list()
+    assert len(incidents) == 1
+    incident = json.loads(incidents[0].read_text(encoding="utf-8"))
+    assert incident["error_type"] == "RuntimeError"
+    assert "kill switch" in incident["error"].lower()
+
+
+def test_crash_reporter_is_local_redacted_atomic_and_bounded(tmp_path: Path) -> None:
+    reporter = CrashReporter(tmp_path, max_reports=2)
+    paths = [reporter.record("runtime", RuntimeError("authorization=top-secret Bearer abc123"), {"api_key": "hidden", "task_id": "bounded"}) for _ in range(3)]
+    assert paths[-1].exists()
+    assert len(reporter.list()) == 2
+    payload = json.loads(paths[-1].read_text(encoding="utf-8"))
+    rendered = json.dumps(payload, sort_keys=True)
+    assert "top-secret" not in rendered and "abc123" not in rendered and "hidden" not in rendered
+    assert payload["error_type"] == "RuntimeError"
+    assert payload["context"]["api_key"] == "[REDACTED]"
+    assert not list((tmp_path / ".evo" / "incidents").glob("*.tmp"))
 
 
 def test_backup_retention_is_bounded(tmp_path: Path) -> None:
