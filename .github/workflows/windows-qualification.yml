@@ -133,6 +133,8 @@ jobs:
           $process.StartInfo = $psi
           if (-not $process.Start()) { throw "Could not start packaged bridge" }
           $process.StandardInput.WriteLine('{"command":"get_status"}')
+          $process.StandardInput.WriteLine('{"command":"submit_goal","goal":"list files in the workspace"}')
+          $process.StandardInput.WriteLine('{"command":"run_cycle"}')
           $process.StandardInput.Close()
           $stdout = $process.StandardOutput.ReadToEnd()
           $stderr = $process.StandardError.ReadToEnd()
@@ -140,9 +142,10 @@ jobs:
           $stdout | Out-File (Join-Path $evidence "bridge-stdout.jsonl")
           $stderr | Out-File (Join-Path $evidence "bridge-stderr.txt")
           if ($process.ExitCode -ne 0) { throw "Packaged bridge exited with code $($process.ExitCode)" }
-          $response = $stdout.Trim() | ConvertFrom-Json
-          if (-not $response.ok) { throw "Packaged bridge returned an error: $stdout" }
-          if (-not (Test-Path (Join-Path $workspace ".evo/agent.sqlite3"))) { throw "Bridge did not create authoritative SQLite state" }
+          $responses = @($stdout.Trim().Split([Environment]::NewLine) | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+          if ($responses.Count -lt 3) { throw "Packaged bridge returned fewer than three JSONL responses: $stdout" }
+          if ($responses | Where-Object { -not $_.ok }) { throw "Packaged bridge returned an error: $stdout" }
+          if (-not (Test-Path (Join-Path $workspace ".evo/agent.sqlite3"))) { throw "Bridge did not persist authoritative SQLite state after a submitted harmless goal" }
           Get-ChildItem (Join-Path $env:APPDATA "im.evo.personal") -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File (Join-Path $evidence "appdata-files.txt")
 
           $app = Get-ChildItem $installRoot -Recurse -Filter "Evo.exe" -File | Select-Object -First 1
