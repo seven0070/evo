@@ -8,7 +8,10 @@ import json
 import os
 from pathlib import Path
 import platform
-import resource
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource is unavailable on native Windows
+    resource = None  # type: ignore[assignment]
 import shutil
 import sys
 import time
@@ -519,11 +522,13 @@ class EnvironmentObserver:
 
     @staticmethod
     def _resource_state() -> dict[str, Any]:
-        try:
-            limits = {"cpu_seconds": resource.getrlimit(resource.RLIMIT_CPU), "open_files": resource.getrlimit(resource.RLIMIT_NOFILE)}
-            limits = {key: [None if value == resource.RLIM_INFINITY else value for value in pair] for key, pair in limits.items()}
-        except (ValueError, AttributeError):
-            limits = {}
+        limits = {}
+        if resource is not None:
+            try:
+                limits = {"cpu_seconds": resource.getrlimit(resource.RLIMIT_CPU), "open_files": resource.getrlimit(resource.RLIMIT_NOFILE)}
+                limits = {key: [None if value == resource.RLIM_INFINITY else value for value in pair] for key, pair in limits.items()}
+            except (ValueError, AttributeError):
+                limits = {}
         return {"cpu_count": os.cpu_count(), "memory_available_bytes": EnvironmentObserver._memory_available(), "process_limits": limits, "execution_limits_observed": True, "disk": {}}
 
     @staticmethod

@@ -258,6 +258,14 @@ def test_resource_intelligence_is_observational_and_never_increases_limits():
     assert ResourceIntelligence().strategy_constraints({"memory_available_bytes": 10}, {"memory_bytes": 100}) == ["use smaller bounded batches"]
 
 
+def test_environment_observer_handles_missing_posix_resource(monkeypatch):
+    import evo_agent.world as world
+    monkeypatch.setattr(world, "resource", None)
+    state = EnvironmentObserver._resource_state()
+    assert state["process_limits"] == {}
+    assert state["execution_limits_observed"] is True
+
+
 def test_environment_compatibility_fails_closed_on_version_mismatch(tmp_path: Path):
     from evo_agent.world import EnvironmentCompatibilityEngine
     _, _, engine = build_world(tmp_path)
