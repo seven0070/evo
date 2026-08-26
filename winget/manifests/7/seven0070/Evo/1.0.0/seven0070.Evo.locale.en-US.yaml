@@ -1,0 +1,14 @@
+PackageIdentifier: seven0070.Evo
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: seven0070
+PublisherUrl: https://github.com/seven0070
+PublisherSupportUrl: https://github.com/seven0070/evo/issues
+PackageName: Evo
+PackageUrl: https://github.com/seven0070/evo
+License: Unknown
+ShortDescription: A local-first, permissioned, provider-neutral AI agent kernel.
+Description: Evo is a local-first personal agent with bounded runtime execution, explicit permissions, human approval gates, deterministic verification, SQLite persistence, and governed evolution controls.
+ReleaseNotesUrl: https://github.com/seven0070/evo/releases/tag/v1.0.0
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
