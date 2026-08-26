@@ -3,9 +3,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import threading
 from typing import Any, Callable, Iterable
@@ -412,13 +412,25 @@ class EvolutionOrchestrator:
                     self._lock_depth -= 1
                 return
             with self.lock_path.open("r+") as handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                 self._lock_depth = 1
                 try:
                     yield
                 finally:
                     self._lock_depth = 0
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def observe(self, limit: int = 1000) -> list[Experience]:
         return self.experiences.retrieve(limit=limit)
