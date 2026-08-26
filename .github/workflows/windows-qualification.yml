@@ -148,8 +148,9 @@ jobs:
           if (-not (Test-Path (Join-Path $workspace ".evo/agent.sqlite3"))) { throw "Bridge did not persist authoritative SQLite state after a submitted harmless goal" }
           Get-ChildItem (Join-Path $env:APPDATA "im.evo.personal") -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File (Join-Path $evidence "appdata-files.txt")
 
-          $app = Get-ChildItem $installRoot -Recurse -Filter "Evo.exe" -File | Select-Object -First 1
-          if (-not $app) { throw "Packaged Evo.exe was not found below $installRoot" }
+          $app = Get-ChildItem $installRoot -Recurse -Filter "*.exe" -File | Where-Object { $_.Name -notin @("evo-bridge.exe", "uninstall.exe") } | Select-Object -First 1
+          if (-not $app) { throw "Packaged Evo application executable was not found below $installRoot" }
+          "Application=$($app.FullName)" | Out-File (Join-Path $evidence "application-path.txt")
           $desktop = Start-Process -FilePath $app.FullName -PassThru
           Start-Sleep -Seconds 5
           if ($desktop.HasExited) { throw "Packaged Evo desktop process exited immediately with code $($desktop.ExitCode)" }
