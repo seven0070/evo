@@ -478,6 +478,23 @@ class SandboxEngine:
         return command_list
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
+        # Bubblewrap is preferred because it provides a portable user/net/PID namespace
+        # interface on hosted runners. The unshare path remains a conservative fallback.
+        if shutil.which("bwrap"):
+            return [
+                "bwrap",
+                "--die-with-parent",
+                "--unshare-user",
+                "--unshare-net",
+                "--unshare-pid",
+                "--ro-bind", "/", "/",
+                "--dev", "/dev",
+                "--proc", "/proc",
+                "--tmpfs", "/tmp",
+                "--bind", str(location), str(location),
+                "--chdir", str(location),
+                *command,
+            ]
         # User/mount/PID namespaces isolate mounts and process visibility without requiring host root.
         # The production source is remounted read-only inside the child namespace.
         script = (

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 from typing import Any, Iterable
 
@@ -494,6 +495,20 @@ class BenchmarkEngine:
         return "from pathlib import Path\ndef test_benchmark_probe():\n    " + body + "\n"
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
+        if shutil.which("bwrap"):
+            return [
+                "bwrap",
+                "--die-with-parent",
+                "--unshare-user",
+                "--unshare-net",
+                "--unshare-pid",
+                "--ro-bind", "/", "/",
+                "--dev", "/dev",
+                "--proc", "/proc",
+                "--bind", str(location), str(location),
+                "--chdir", str(location),
+                *command,
+            ]
         script = 'set -eu; mount --make-rprivate /; cd "$1"; shift 2; exec "$@"'
         return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-benchmark", str(location), str(self.source_root), *command]
 
