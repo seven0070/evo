@@ -89,7 +89,7 @@ def test_candidate_execution_is_sanitized_and_captures_output(tmp_path: Path):
     engine.apply_approved_proposal(proposal, candidate)
     result = engine.execute_candidate(experiment, candidate_dir, "candidate")
     assert result.completed is True
-    assert result.return_code == 0
+    assert result.return_code == 0, result.to_dict()
     assert result.tests_passed == 1
     assert result.timeout is False
     assert "PATH" in result.environment_keys
@@ -105,7 +105,7 @@ def test_production_remains_unchanged_after_candidate_execution(tmp_path: Path):
     candidate = engine.prepare_candidate(experiment, candidate_dir)
     engine.apply_approved_proposal(proposal, candidate)
     result = engine.execute_candidate(experiment, candidate_dir, "candidate")
-    assert result.return_code == 0
+    assert result.return_code == 0, result.to_dict()
     assert (production / "production_marker.txt").read_bytes() == before
     engine.destroy_sandbox(experiment)
 
@@ -130,7 +130,7 @@ def test_timeout_is_terminated_and_recorded(tmp_path: Path):
     engine.apply_approved_proposal(proposal, candidate)
     (candidate_dir / "test_timeout.py").write_text("import time\ndef test_timeout():\n    time.sleep(30)\n", encoding="utf-8")
     result = engine.execute_candidate(experiment, candidate_dir, "candidate")
-    assert result.timeout is True
+    assert result.timeout is True, result.to_dict()
     assert result.completed is False
     assert result.error
     engine.destroy_sandbox(experiment)
@@ -152,7 +152,7 @@ def test_full_experiment_persists_and_cleans_up_without_promotion(tmp_path: Path
     engine, store, production = setup_engine(tmp_path, make_proposal())
     before = (production / "production_marker.txt").read_bytes()
     experiment = engine.run_experiment("proposal_test")
-    assert experiment.status is ExperimentStatus.PASSED
+    assert experiment.status is ExperimentStatus.PASSED, experiment.to_dict()
     assert experiment.cleanup_status == "destroyed"
     assert experiment.comparison is not None
     assert experiment.comparison["classification"] in {"better", "no_change", "worse", "inconclusive"}

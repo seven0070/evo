@@ -525,7 +525,7 @@ class BenchmarkEngine:
         results = Path(experiment["sandbox_location"]) / "results"
         home.mkdir(parents=True, exist_ok=True)
         results.mkdir(parents=True, exist_ok=True)
-        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "TMPDIR": str(results), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1", "NO_PROXY": "*", "no_proxy": "*", "EVO_NETWORK_POLICY": "denied", "EVO_EXPERIMENT_ID": experiment["experiment_id"]}
+        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "TMPDIR": str(results), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": "-p no:cacheprovider", "NO_PROXY": "*", "no_proxy": "*", "EVO_NETWORK_POLICY": "denied", "EVO_EXPERIMENT_ID": experiment["experiment_id"]}
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> None:

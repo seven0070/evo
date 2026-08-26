@@ -47,7 +47,7 @@ def setup_candidate(tmp_path: Path, health_checker=None) -> tuple[PromotionEngin
     store.save_proposal(proposal)
     sandbox = SandboxEngine(store, production, tmp_path / "sandbox", timeout_seconds=5)
     experiment = sandbox.run_experiment(proposal.proposal_id, retain_sandbox=True)
-    assert experiment.status is ExperimentStatus.PASSED
+    assert experiment.status is ExperimentStatus.PASSED, experiment.to_dict()
     evidence = EvolutionEvidence(
         evidence_id="evidence_promotion",
         experiment_id=experiment.experiment_id,

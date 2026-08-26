@@ -454,6 +454,8 @@ class SandboxEngine:
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTEST_ADDOPTS": "-p no:cacheprovider",
             "NO_PROXY": "*",
             "no_proxy": "*",
             "EVO_NETWORK_POLICY": "denied",

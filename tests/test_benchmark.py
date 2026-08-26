@@ -44,7 +44,7 @@ def setup_experiment(tmp_path: Path) -> tuple[BenchmarkEngine, SQLiteStore, dict
     store.save_proposal(proposal())
     sandbox = SandboxEngine(store, production, tmp_path / "sandboxes", timeout_seconds=5)
     experiment = sandbox.run_experiment("proposal_benchmark", retain_sandbox=True)
-    assert experiment.status is ExperimentStatus.PASSED
+    assert experiment.status is ExperimentStatus.PASSED, experiment.to_dict()
     return BenchmarkEngine(store, production), store, experiment.to_dict()
 
 
