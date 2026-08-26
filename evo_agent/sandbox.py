@@ -283,6 +283,8 @@ class SandboxEngine:
         duration_ms = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
         if not timed_out and return_code not in (0, None) and not error:
             error = f"Candidate command exited with {return_code}"
+            if output.strip():
+                error += f": {output[-2000:].strip()}"
         tests_run = 1 if completed or timed_out or return_code is not None else 0
         tests_passed = 1 if completed and return_code == 0 else 0
         tests_failed = 1 if tests_run and tests_passed == 0 else 0
