@@ -21,6 +21,9 @@ button, textarea, input { font: inherit; }
 button { cursor: pointer; }
 .app-shell { max-width: 1180px; margin: 0 auto; padding: 34px 28px 22px; }
 .topbar { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; margin-bottom: 30px; }
+.brand-block { display: flex; align-items: flex-start; gap: 18px; min-width: 0; }
+.brand-logo { display: block; width: min(250px, 30vw); height: auto; max-height: 92px; object-fit: contain; object-position: left center; margin-top: 2px; }
+.brand-copy { min-width: 0; }
 .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 11px; letter-spacing: .18em; font-weight: 750; }
 h1 { margin: 0; font-size: clamp(40px, 6vw, 66px); letter-spacing: -.06em; line-height: .95; }
 h2 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
@@ -65,4 +68,4 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
 #goal-message { min-height: 18px; }
 .footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 18px; color: #647c94; font-size: 11px; }
-@media (max-width: 800px) { .topbar, .goal-footer { flex-direction: column; align-items: stretch; } .topbar-actions { justify-content: flex-start; } .hero-grid, .lower-grid { grid-template-columns: 1fr; } .goal-footer .button { width: 100%; } .footer { flex-direction: column; } }
+@media (max-width: 800px) { .topbar, .goal-footer { flex-direction: column; align-items: stretch; } .brand-block { align-items: center; } .brand-logo { width: min(220px, 58vw); max-height: 78px; } .topbar-actions { justify-content: flex-start; } .hero-grid, .lower-grid { grid-template-columns: 1fr; } .goal-footer .button { width: 100%; } .footer { flex-direction: column; } }
