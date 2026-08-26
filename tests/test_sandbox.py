@@ -214,3 +214,63 @@ def test_sandbox_events_are_auditable(tmp_path: Path):
     event_types = {event["event_type"] for event in events}
     assert {"sandbox_created", "baseline_snapshot_created", "candidate_created", "proposal_applied", "candidate_started", "candidate_test_started", "candidate_test_completed", "sandbox_cleanup_started", "sandbox_destroyed"}.issubset(event_types)
     assert all(event["payload"]["experiment_id"] == experiment.experiment_id for event in events)
+
+
+def test_bwrap_command_preserves_working_directory_and_private_writable_state(tmp_path: Path, monkeypatch):
+    engine, _, _ = setup_engine(tmp_path, make_proposal())
+    experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
+    monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
+    command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
+    assert command[0] == "bwrap"
+    assert {"--unshare-user", "--unshare-net", "--unshare-pid"}.issubset(command)
+    assert command[command.index("--bind") + 1] == str(candidate_dir)
+    assert command[command.index("--chdir") + 1] == str(candidate_dir)
+    assert ["--bind", str(Path(experiment.sandbox_location) / "results")] == command[command.index("--bind", command.index("--bind") + 1):command.index("--bind", command.index("--bind") + 1) + 2]
+    assert (Path(experiment.sandbox_location) / "metadata" / "home").is_dir()
+    engine.destroy_sandbox(experiment)
+
+
+def test_isolation_fallback_keeps_namespace_controls_when_bwrap_unavailable(tmp_path: Path, monkeypatch):
+    engine, _, _ = setup_engine(tmp_path, make_proposal())
+    experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
+    monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda _: None)
+    command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
+    assert command[:3] == ["unshare", "--user", "--map-root-user"]
+    assert {"--mount", "--net", "--pid", "--fork"}.issubset(command)
+    assert str(candidate_dir) in command
+    engine.destroy_sandbox(experiment)
+
+
+def test_sanitized_environment_uses_managed_home_and_tmpdir(tmp_path: Path):
+    engine, _, _ = setup_engine(tmp_path, make_proposal())
+    experiment, _, _, _ = engine.create_sandbox("proposal_test")
+    environment = engine._sanitized_environment(experiment)
+    assert environment["HOME"] == str(Path(experiment.sandbox_location) / "metadata" / "home")
+    assert environment["TMPDIR"] == str(Path(experiment.sandbox_location) / "results")
+    assert environment["EVO_NETWORK_POLICY"] == "denied"
+    assert "OPENAI_API_KEY" not in environment
+    engine.destroy_sandbox(experiment)
+
+
+@pytest.mark.parametrize("backend", ["bwrap", "unshare"])
+def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, backend: str):
+    from evo_agent.benchmark import BenchmarkEngine
+
+    engine = BenchmarkEngine(SQLiteStore(tmp_path / "store.sqlite3"), tmp_path)
+    experiment = {"sandbox_location": str(tmp_path / "experiment"), "experiment_id": "experiment_test"}
+    (tmp_path / "experiment" / "metadata" / "home").mkdir(parents=True)
+    (tmp_path / "experiment" / "results").mkdir()
+    location = tmp_path / "experiment" / "candidate"
+    location.mkdir()
+    if backend == "bwrap":
+        monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
+        command = engine._isolated_command(location, ["python3", "-m", "pytest", "-q"])
+        assert command[0] == "bwrap"
+        assert ["--bind", str(location), str(location)] == command[command.index("--bind"):command.index("--bind") + 3]
+    else:
+        monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda _: None)
+        command = engine._isolated_command(location, ["python3", "-m", "pytest", "-q"])
+        assert command[0] == "unshare"
+    environment = engine._sanitized_environment(experiment)
+    assert environment["TMPDIR"] == str(tmp_path / "experiment" / "results")
+    assert environment["EVO_NETWORK_POLICY"] == "denied"

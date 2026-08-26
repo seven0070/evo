@@ -444,11 +444,13 @@ class SandboxEngine:
 
     def _sanitized_environment(self, experiment: EvolutionExperiment) -> dict[str, str]:
         home = Path(experiment.sandbox_location) / "metadata" / "home"
+        results = Path(experiment.sandbox_location) / "results"
         home.mkdir(parents=True, exist_ok=True)
+        results.mkdir(parents=True, exist_ok=True)
         return {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "HOME": str(home),
-            "TMPDIR": str(Path(experiment.sandbox_location) / "results"),
+            "TMPDIR": str(results),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "PYTHONNOUSERSITE": "1",
@@ -481,6 +483,12 @@ class SandboxEngine:
         # Bubblewrap is preferred because it provides a portable user/net/PID namespace
         # interface on hosted runners. The unshare path remains a conservative fallback.
         if shutil.which("bwrap"):
+            location_bind = "--bind" if location.name == "candidate" else "--ro-bind"
+            experiment_dir = location.parent
+            results_dir = experiment_dir / "results"
+            home_dir = experiment_dir / "metadata" / "home"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            home_dir.mkdir(parents=True, exist_ok=True)
             return [
                 "bwrap",
                 "--die-with-parent",
@@ -490,8 +498,9 @@ class SandboxEngine:
                 "--ro-bind", "/", "/",
                 "--dev", "/dev",
                 "--proc", "/proc",
-                "--tmpfs", "/tmp",
-                "--bind", str(location), str(location),
+                location_bind, str(location), str(location),
+                "--bind", str(results_dir), str(results_dir),
+                "--bind", str(home_dir), str(home_dir),
                 "--chdir", str(location),
                 *command,
             ]

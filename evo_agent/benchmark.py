@@ -424,7 +424,7 @@ class BenchmarkEngine:
         trial_id = f"trial_{benchmark.benchmark_id}_{experiment['experiment_id']}_{side}_{case.task_id}_{trial_number}"
         start = datetime.now(timezone.utc)
         self.store.append_event(Event("benchmark", EventType.TRIAL_STARTED, {"benchmark_id": benchmark.benchmark_id, "experiment_id": experiment["experiment_id"], "proposal_id": experiment["proposal_id"], "candidate_id": experiment["candidate_id"], "version": experiment["candidate_version"] if side == "candidate" else experiment["baseline_version"], "trial_id": trial_id, "task_case_id": case.task_id, "trial_number": trial_number}))
-        command = ["python3", "-m", "pytest", "-q", str(fixture)]
+        command = ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", str(fixture)]
         env = self._sanitized_environment(experiment)
         output = ""
         error = ""
@@ -496,7 +496,12 @@ class BenchmarkEngine:
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
         if shutil.which("bwrap"):
-            return [
+            experiment_dir = location.parent
+            results_dir = experiment_dir / "results"
+            home_dir = experiment_dir / "metadata" / "home"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            home_dir.mkdir(parents=True, exist_ok=True)
+            args = [
                 "bwrap",
                 "--die-with-parent",
                 "--unshare-user",
@@ -505,16 +510,22 @@ class BenchmarkEngine:
                 "--ro-bind", "/", "/",
                 "--dev", "/dev",
                 "--proc", "/proc",
-                "--bind", str(location), str(location),
+                ("--bind" if location.name == "candidate" else "--ro-bind"), str(location), str(location),
+                "--bind", str(results_dir), str(results_dir),
+                "--bind", str(home_dir), str(home_dir),
                 "--chdir", str(location),
-                *command,
             ]
+            return [*args, *command]
         script = 'set -eu; mount --make-rprivate /; cd "$1"; shift 2; exec "$@"'
         return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-benchmark", str(location), str(self.source_root), *command]
 
     @staticmethod
     def _sanitized_environment(experiment: dict[str, Any]) -> dict[str, str]:
-        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path(experiment["sandbox_location"]) / "metadata" / "home"), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1", "NO_PROXY": "*", "no_proxy": "*", "EVO_NETWORK_POLICY": "denied", "EVO_EXPERIMENT_ID": experiment["experiment_id"]}
+        home = Path(experiment["sandbox_location"]) / "metadata" / "home"
+        results = Path(experiment["sandbox_location"]) / "results"
+        home.mkdir(parents=True, exist_ok=True)
+        results.mkdir(parents=True, exist_ok=True)
+        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "TMPDIR": str(results), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1", "NO_PROXY": "*", "no_proxy": "*", "EVO_NETWORK_POLICY": "denied", "EVO_EXPERIMENT_ID": experiment["experiment_id"]}
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> None:
