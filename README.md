@@ -57,6 +57,10 @@ A Windows-first Tauri desktop shell is available under [`desktop/`](desktop/) an
 
 For local development, run `cd desktop && pnpm install --frozen-lockfile && pnpm check`, then `cargo check` from `desktop/src-tauri`. A standalone Windows build uses the PyInstaller sidecar and can be produced with `./scripts/build_windows.ps1` on Windows or through `.github/workflows/desktop-windows.yml`. The current Linux development environment validates the source shell and a native AppImage smoke build; Windows NSIS/MSI artifacts require the Windows build pipeline.
 
+## Browser command surface
+
+A JARVIS-inspired, responsive browser interface is available under [`web/`](web/). It presents EVO as a human-controlled command surface with typed commands, optional browser voice input, local spoken responses, visual system status, and explicit safety messaging. It is an interface prototype only: it does not connect to the kernel or perform external actions. See [`web/README.md`](web/README.md) for setup and integration guidance.
+
 ## Local-first production hardening
 
 The approved production path is documented in [`docs/PRODUCTION.md`](docs/PRODUCTION.md). It strengthens the existing SQLite/Runtime/Kernel/Governance control plane with strict operational configuration, durable production-run records, health and metrics reporting, atomic integrity-checked backups, process locking, bounded supervisor runs, adversarial security coverage, resilience tests, and governed evolution stress tests. It does not introduce a parallel execution engine, unrestricted background autonomy, autonomous approval or promotion, credential handling, or a governance bypass.
