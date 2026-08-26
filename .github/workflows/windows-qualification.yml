@@ -47,18 +47,23 @@ jobs:
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
-      - name: Verify Windows/WebView2 preconditions
+      - name: Verify Windows runner and WebView2 preconditions
         run: |
           $ErrorActionPreference = "Stop"
           $os = Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumber, OsArchitecture
           $os | Format-List | Tee-Object "$env:RUNNER_TEMP\evo-windows-preconditions.txt"
-          if ($os.WindowsProductName -notlike "*Windows 11*") { throw "Windows 11 is required" }
+          if ($os.WindowsProductName -notlike "*Windows 11*") {
+            Write-Warning "GitHub-hosted runner is $($os.WindowsProductName), not Windows 11. Continuing with Windows-hosted packaging/install smoke tests only; Windows 11 pilot acceptance remains external-device work."
+            "Windows11Qualification=BLOCKED — EXTERNAL DEVICE REQUIRED" | Add-Content "$env:RUNNER_TEMP\evo-windows-preconditions.txt"
+          } else {
+            "Windows11Qualification=runner-confirmed" | Add-Content "$env:RUNNER_TEMP\evo-windows-preconditions.txt"
+          }
           $webView2Roots = @(
             (Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application"),
             (Join-Path ${env:ProgramFiles} "Microsoft\EdgeWebView\Application")
           )
           $webView2Root = $webView2Roots | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $webView2Root) { throw "WebView2 runtime was not found" }
+          if (-not $webView2Root) { throw "WebView2 runtime was not found on the Windows runner" }
           "WebView2Root=$webView2Root" | Tee-Object "$env:RUNNER_TEMP\evo-webview2.txt"
           Get-ChildItem $webView2Root -Directory | Select-Object Name, FullName | Out-File "$env:RUNNER_TEMP\evo-webview2-versions.txt"
 
