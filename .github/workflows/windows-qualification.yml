@@ -68,6 +68,7 @@ jobs:
           Get-ChildItem $webView2Root -Directory | Select-Object Name, FullName | Out-File "$env:RUNNER_TEMP\evo-webview2-versions.txt"
 
       - name: Build Windows installers
+        continue-on-error: false
         run: ./scripts/build_windows.ps1
 
       - name: Verify build manifest and signatures
@@ -105,18 +106,29 @@ jobs:
           $evidence = Join-Path $env:RUNNER_TEMP "evo-windows-qualification"
           New-Item -ItemType Directory -Force -Path $evidence | Out-Null
           $installRoot = Join-Path $env:LOCALAPPDATA "Evo"
+          Write-Host "[qualification] bundle=$bundle"
+          Write-Host "[qualification] installer=$($nsis.FullName)"
+          Write-Host "[qualification] installRoot=$installRoot"
+          Write-Host "[qualification] evidence=$evidence"
           if (Test-Path $installRoot) { throw "Pre-existing install root found: $installRoot" }
 
+          Write-Host "[qualification] Starting silent NSIS install with /S and waiting for completion"
           $installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
+          Write-Host "[qualification] installer exit code=$($installer.ExitCode)"
           if ($installer.ExitCode -ne 0) { throw "NSIS silent install failed with exit code $($installer.ExitCode)" }
-          Start-Sleep -Seconds 3
+          Write-Host "[qualification] Waiting 10 seconds for installer file operations to settle"
+          Start-Sleep -Seconds 10
+          Write-Host "[qualification] installRoot exists=$(Test-Path $installRoot)"
           if (-not (Test-Path $installRoot)) { throw "Expected per-user install root was not created: $installRoot" }
           Get-ChildItem $installRoot -Recurse -Force | Select-Object FullName, Length | Out-File (Join-Path $evidence "installed-files.txt")
 
           $bridge = Get-ChildItem $installRoot -Recurse -Filter "evo-bridge.exe" -File | Select-Object -First 1
+          Write-Host "[qualification] bridge=$($bridge.FullName)"
           if (-not $bridge) { throw "Packaged evo-bridge.exe was not found below $installRoot" }
+          Write-Host "[qualification] bridge exists=$(Test-Path $bridge.FullName)"
           $workspace = Join-Path $env:RUNNER_TEMP "evo-windows-qualification-workspace"
           New-Item -ItemType Directory -Force -Path $workspace | Out-Null
+          Write-Host "[qualification] bridge workspace=$workspace"
 
           # Evo intentionally uses JSONL over a short-lived local process rather than
           # a localhost server. Test the exact shipped bridge contract without adding
@@ -132,6 +144,7 @@ jobs:
           $process = [System.Diagnostics.Process]::new()
           $process.StartInfo = $psi
           if (-not $process.Start()) { throw "Could not start packaged bridge" }
+          Write-Host "[qualification] bridge process started pid=$($process.Id)"
           $process.StandardInput.WriteLine('{"command":"get_status"}')
           $process.StandardInput.WriteLine('{"command":"submit_goal","goal":"list files in the workspace"}')
           $process.StandardInput.WriteLine('{"command":"run_cycle"}')
@@ -139,31 +152,58 @@ jobs:
           $stdout = $process.StandardOutput.ReadToEnd()
           $stderr = $process.StandardError.ReadToEnd()
           $process.WaitForExit()
+          Write-Host "[qualification] bridge exit code=$($process.ExitCode)"
+          Write-Host "[qualification] bridge stdout length=$($stdout.Length), stderr length=$($stderr.Length)"
           $stdout | Out-File (Join-Path $evidence "bridge-stdout.jsonl")
           $stderr | Out-File (Join-Path $evidence "bridge-stderr.txt")
           if ($process.ExitCode -ne 0) { throw "Packaged bridge exited with code $($process.ExitCode)" }
           $responses = @($stdout.Trim().Split([Environment]::NewLine) | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
           if ($responses.Count -lt 3) { throw "Packaged bridge returned fewer than three JSONL responses: $stdout" }
           if ($responses | Where-Object { -not $_.ok }) { throw "Packaged bridge returned an error: $stdout" }
-          if (-not (Test-Path (Join-Path $workspace ".evo/agent.sqlite3"))) { throw "Bridge did not persist authoritative SQLite state after a submitted harmless goal" }
-          Get-ChildItem (Join-Path $env:APPDATA "im.evo.personal") -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File (Join-Path $evidence "appdata-files.txt")
-
+          $sqlitePath = Join-Path $workspace ".evo/agent.sqlite3"
+          Write-Host "[qualification] authoritative SQLite path=$sqlitePath exists=$(Test-Path $sqlitePath)"
+          if (-not (Test-Path $sqlitePath)) { throw "Bridge did not persist authoritative SQLite state after a submitted harmless goal" }
+          $appDataRoot = Join-Path $env:APPDATA "im.evo.personal"
+          Write-Host "[qualification] app-data root=$appDataRoot exists=$(Test-Path $appDataRoot)"
+          Get-ChildItem $appDataRoot -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File (Join-Path $evidence "appdata-files.txt")
           $app = Get-ChildItem $installRoot -Recurse -Filter "*.exe" -File | Where-Object { $_.Name -notin @("evo-bridge.exe", "uninstall.exe") } | Select-Object -First 1
+          Write-Host "[qualification] application candidate=$($app.FullName)"
           if (-not $app) { throw "Packaged Evo application executable was not found below $installRoot" }
           "Application=$($app.FullName)" | Out-File (Join-Path $evidence "application-path.txt")
+          Write-Host "[qualification] launching packaged desktop executable"
           $desktop = Start-Process -FilePath $app.FullName -PassThru
           Start-Sleep -Seconds 5
+          Write-Host "[qualification] desktop pid=$($desktop.Id), exited=$($desktop.HasExited), exit code=$($desktop.ExitCode)"
           if ($desktop.HasExited) { throw "Packaged Evo desktop process exited immediately with code $($desktop.ExitCode)" }
           "Evo process started: PID $($desktop.Id)" | Out-File (Join-Path $evidence "launch.txt")
           Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue
 
           $uninstaller = Get-ChildItem $installRoot -Recurse -Filter "uninstall.exe" -File | Select-Object -First 1
+          Write-Host "[qualification] uninstaller=$($uninstaller.FullName)"
           if (-not $uninstaller) { throw "NSIS uninstaller was not found" }
+          Write-Host "[qualification] Starting silent uninstall with /S and waiting for completion"
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          Write-Host "[qualification] uninstaller exit code=$($uninstall.ExitCode)"
           if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)" }
           Start-Sleep -Seconds 3
+          Write-Host "[qualification] installRoot exists after uninstall=$(Test-Path $installRoot)"
           if (Test-Path $installRoot) { throw "Runtime files remain after uninstall: $installRoot" }
           "Install root removed: $installRoot" | Out-File (Join-Path $evidence "uninstall.txt")
+
+      - name: Collect Windows qualification diagnostics on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          $evidence = Join-Path $env:RUNNER_TEMP "evo-windows-qualification"
+          $installRoot = Join-Path $env:LOCALAPPDATA "Evo"
+          Write-Host "[diagnostics] runner=$env:RUNNER_OS computer=$env:COMPUTERNAME"
+          Write-Host "[diagnostics] installRoot=$installRoot exists=$(Test-Path $installRoot)"
+          if (Test-Path $installRoot) { Get-ChildItem $installRoot -Recurse -Force | Select-Object FullName, Length | Format-Table -AutoSize }
+          Write-Host "[diagnostics] matching Evo processes"
+          Get-Process | Where-Object { $_.ProcessName -match "evo|WebView|msiexec" } | Select-Object Id, ProcessName, Path | Format-Table -AutoSize
+          Get-ChildItem $env:LOCALAPPDATA -Directory -Force | Where-Object { $_.Name -match "Evo|Programs" } | Select-Object FullName | Out-File (Join-Path $evidence "failure-localappdata-directories.txt")
+          Get-ChildItem $env:APPDATA -Directory -Force | Where-Object { $_.Name -match "Evo|im\.evo" } | Select-Object FullName | Out-File (Join-Path $evidence "failure-appdata-directories.txt")
 
       - name: Upload Windows qualification evidence
         if: always()
