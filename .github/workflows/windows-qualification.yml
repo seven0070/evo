@@ -8,7 +8,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: evo-windows-qualification-${{ github.workflow }}-${{ github.ref }}
@@ -75,12 +75,24 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $bundle = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle"
-          $nsis = Get-ChildItem (Join-Path $bundle "nsis/*.exe") -File | Select-Object -First 1
-          $msi = Get-ChildItem (Join-Path $bundle "msi/*.msi") -File | Select-Object -First 1
+          $nsisDirectory = Join-Path $bundle "nsis"
+          $msiDirectory = Join-Path $bundle "msi"
+          $nsisPattern = Join-Path $nsisDirectory "*.exe"
+          $msiPattern = Join-Path $msiDirectory "*.msi"
           $manifestPath = Join-Path $bundle "release-manifest.json"
-          if (-not $nsis) { throw "NSIS installer was not produced" }
-          if (-not $msi) { throw "MSI installer was not produced" }
-          if (-not (Test-Path $manifestPath)) { throw "release-manifest.json was not produced" }
+          Write-Host "[manifest] bundle=$bundle exists=$(Test-Path $bundle)"
+          Write-Host "[manifest] nsisDirectory=$nsisDirectory exists=$(Test-Path $nsisDirectory)"
+          Write-Host "[manifest] msiDirectory=$msiDirectory exists=$(Test-Path $msiDirectory)"
+          Write-Host "[manifest] nsisPattern=$nsisPattern"
+          Write-Host "[manifest] msiPattern=$msiPattern"
+          $nsis = Get-ChildItem $nsisPattern -File | Select-Object -First 1
+          $msi = Get-ChildItem $msiPattern -File | Select-Object -First 1
+          Write-Host "[manifest] nsis=$($nsis.FullName)"
+          Write-Host "[manifest] msi=$($msi.FullName)"
+          Write-Host "[manifest] manifestPath=$manifestPath exists=$(Test-Path $manifestPath)"
+          if (-not $nsis) { throw "NSIS installer was not produced under $nsisDirectory" }
+          if (-not $msi) { throw "MSI installer was not produced under $msiDirectory" }
+          if (-not (Test-Path $manifestPath)) { throw "release-manifest.json was not produced under $bundle" }
           $evidence = Join-Path $env:RUNNER_TEMP "evo-windows-qualification"
           New-Item -ItemType Directory -Force -Path $evidence | Out-Null
           Get-FileHash $nsis.FullName -Algorithm SHA256 | Format-List | Out-File (Join-Path $evidence "nsis-hash.txt")
@@ -102,7 +114,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $bundle = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle"
-          $nsis = Get-ChildItem (Join-Path $bundle "nsis/*.exe") -File | Select-Object -First 1
+          $nsisDirectory = Join-Path $bundle "nsis"
+          $nsisPattern = Join-Path $nsisDirectory "*.exe"
+          Write-Host "[qualification] bundle=$bundle exists=$(Test-Path $bundle)"
+          Write-Host "[qualification] nsisDirectory=$nsisDirectory exists=$(Test-Path $nsisDirectory)"
+          Write-Host "[qualification] nsisPattern=$nsisPattern"
+          $nsis = Get-ChildItem $nsisPattern -File | Select-Object -First 1
           $evidence = Join-Path $env:RUNNER_TEMP "evo-windows-qualification"
           New-Item -ItemType Directory -Force -Path $evidence | Out-Null
           $installRoot = Join-Path $env:LOCALAPPDATA "Evo"
@@ -112,8 +129,8 @@ jobs:
           Write-Host "[qualification] evidence=$evidence"
           if (Test-Path $installRoot) { throw "Pre-existing install root found: $installRoot" }
 
-          Write-Host "[qualification] Starting silent NSIS install with /S and waiting for completion"
-          $installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
+          Write-Host "[qualification] Starting silent NSIS install with /S, -Wait, and -NoNewWindow"
+          $installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -NoNewWindow -PassThru
           Write-Host "[qualification] installer exit code=$($installer.ExitCode)"
           if ($installer.ExitCode -ne 0) { throw "NSIS silent install failed with exit code $($installer.ExitCode)" }
           Write-Host "[qualification] Waiting 10 seconds for installer file operations to settle"
