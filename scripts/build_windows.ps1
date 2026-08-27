@@ -8,9 +8,17 @@ python -m pip install --upgrade "pyinstaller==6.22.2" "platformdirs==4.11.4"
 python -m PyInstaller --clean --noconfirm --onefile --name evo-bridge --paths $repo --collect-submodules evo_agent --exclude-module setuptools --exclude-module pkg_resources (Join-Path $desktop "bridge\evo_desktop_bridge.py")
 Copy-Item (Join-Path $repo "dist\evo-bridge.exe") (Join-Path $bridgeOut "evo-bridge-x86_64-pc-windows-msvc.exe") -Force
 
-pnpm --dir $desktop install --frozen-lockfile
-pnpm --dir $desktop run check
-pnpm --dir $desktop exec tauri build -- --bundles nsis,msi
+Push-Location $desktop
+try {
+    pnpm install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) { throw "pnpm install failed with exit code $LASTEXITCODE" }
+    pnpm run check
+    if ($LASTEXITCODE -ne 0) { throw "desktop static check failed with exit code $LASTEXITCODE" }
+    pnpm exec tauri build --bundles nsis,msi
+    if ($LASTEXITCODE -ne 0) { throw "Tauri NSIS/MSI build failed with exit code $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
 
 $bundle = Join-Path $desktop "src-tauri\target\release\bundle"
 $artifacts = @(Get-ChildItem -Path (Join-Path $bundle "nsis\*.exe"), (Join-Path $bundle "msi\*.msi") -File | ForEach-Object {
