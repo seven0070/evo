@@ -34,18 +34,16 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
         with:
-          version: 9
+          targets: x86_64-pc-windows-msvc
+
+      - name: Add Windows MSVC Rust target
+        run: rustup target add x86_64-pc-windows-msvc
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: desktop/pnpm-lock.yaml
+          node-version: 20
 
       - name: Verify Windows runner and WebView2 preconditions
         run: |
@@ -71,17 +69,17 @@ jobs:
         continue-on-error: false
         run: ./scripts/build_windows.ps1 -SidecarOnly
 
-      - name: Install desktop dependencies
+      - name: Install desktop dependencies with npm
         continue-on-error: false
         working-directory: desktop
-        run: pnpm install --frozen-lockfile
+        run: npm install --no-package-lock
 
       - name: Build Tauri bundles with official action
         continue-on-error: false
         uses: tauri-apps/tauri-action@v1
         with:
           projectPath: desktop
-          tauriScript: pnpm exec tauri
+          tauriScript: npx tauri
           args: --bundles nsis,msi
 
       - name: Write release manifest
@@ -103,7 +101,7 @@ jobs:
             python = (python --version)
             rust = (rustc --version)
             node = (node --version)
-            tauri_cli = (pnpm --dir desktop exec tauri --version)
+            tauri_cli = (npm --prefix desktop exec -- tauri --version)
             pyinstaller = "6.22.2"
             platformdirs = "4.11.4"
             artifacts = $artifacts
