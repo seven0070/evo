@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(new URL("..", import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const required = ["ui/index.html", "ui/styles.css", "ui/app.js", "src-tauri/Cargo.toml", "src-tauri/src/main.rs", "src-tauri/tauri.conf.json"];
 const missing = required.filter((file) => !existsSync(join(root, file)));
 if (missing.length) throw new Error(`Missing desktop files: ${missing.join(", ")}`);
