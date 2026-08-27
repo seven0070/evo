@@ -67,9 +67,49 @@ jobs:
           "WebView2Root=$webView2Root" | Tee-Object "$env:RUNNER_TEMP\evo-webview2.txt"
           Get-ChildItem $webView2Root -Directory | Select-Object Name, FullName | Out-File "$env:RUNNER_TEMP\evo-webview2-versions.txt"
 
-      - name: Build Windows installers
+      - name: Build PyInstaller sidecar
         continue-on-error: false
-        run: ./scripts/build_windows.ps1
+        run: ./scripts/build_windows.ps1 -SidecarOnly
+
+      - name: Install desktop dependencies
+        continue-on-error: false
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri bundles with official action
+        continue-on-error: false
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: desktop
+          tauriScript: pnpm exec tauri
+          args: --bundles nsis,msi
+
+      - name: Write release manifest
+        continue-on-error: false
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = Resolve-Path "."
+          $bundle = Join-Path $repo "desktop/src-tauri/target/release/bundle"
+          $artifacts = @(Get-ChildItem -Path (Join-Path $bundle "nsis/*.exe"), (Join-Path $bundle "msi/*.msi") -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            [ordered]@{ name = $_.Name; path = $_.FullName.Substring($repo.Path.Length + 1); bytes = $_.Length; sha256 = $hash }
+          })
+          if ($artifacts.Count -lt 2) { throw "Expected NSIS and MSI bundles were not produced" }
+          $manifest = [ordered]@{
+            product = "Evo"
+            version = "1.0.0"
+            commit = (git rev-parse HEAD)
+            python = (python --version)
+            rust = (rustc --version)
+            node = (node --version)
+            tauri_cli = (pnpm --dir desktop exec tauri --version)
+            pyinstaller = "6.22.2"
+            platformdirs = "4.11.4"
+            artifacts = $artifacts
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $bundle "release-manifest.json") -Encoding UTF8
+          Write-Host "release-manifest.json written to $bundle"
 
       - name: Verify build manifest and signatures
         run: |

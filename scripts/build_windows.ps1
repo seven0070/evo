@@ -1,3 +1,7 @@
+param(
+    [switch]$SidecarOnly
+)
+
 $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 $desktop = Join-Path $repo "desktop"
@@ -7,7 +11,14 @@ New-Item -ItemType Directory -Force -Path $bridgeOut | Out-Null
 python -m pip install --upgrade "pyinstaller==6.22.2" "platformdirs==4.11.4"
 python -m PyInstaller --clean --noconfirm --onefile --name evo-bridge --paths $repo --collect-submodules evo_agent --exclude-module setuptools --exclude-module pkg_resources (Join-Path $desktop "bridge\evo_desktop_bridge.py")
 Copy-Item (Join-Path $repo "dist\evo-bridge.exe") (Join-Path $bridgeOut "evo-bridge-x86_64-pc-windows-msvc.exe") -Force
-
+if (-not (Test-Path (Join-Path $bridgeOut "evo-bridge-x86_64-pc-windows-msvc.exe"))) {
+    throw "Windows Tauri sidecar was not created at the required target-triple path"
+}
+Write-Host "Windows Tauri sidecar: $bridgeOut\evo-bridge-x86_64-pc-windows-msvc.exe"
+if ($SidecarOnly) {
+    Write-Host "Sidecar-only build requested; skipping Tauri bundle generation."
+    exit 0
+}
 Push-Location $desktop
 try {
     pnpm install --frozen-lockfile
