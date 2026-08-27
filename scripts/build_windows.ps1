@@ -10,7 +10,7 @@ Copy-Item (Join-Path $repo "dist\evo-bridge.exe") (Join-Path $bridgeOut "evo-bri
 
 pnpm --dir $desktop install --frozen-lockfile
 pnpm --dir $desktop run check
-pnpm --dir $desktop exec tauri build
+pnpm --dir $desktop exec tauri build -- --bundles nsis,msi
 
 $bundle = Join-Path $desktop "src-tauri\target\release\bundle"
 $artifacts = @(Get-ChildItem -Path (Join-Path $bundle "nsis\*.exe"), (Join-Path $bundle "msi\*.msi") -File | ForEach-Object {

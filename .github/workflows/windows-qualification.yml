@@ -80,6 +80,9 @@ jobs:
           $nsisPattern = Join-Path $nsisDirectory "*.exe"
           $msiPattern = Join-Path $msiDirectory "*.msi"
           $manifestPath = Join-Path $bundle "release-manifest.json"
+          $sidecarPath = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/binaries/evo-bridge-x86_64-pc-windows-msvc.exe"
+          Write-Host "[manifest] sidecarPath=$sidecarPath exists=$(Test-Path $sidecarPath)"
+          if (-not (Test-Path $sidecarPath)) { throw "Required Windows Tauri sidecar was not produced: $sidecarPath" }
           Write-Host "[manifest] bundle=$bundle exists=$(Test-Path $bundle)"
           Write-Host "[manifest] nsisDirectory=$nsisDirectory exists=$(Test-Path $nsisDirectory)"
           Write-Host "[manifest] msiDirectory=$msiDirectory exists=$(Test-Path $msiDirectory)"
