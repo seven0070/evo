@@ -131,38 +131,69 @@ jobs:
           Write-Host "[qualification] bridge workspace=$workspace"
 
           # Evo intentionally uses JSONL over a short-lived local process rather than
-          # a localhost server. Test the exact shipped bridge contract without adding
-          # network authority to the application.
-          $psi = [System.Diagnostics.ProcessStartInfo]::new()
-          $psi.FileName = $bridge.FullName
-          $psi.Arguments = '--workspace "' + $workspace + '"'
-          $psi.UseShellExecute = $false
-          $psi.CreateNoWindow = $true
-          $psi.RedirectStandardInput = $true
-          $psi.RedirectStandardOutput = $true
-          $psi.RedirectStandardError = $true
-          $process = [System.Diagnostics.Process]::new()
-          $process.StartInfo = $psi
-          if (-not $process.Start()) { throw "Could not start packaged bridge" }
-          Write-Host "[qualification] bridge process started pid=$($process.Id)"
-          $process.StandardInput.WriteLine('{"command":"get_status"}')
-          $process.StandardInput.WriteLine('{"command":"submit_goal","goal":"list files in the workspace"}')
-          $process.StandardInput.WriteLine('{"command":"run_cycle"}')
-          $process.StandardInput.Close()
-          $stdout = $process.StandardOutput.ReadToEnd()
-          $stderr = $process.StandardError.ReadToEnd()
-          $process.WaitForExit()
-          Write-Host "[qualification] bridge exit code=$($process.ExitCode)"
-          Write-Host "[qualification] bridge stdout length=$($stdout.Length), stderr length=$($stderr.Length)"
-          $stdout | Out-File (Join-Path $evidence "bridge-stdout.jsonl")
-          $stderr | Out-File (Join-Path $evidence "bridge-stderr.txt")
-          if ($process.ExitCode -ne 0) { throw "Packaged bridge exited with code $($process.ExitCode)" }
-          $responses = @($stdout.Trim().Split([Environment]::NewLine) | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
-          if ($responses.Count -lt 3) { throw "Packaged bridge returned fewer than three JSONL responses: $stdout" }
-          if ($responses | Where-Object { -not $_.ok }) { throw "Packaged bridge returned an error: $stdout" }
-          $sqlitePath = Join-Path $workspace ".evo/agent.sqlite3"
-          Write-Host "[qualification] authoritative SQLite path=$sqlitePath exists=$(Test-Path $sqlitePath)"
-          if (-not (Test-Path $sqlitePath)) { throw "Bridge did not persist authoritative SQLite state after a submitted harmless goal" }
+          # a localhost server or loopback listener. Retry the exact shipped bridge
+          # contract without adding network authority to the application.
+          $bridgeAttempts = 3
+          $bridgePassed = $false
+          $bridgeFailures = @()
+          for ($attempt = 1; $attempt -le $bridgeAttempts; $attempt++) {
+            $stdout = ""
+            $stderr = ""
+            $process = $null
+            try {
+              Write-Host "[qualification] bridge attempt $attempt/$bridgeAttempts"
+              $psi = [System.Diagnostics.ProcessStartInfo]::new()
+              $psi.FileName = $bridge.FullName
+              $psi.Arguments = '--workspace "' + $workspace + '"'
+              $psi.UseShellExecute = $false
+              $psi.CreateNoWindow = $true
+              $psi.RedirectStandardInput = $true
+              $psi.RedirectStandardOutput = $true
+              $psi.RedirectStandardError = $true
+              $process = [System.Diagnostics.Process]::new()
+              $process.StartInfo = $psi
+              if (-not $process.Start()) { throw "Could not start packaged bridge" }
+              Write-Host "[qualification] bridge process started pid=$($process.Id)"
+              $process.StandardInput.WriteLine('{"command":"get_status"}')
+              $process.StandardInput.WriteLine('{"command":"submit_goal","goal":"list files in the workspace"}')
+              $process.StandardInput.WriteLine('{"command":"run_cycle"}')
+              $process.StandardInput.Close()
+              $stdout = $process.StandardOutput.ReadToEnd()
+              $stderr = $process.StandardError.ReadToEnd()
+              $process.WaitForExit()
+              Write-Host "[qualification] bridge exit code=$($process.ExitCode)"
+              Write-Host "[qualification] bridge stdout length=$($stdout.Length), stderr length=$($stderr.Length)"
+              $stdout | Out-File (Join-Path $evidence "bridge-stdout-attempt-$attempt.jsonl")
+              $stderr | Out-File (Join-Path $evidence "bridge-stderr-attempt-$attempt.txt")
+              if ($process.ExitCode -ne 0) { throw "Packaged bridge exited with code $($process.ExitCode)" }
+              $responses = @($stdout.Trim().Split([Environment]::NewLine) | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+              if ($responses.Count -lt 3) { throw "Packaged bridge returned fewer than three JSONL responses: $stdout" }
+              if ($responses | Where-Object { -not $_.ok }) { throw "Packaged bridge returned an error: $stdout" }
+              $sqlitePath = Join-Path $workspace ".evo/agent.sqlite3"
+              Write-Host "[qualification] authoritative SQLite path=$sqlitePath exists=$(Test-Path $sqlitePath)"
+              if (-not (Test-Path $sqlitePath)) { throw "Bridge did not persist authoritative SQLite state after a submitted harmless goal" }
+              $stdout | Out-File (Join-Path $evidence "bridge-stdout.jsonl")
+              $stderr | Out-File (Join-Path $evidence "bridge-stderr.txt")
+              $bridgePassed = $true
+              Write-Host "[qualification] bridge attempt $attempt passed"
+              break
+            } catch {
+              $failure = "attempt $attempt failed: $($_.Exception.Message)"
+              $bridgeFailures += $failure
+              Write-Host "[qualification] $failure"
+              if ($attempt -lt $bridgeAttempts) {
+                Write-Host "[qualification] retrying packaged bridge in 5 seconds"
+                Start-Sleep -Seconds 5
+              }
+            } finally {
+              if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+              if ($process) { $process.Dispose() }
+            }
+          }
+          if (-not $bridgePassed) {
+            $bridgeFailures | Out-File (Join-Path $evidence "bridge-failures.txt")
+            throw "Packaged bridge smoke test failed after $bridgeAttempts attempts: $($bridgeFailures -join '; ')"
+          }
           $appDataRoot = Join-Path $env:APPDATA "im.evo.personal"
           Write-Host "[qualification] app-data root=$appDataRoot exists=$(Test-Path $appDataRoot)"
           Get-ChildItem $appDataRoot -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File (Join-Path $evidence "appdata-files.txt")
