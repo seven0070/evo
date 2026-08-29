@@ -515,6 +515,61 @@ Experience / Evaluation -> Phase 11 Memory
 
 A `Capability` describes an outcome or function, such as `filesystem_read`, `text_processing`, `report_generation`, `verification`, or `memory_retrieval`. It carries category, version, lifecycle, provider, implementation, dependencies, constraints, environment requirements, reliability, risk, availability, compatibility, and provenance. A `Tool` describes an implementation method and carries capability mappings, input/output schemas, declared permissions, risk, timeout and resource descriptions, environment requirements, health counters, reliability, lifecycle, version, provider, implementation reference, and provenance. Tool metadata is descriptive only; it cannot authorize the tool.
 
+### Implemented tool surface (authoritative list)
+
+The runtime registers exactly the tools below, from `evo_agent/tools.py`. Capability records
+such as `web_research`, `report_generation`, `text_processing`, and `multimedia_generation`
+describe *outcomes the model can be asked about*; they are declared without an executable
+provider, and the availability field on the record is what a planner must consult. Tool
+metadata is descriptive and cannot authorize anything - the `SecurityPolicy` plus the
+approval callback are the only authority (see the invariant `test_documentation_integrity.py`
+asserts this table and `ToolRegistry` agree).
+
+| Tool | Risk | Approval required | Confines to workspace | Notes |
+|---|---|---|---|---|
+| `workspace_list` | low | no | yes | directory listing under the allowlisted root; a path operation, not a process |
+| `workspace_read` | low | no | yes | UTF-8 text read; traversal rejected; a path operation, not a process |
+| `workspace_write` | medium | yes | yes | UTF-8 text write; parent directories created; a path operation, not a process |
+| `shell` | high | yes | yes | argv-only command inside the selected isolation provider, bounded by `max_command_seconds` and `max_output_bytes` |
+
+There is no built-in web, filesystem-search, editor, or multimedia tool; `evo_agent/capability.py`
+lists the ones the integration phases are intended to add (docs/evolution/00-AUDIT.md §B.2,
+§B.12). Any statement elsewhere in this repository that implies a wider runtime tool surface is
+stale.
+
+### Execution isolation (implemented in P2)
+
+Every process Evo starts - including the `shell` tool above - goes through
+`evo_agent/sandbox_providers/`, and `evo_agent/sovereign/mediation.py` is the only thing that
+decides whether it may. Before P2 the boundary was inverted: evolution candidates were confined
+while the runtime's own tools ran on the host, guarded only by an argv pattern list (see
+`docs/evolution/00-AUDIT.md` §B.7).
+
+| Provider | Mechanism | Network denied by | Read-only mounts by |
+|---|---|---|---|
+| `local_bwrap` | bubblewrap user/mount/PID namespaces | the unshare-net flag | ro-bind of the whole hierarchy |
+| `unshare` | unshare(1) user/mount/PID/net namespaces | the net flag | explicit bind plus remount read-only; a mount that cannot be applied is a refusal, not a warning |
+| `host` | none - permitted only by explicit policy | nothing | nothing |
+
+`SecurityPolicy.sandbox_enforcement` selects the behaviour when nothing is usable: `auto` (default)
+degrades **with a `SECURITY_DEGRADED` event** on a platform that has no namespaces at all and refuses
+on one that should; `strict` never runs unconfined; `degrade` and `off` are operator overrides that
+still record themselves. The Evo source tree is mounted read-only inside every confined command, so
+`self-modification goes through staging, review, and promotion` is a filesystem property rather than
+a convention.
+
+### Backend seams (implemented in P2)
+
+`evo_agent/ports/contracts.py` declares the only interfaces an integrated runtime may speak
+through; `evo_agent/backends/` holds the implementations - `native` (Evo's own kernel, with
+accounting), `lead_agent` (a confined child process speaking line-delimited JSON, every action
+still mediated), and `dsh` (an external CLI, one invocation per turn, disabled by default).
+`evo backends status`-style reporting comes from `probe()`, and the invariant `I-ports-contract`
+fails if the seam package ever grows an import of the promotion engine, the memory store, or a
+second persistence authority. A backend returns a `TurnResult`, which has **no** `success` field:
+verifying a goal remains the `Verifier`'s job (docs/evolution/07-UNIFIED-ARCHITECTURE-SPECIFICATION.md §6).
+
+
 The Phase 12 registry facade extends the existing persisted structural capability registry with rich inspection and lifecycle operations. Runtime tool descriptors are persisted in the same SQLite store, alongside existing tasks, events, memory, experience, evaluation, evolution, metamorphosis, sandbox, benchmark, promotion, and rollback records. Built-in descriptors are synchronized from the existing runtime `ToolRegistry`; advisory descriptors for planning, verification, and memory retrieval are explicitly non-executable.
 
 ### Requirements, discovery, and compatibility

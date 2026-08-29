@@ -1,0 +1,95 @@
+# Evo → Unified Autonomous Agent: Architecture Audit & Integration Design
+
+Status: `00`–`07` are **analysis and specification** (they changed no source file). **P0, P1 and P2
+are implemented**; each phase's changes, measurements, and deviations from `07` are recorded in
+`08-IMPLEMENTATION-LOG.md`. P3–P8 are not started.
+Approved on the record: **Q2 — ship the DeerFlow lead-agent bridge**; **Q4 — sandbox all tool execution**.
+Baseline audited: `main` @ `c84da91`, `__version__ == "1.0.0"`.
+Upstreams audited: `bytedance/deer-flow@main`, `deepseek-ai/deepseek-harness@master` (2026-08-28).
+
+## Deliverable index (A–L as requested)
+
+| | Deliverable | Where |
+|---|---|---|
+| **A** | Current architecture | `00-AUDIT.md` §A |
+| | Existing agent loop | `00-AUDIT.md` §A.3 |
+| | Existing memory system | `00-AUDIT.md` §B.1 |
+| | Existing tool/skill system | `00-AUDIT.md` §B.2 |
+| | Existing self-extension mechanisms | `00-AUDIT.md` §B.3 |
+| | Existing persistence and recovery | `00-AUDIT.md` §B.4 |
+| | Existing verification | `00-AUDIT.md` §B.5 |
+| | Existing evolution mechanisms | `00-AUDIT.md` §B.6 |
+| | Existing sandboxing | `00-AUDIT.md` §B.7 |
+| | Existing testing and benchmarking | `00-AUDIT.md` §B.8 |
+| | Existing CLI/API/UI | `00-AUDIT.md` §B.9 |
+| **B** | What Evo already implements | `00-AUDIT.md` §B.11 |
+| | Missing capabilities (G1–G13) | `00-AUDIT.md` §B.12 |
+| **C** | DeerFlow integration map | `01-INTEGRATION-MAPS.md` §1 |
+| **D** | DeepSeek Harness integration map | `01-INTEGRATION-MAPS.md` §2 |
+| | Overlap — must not be duplicated | `00-AUDIT.md` §B.14 + `01-INTEGRATION-MAPS.md` §3 |
+| | Integrate as adapters/plugins | `01-INTEGRATION-MAPS.md` §1–§2 (mode column) |
+| | Remain independent | `01-INTEGRATION-MAPS.md` §1.1, §2.1 (SKIP rows) |
+| | Subjects of Evolutionary Metamorphosis | `02-TARGET-ARCHITECTURE.md` §E.3; full eligibility matrix in `07-UNIFIED-ARCHITECTURE-SPECIFICATION.md` §4 |
+| **E** | Target Evo architecture | `02-TARGET-ARCHITECTURE.md` §E |
+| **F** | Repository / file structure | `02-TARGET-ARCHITECTURE.md` §F |
+| **G** | Interfaces / adapters required | `02-TARGET-ARCHITECTURE.md` §G |
+| **H** | Migration plan | `03-MIGRATION-TESTING-METAMORPHOSIS.md` §H |
+| **I** | Test strategy | `03-MIGRATION-TESTING-METAMORPHOSIS.md` §I |
+| **J** | Evolutionary Metamorphosis design | `03-MIGRATION-TESTING-METAMORPHOSIS.md` §J |
+| **K** | Security / governance boundaries | `04-GOVERNANCE-AND-PLAN.md` §K |
+| **L** | Step-by-step implementation plan | `04-GOVERNANCE-AND-PLAN.md` §L |
+| **+** | Grounding & corrections — upstream read from source; supersedes tree-level inference | `05-GROUNDING-CORRECTIONS.md` |
+| **+** | Comparative analysis (14 points) + conflict resolutions | `06-COMPARATIVE-ANALYSIS.md` |
+| **+** | **The unified architecture + complete integration specification** | `07-UNIFIED-ARCHITECTURE-SPECIFICATION.md` |
+| **+** | Implementation log — what was actually built, measured, and deviated, per phase | `08-IMPLEMENTATION-LOG.md` |
+
+## Citation convention (mechanically enforced by `tests/test_documentation_integrity.py`)
+
+* An Evo reference is repo-rooted (`evo_agent/runtime.py:1069`) or a bare module name that
+  resolves under `evo_agent/`, `tests/`, or `scripts/` (`kernel.py:250`). A line number must be
+  within the file.
+* An upstream reference is **tagged**: `deerflow:<path>:<line>` is relative to
+  `backend/packages/harness/deerflow/` in `bytedance/deer-flow`, and `dsh:<path>:<line>` is
+  relative to `packages/` in `deepseek-ai/deepseek-harness`. Untagged paths that do not exist in
+  this repository are a defect, because a reader cannot tell whose code is being described - and
+  a tagged path that *does* exist here is a defect too, because the tag would hide an Evo bug
+  behind an upstream name.
+* Markdown tables in this directory must have consistent column counts and no unescaped `|`
+  inside a cell, and every `NN-NAME.md` cross-reference must point at a file that exists.
+
+Read order: `00` → `01` → `02` → `03` → `04`, with `05` as the source-grounded correction layer applied across all of them, `06` as the conflict adjudication, and **`07` as the single normative specification that supersedes the earlier documents wherever they differ**.
+
+## The five findings that decide the design
+
+1. **Evo's evolution loop cannot change behaviour.** `SandboxEngine.apply_approved_proposal()` writes only `evolution_config.json`, which **nothing reads**; `PromotionEngine._atomic_switch()` flips `versions/active`, which **nothing loads**; `agent_version` is a constant. Evo currently has a first-class *audit trail for change*, not a mechanism for change. Fix: materialization targets + `active_version.py` (§E.3, Phase 3).
+2. **DeepSeek Harness cannot be vendored** — it is TypeScript. Integration is pattern-porting plus an optional sandboxed `PROCESS` backend. `DeerFlow` is Python but drags LangGraph/FastAPI/pydantic into a zero-dependency kernel and contributes a second supervisor loop, which the brief forbids. So: `PORT` the architecture, `BRIDGE`/`PROCESS` the real thing, never as an authority.
+3. **The `Verifier` is 37 lines of four string heuristics.** It cannot judge research output, and an unrecognized expectation silently defaults to pass. Sovereign verification must be rebuilt before autonomy widens (§B.5, Phase 5.7).
+4. **Runtime tool execution is unsandboxed while evolution experiments are properly sandboxed** — and the shell allowlist is bypassable (`validate_command('python3 evil.py') → allowed`, verified by execution here). The asymmetry must be inverted, not grown (§K.4, Phase 4.7).
+5. **Verification should be two layers, and only one of them may say "satisfied".** DeerFlow's receipts are a real zero-LLM layer (150+156 LOC, *message-derived*), and its actual gate is `runtime/goal.py::evaluate_goal_completion` — strict, non-thinking, *"using ONLY the visible conversation evidence"*, fail-closed on `missing_evidence`. Its advertised `judge_enabled` knob is **declared in config and read nowhere** (grep-verified across the whole backend) — so Evo must build receipts + a sovereign hard gate, and skip the phantom. Ported with one deliberate improvement: bind Evo receipts to append-ids, because DeerFlow documents that compaction **renumber**s positional `r1..rN`, letting a pre-compaction `[r3]` resolve to a different call.
+
+6. **DSH's invariants are runtime mechanisms, not test conventions.** 247 `invariant.ts` files; violations **throw** (`InvariantFailure = (message) => never`); checks are prepended so an earlier listener cannot silence them; and a layer with no runtime invariant must state *why*. A pytest file cannot stop a promoted candidate from crossing a boundary; an installed check can.
+
+7. **Capability enablement should be physical.** DeerFlow's `skills/projection.py` (609 LOC) materializes **enabled-only** skill trees into the sandbox filesystem, and its installer defends against zip bombs, member-count bombs, colon/absolute/traversal paths, and executables — with unparseable scanner output ⇒ **block**. Evo's `requires_approval` string-check is a much weaker primitive by comparison.
+
+8. **Memory and architecture version are wired wrong in the hot path**: the kernel retrieves context via a raw `recent_memories()` query instead of the retrieval engine it owns, and `AgentKernel._architecture_version()` returns `""` — so performance cannot be attributed to architecture, which is the exact premise of benchmark-driven promotion (§B.1, §B.10; ~10 lines to fix, Phase 2).
+
+## Deliberate non-goals
+
+No vendoring of either upstream. No second agent loop. No self-modification of source code as a metamorphosis target. No multi-tenant auth. No new persistence authority. `dependencies = []` and offline determinism stay true throughout.
+
+## Implementation status
+
+**`07-UNIFIED-ARCHITECTURE-SPECIFICATION.md` is the normative specification.** The user-approved
+scope was P0–P2: P0 (ratchet tests + live invariant enforcement), P1 (the three dead links +
+documentation integrity), P2 (sovereign→DeerFlow bridge seam, DeepSeek Harness adapters, and the
+universal `SandboxProvider` for every executable tool path). All three are done and green:
+**539 passed / 1 skipped / 1 xfailed / 2 environmental bwrap failures** on `python3 -m pytest -o
+addopts="" -q tests/`, and `verify_sovereign_digest.py --gate` reports **10/10 invariants ok** over
+an 18-file protected set. Full integration and Evolutionary Metamorphosis remain out of scope for
+this batch.
+
+What P2 did **not** do, on purpose: the runtime still does not route turns through
+`BackendRegistry` (loop unification is P4), there is no `evo backends` CLI or `evo.toml`
+`[backends.*]` parsing, no provider grants network egress, and `requires-python` is unchanged so
+DeerFlow's 3.12 floor stays outside the base install. Each is listed with its reason under
+"Deviations from `07`" in `08`. No phase is claimed complete unless its acceptance tests pass.

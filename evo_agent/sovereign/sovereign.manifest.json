@@ -1,0 +1,26 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "benchmark.py": "7adbfb75743cb2e9f9d8e3d6f4970305fb4f57560d4c8a44195de33a0a49f57e",
+    "evolver.py": "abf11545227fd4323398ee304b4b332bee4266226dd91e8309686103e22e4a92",
+    "kernel.py": "515124d80e2183a03cc8b31d07ae665dc54fea1a826bb5ae0d636256d4c56820",
+    "memory.py": "70994748d94cd8483b157b13943837cf2427bd4c7e6ec6fc05ace8b753c78217",
+    "metamorphosis.py": "e127c5d9d512c31ac322ec457bac705b7d2bd6ef014380f66e9cc55cc9b763ca",
+    "orchestrator.py": "3a2b7171f318a6716b090f03b3a12f232497ff11c451cd222c3ec4278015a721",
+    "promotion.py": "cf9066a7ec48f9008c1fd6087dc547f0d6d7384f16291d1bf56227b941cc5dd7",
+    "runtime.py": "af30adace2fec8ba0274e4366c54e1d50594f7ef331effd7812c13da255a88a9",
+    "sandbox.py": "798ece80e429897a2faeffeaef89714622366dfa119e5171689fa0db4bdb40a7",
+    "security.py": "4ae28580f63e02ee274a59bddd3991e602067f74074493d8fce657346740fa4d",
+    "sovereign/__init__.py": "5ba341b08938d5ff920e009be3419a7b3ecdcf6446bffdac69f17c9fd99656fe",
+    "sovereign/architecture.py": "d17c6576874cce3e7c874da51392c48a00cc549b436507b6e3f7c2a23c4b92d2",
+    "sovereign/eligibility.py": "0d58eaab9d0f77226e59c45a39e4e2a15d556023f9df5cc0e50633b03570d18f",
+    "sovereign/invariants.py": "7480edba52a62fe3612b9164cecd99bc56b7691aaeb35d03ccc8b73a045345d9",
+    "sovereign/mediation.py": "9f7b5f3e17e07bccc8e9570c1bd4175d82efd4fb155b08ef89fd88ac6f8fbd78",
+    "sovereign/protected.py": "1cf91fe8d854579c1bcd6541509b6afc93f149b9cbc7ffce5f9c15bfbb1c511c",
+    "storage.py": "21a0e49cd4ae781c2b6715aa5963bc3e1878464ae815db38876c124f6e200c68",
+    "verifier.py": "5dc54429a6be50823cf99732c0ad9faec174f55c5fa1a6023ecb574f3164bb4b"
+  },
+  "format": 1,
+  "note": "Digests of files the agent may not modify. Regenerate with 'python scripts/verify_sovereign_digest.py --write'.",
+  "package": "evo_agent"
+}

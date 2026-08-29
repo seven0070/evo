@@ -21,12 +21,22 @@ def test_workspace_path_cannot_escape(tmp_path: Path):
 
 def test_shell_is_allowlisted_and_restricted(tmp_path: Path):
     registry = ToolRegistry(SecurityPolicy(tmp_path))
-    safe = registry.execute(ToolCall(tool_name="shell", arguments={"command": "printf hello"}, risk=RiskLevel.HIGH))
+    # ``approved=True`` is not ceremony. Since P2 the execution mediator, not the caller, decides,
+    # and a HIGH-risk command must carry approval evidence (the kernel records it after the
+    # operator answers) or it is refused - "nobody was asked" is not consent.
+    safe = registry.execute(ToolCall(tool_name="shell", arguments={"command": "printf hello"}, risk=RiskLevel.HIGH, approved=True))
     assert safe.success
     assert safe.output == "hello"
-    unsafe = registry.execute(ToolCall(tool_name="shell", arguments={"command": "rm -rf x"}, risk=RiskLevel.HIGH))
+    unsafe = registry.execute(ToolCall(tool_name="shell", arguments={"command": "rm -rf x"}, risk=RiskLevel.HIGH, approved=True))
     assert not unsafe.success
     assert any(token in (unsafe.error or "") for token in ("restricted", "not allowlisted"))
+
+
+def test_shell_without_approval_evidence_is_refused(tmp_path: Path):
+    registry = ToolRegistry(SecurityPolicy(tmp_path))
+    blocked = registry.execute(ToolCall(tool_name="shell", arguments={"command": "printf hello"}, risk=RiskLevel.HIGH))
+    assert blocked.success is False
+    assert "approv" in (blocked.error or "").lower()
 
 
 def test_kernel_blocks_medium_risk_without_approval(tmp_path: Path):

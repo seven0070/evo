@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import subprocess
-from pathlib import Path
+import os
+import shlex
 from typing import Any, Callable
 
 from .models import RiskLevel, ToolCall, ToolResult
+from .ports.contracts import ExecRequest
 from .security import SecurityPolicy
+from .sovereign.mediation import ApprovalMediator
 
 
 @dataclass
@@ -19,10 +21,26 @@ class ToolSpec:
     handler: Callable[[ToolCall], ToolResult]
 
 
+#: Environment variables a confined command may inherit. Only non-secret navigation variables:
+#: the child that needs a credential should be given one deliberately, not find the parent's.
+INHERITED_ENVIRONMENT = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH")
+
+
 class ToolRegistry:
-    def __init__(self, policy: SecurityPolicy):
+    def __init__(
+        self,
+        policy: SecurityPolicy,
+        *,
+        approver: Callable[[str, dict[str, Any]], bool] | None = None,
+        on_event: Callable[[str, dict[str, Any]], None] | None = None,
+        mediator: ApprovalMediator | None = None,
+    ):
         self.policy = policy
         self._tools: dict[str, ToolSpec] = {}
+        #: Every executable path goes through the mediator, which is also the only place that
+        #: decides. ``registry.execute`` never spawns anything itself, so an integrated harness
+        #: cannot get a weaker gate by calling a different entry point.
+        self.mediator = mediator or ApprovalMediator(policy, approver=approver, on_event=on_event)
         self.register_defaults()
 
     def register(self, spec: ToolSpec) -> None:
@@ -107,26 +125,62 @@ class ToolRegistry:
             return ToolResult(call.call_id, call.tool_name, False, error=str(exc))
 
     def _shell(self, call: ToolCall) -> ToolResult:
-        command = call.arguments["command"]
-        allowed, reason = self.policy.validate_command(command)
-        if not allowed:
-            return ToolResult(call.call_id, call.tool_name, False, error=reason)
+        """Run one allowlisted command inside the selected isolation provider.
+
+        There is deliberately no shell here. The command line is tokenised and handed to the
+        provider as argv, so chaining and expansion are not merely disallowed by a pattern list -
+        there is nothing that would interpret them. Confinement, timeout, and output bounding are
+        the provider's, not this function's, because the same limits must apply to a bridge request
+        and to this tool, and duplicated limits drift.
+        """
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self.policy.workspace,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=self.policy.max_command_seconds,
-                check=False,
+            command = str(call.arguments["command"])
+        except KeyError as exc:
+            return ToolResult(call.call_id, call.tool_name, False, error=f"Missing required argument: {exc}")
+        if len(command) > 4096:
+            return ToolResult(call.call_id, call.tool_name, False, error="Command is invalid or exceeds the bounded size")
+        try:
+            argv = tuple(shlex.split(command))
+        except ValueError as exc:
+            return ToolResult(call.call_id, call.tool_name, False, error=f"Invalid shell syntax: {exc}")
+        if not argv:
+            return ToolResult(call.call_id, call.tool_name, False, error="Command is empty")
+        request = ExecRequest(
+            argv=argv,
+            cwd=self.policy.workspace,
+            timeout_seconds=self.policy.max_command_seconds,
+            max_output_bytes=self.policy.max_output_bytes,
+            env={key: value for key in INHERITED_ENVIRONMENT if (value := os.environ.get(key))},
+            label="tool.shell",
+        )
+        result = self.mediator.execute(
+            request,
+            tool_name="shell",
+            arguments=dict(call.arguments),
+            risk=call.risk,
+            approved=call.approved,
+        )
+        metadata = {
+            "returncode": result.returncode,
+            "provider": result.provider,
+            "isolated": result.isolated,
+            "enforcement": getattr(self.policy, "sandbox_enforcement", "auto"),
+        }
+        if result.notes:
+            metadata["notes"] = list(result.notes)
+        if result.refusal:
+            metadata["denied"] = True
+            return ToolResult(call.call_id, call.tool_name, False, output=result.output, error=result.refusal, metadata=metadata)
+        if result.truncated:
+            metadata["truncated"] = True
+        if "terminated after" in " ".join(result.notes):
+            return ToolResult(
+                call.call_id,
+                call.tool_name,
+                False,
+                error=f"Command exceeded {self.policy.max_command_seconds}s timeout",
+                metadata=metadata,
             )
-            output = (completed.stdout + completed.stderr).strip()
-            metadata = {"returncode": completed.returncode}
-            if completed.returncode:
-                return ToolResult(call.call_id, call.tool_name, False, output, f"Command exited with {completed.returncode}", metadata)
-            return ToolResult(call.call_id, call.tool_name, True, output, metadata=metadata)
-        except subprocess.TimeoutExpired:
-            return ToolResult(call.call_id, call.tool_name, False, error=f"Command exceeded {self.policy.max_command_seconds}s timeout")
-        except Exception as exc:
-            return ToolResult(call.call_id, call.tool_name, False, error=str(exc))
+        if result.returncode:
+            return ToolResult(call.call_id, call.tool_name, False, result.output, f"Command exited with {result.returncode}", metadata)
+        return ToolResult(call.call_id, call.tool_name, True, result.output, metadata=metadata)

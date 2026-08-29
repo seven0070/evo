@@ -456,7 +456,15 @@ class PromotionEngine:
         self.rollback(record.candidate_version, reason, record.promotion_id)
         return self._promotion_record_from_row(self.store.promotion_record_by_id(record.promotion_id))
 
-    def _active_version(self) -> VersionRecord | None:
+    def active_version(self) -> VersionRecord | None:
+        """The version ``versions/active`` currently resolves to.
+
+        Public by design. "What is running right now" was only answerable through
+        ``_active_version``, a private method of this class, so the orchestrator reached
+        around the object for it (00 §B.3). Any consumer that reimplements that lookup is a
+        consumer that can disagree with the promotion engine about what is active, which is
+        the exact confusion promotion and rollback exist to prevent.
+        """
         if self.active_link.is_symlink():
             target = self.active_link.resolve()
             row = next((item for item in self.store.find_versions(status=VersionStatus.ACTIVE.value) if Path(self._version_from_row(item).version_path).resolve() == target), None)
@@ -464,6 +472,10 @@ class PromotionEngine:
                 return self._version_from_row(row)
         row = next(iter(self.store.find_versions(status=VersionStatus.ACTIVE.value)), None)
         return self._version_from_row(row) if row else None
+
+    def _active_version(self) -> VersionRecord | None:
+        """Deprecated alias for :meth:`active_version`; kept for existing callers."""
+        return self.active_version()
 
     def _previous_version(self, exclude: str) -> VersionRecord | None:
         rows = self.store.find_versions(status=VersionStatus.PREVIOUS.value)

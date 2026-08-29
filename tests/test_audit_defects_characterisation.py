@@ -1,0 +1,49 @@
+"""Characterisation tests for the audit's known defects - each one is a promise, not a wish.
+
+Every test here is ``xfail(strict=True)``: it documents a real, verified defect, and the run
+fails if the defect disappears without the marker being removed. The xfail ledger is the
+implementation schedule in its most honest form - it can only shrink, and a phase that
+"fixed" something is forced to prove it by deleting the marker in review.
+
+Repair assignment (docs/evolution/07-UNIFIED-ARCHITECTURE-SPECIFICATION.md §8):
+
+* verifier default-open on unrecognised expectations        -> P4 (verification model)
+
+Repaired and removed from this ledger, each with a positive test replacing the marker:
+kernel memory-at-plan-time, kernel architecture attribution, and the public active-version
+accessor (``tests/test_dead_links_closed.py``), and unsandboxed runtime tool execution
+(``tests/test_sandbox_providers.py``).
+
+The isolation entry was not simply deleted, because the specification's rule is not what that
+entry asserted. It claimed ``python3 evil.py`` must be *denied*; S2 says an interpreter running a
+file inside the task's own write-set is allowed but **confined** - the boundary is the namespace,
+and an allowlist that tries to be the boundary is what produced the original defect (a
+15-word blocklist beside an unrestricted ``shell=True``). The positive test therefore asserts
+confinement and the write-set, not a denial that the design does not promise.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+from evo_agent.kernel import AgentKernel  # noqa: E402
+from evo_agent.model_adapter import RuleBasedAdapter  # noqa: E402
+from evo_agent.models import PlanStep, ToolResult, VerificationResult  # noqa: E402
+from evo_agent.promotion import PromotionEngine  # noqa: E402
+from evo_agent.security import SecurityPolicy  # noqa: E402
+from evo_agent.verifier import Verifier  # noqa: E402
+
+xfail = pytest.mark.xfail(strict=True, reason="characterisation of an audited defect; see docs/evolution/00-AUDIT.md")
+
+
+@xfail
+def test_verifier_refuses_an_expectation_it_cannot_check(tmp_path: Path):
+    """B.5/S4: an unrecognised expectation silently passes (00 §B.5). Repaired in P4."""
+    verifier = Verifier(SecurityPolicy(tmp_path))
+    step = PlanStep(step_id="s1", description="write a report", tool_name="workspace_write", verification="report cites at least three sources")
+    result = ToolResult(call_id="c1", tool_name="workspace_write", success=True, output="anything at all")
+    verdict: VerificationResult = verifier.verify(step, result)
+    assert not verdict.success, "an unverifiable expectation must fail closed, not default to pass"

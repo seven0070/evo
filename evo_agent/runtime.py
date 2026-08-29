@@ -6,6 +6,7 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any, Callable, Iterable
@@ -725,6 +726,20 @@ class RecoveryManager:
         return task.status.value
 
 
+def _sovereign_drift_override() -> tuple[bool, str]:
+    """The one developer override, read from the environment, never from a config file.
+
+    Kept out of ``evo.toml`` deliberately: a config file is something the agent can be asked to
+    write, and a switch that disables provenance verification must not be reachable that way.
+    Returns ``(accepted, variable_name)`` so the audit record can name what was set.
+    """
+    import os
+
+    from .sovereign.protected import DRIFT_ENVIRONMENT_VARIABLE as name
+
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}, name
+
+
 class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
@@ -800,6 +815,11 @@ class AgentRuntime:
                 return self.runtime_record
             if self.kill_switch_active:
                 raise RuntimeError("runtime kill switch is active")
+            # Provenance before anything else: an agent that cannot show which bytes it is
+            # running must not start making decisions. This is a pure read of the installed
+            # package, and it is deliberately ahead of every state mutation so that a
+            # mismatch leaves the persisted runtime record untouched and still inspectable.
+            self._validate_sovereign_boundary()
             previous_state = self.state
             if previous_state is not RuntimeState.STARTING:
                 # A fresh process may load READY/EXECUTING/etc. from a prior process.
@@ -1470,11 +1490,11 @@ class AgentRuntime:
         return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
     def _architecture_version(self) -> str:
-        try:
-            architecture = self.evolution.metamorphosis.get_architecture()
-            return str(getattr(architecture, "architecture_version", ""))
-        except Exception:
-            return ""
+        """Delegated to the shared resolver so both loop paths report one definition (08 P1)."""
+        from .sovereign import resolve_architecture_version
+
+        engine = getattr(self.evolution, "metamorphosis", None)
+        return resolve_architecture_version(self.store, self.source_root, agent_version=__version__, engine=engine)
 
     def _validate_database(self) -> None:
         report = self.store.validate_database_integrity()
@@ -1482,6 +1502,60 @@ class AgentRuntime:
         with self.store._connect() as db:
             db.execute("SELECT COUNT(*) FROM runtime_states").fetchone()
             db.execute("SELECT COUNT(*) FROM runtime_tasks").fetchone()
+
+    def _validate_sovereign_boundary(self) -> dict[str, Any]:
+        """Verify the protected byte set and the cheap live invariants (07 §1 R1, R7).
+
+        Imported lazily so that the sovereign check is reachable even when the rest of the
+        runtime is not, and so that a startup path stays free of the expensive registry.
+        """
+        from .sovereign import run_invariants
+
+        results = run_invariants(cheap_only=True)
+        failures = [item for item in results if not item.ok]
+        summary = {
+            "checked_at": utc_now(),
+            "checks": [item.code for item in results],
+            "protected_files": len(results[0].evidence.get("digests", {})) if results else 0,
+            "failures": [{"code": item.code, "detail": item.detail} for item in failures],
+        }
+        if failures:
+            self._emit(EventType.SOVEREIGN_DRIFT_DETECTED, {"detail": summary["failures"], "runtime_id": self.runtime_id}, self.runtime_id)
+            detail = "; ".join(f"{item.code}: {item.detail}" for item in failures)
+            accepted, override_name = _sovereign_drift_override()
+            if accepted:
+                # A developer editing the protected set legitimately would otherwise be unable
+                # to run the suite at all, and the predictable response to that is to delete the
+                # check. So the override exists, it is loud, and it is permanently in the audit:
+                # it can never be mistaken for a clean start.
+                summary["drift_accepted"] = True
+                self.runtime_record.metadata["sovereign_boundary"] = summary
+                self._emit(
+                    EventType.SOVEREIGN_DRIFT_ACCEPTED,
+                    {"detail": detail, "override": override_name, "warning": "protected files differ from the published manifest; this runtime is NOT a verified build"},
+                    self.runtime_id,
+                )
+                print(f"evo: sovereign drift accepted via {override_name}: {detail}", file=sys.stderr)
+                return summary
+            raise RuntimeError(f"sovereign boundary check failed: {detail}")
+        self.runtime_record.metadata["sovereign_boundary"] = summary
+        self._emit(EventType.SOVEREIGN_VERIFIED, {"protected_files": summary["protected_files"], "checks": summary["checks"]}, self.runtime_id)
+        return summary
+
+    def sovereign_report(self, *, full: bool = False) -> dict[str, Any]:
+        """The protected-set and invariant state, for ``evo status`` and the desktop bridge.
+
+        ``full=True`` runs the whole registry (source scans), so it is a diagnostic call,
+        not a hot path.
+        """
+        from .sovereign import run_invariants
+
+        results = run_invariants(cheap_only=not full)
+        return {
+            "cached": dict(self.runtime_record.metadata.get("sovereign_boundary", {})),
+            "ok": all(item.ok for item in results),
+            "results": [item.to_dict() for item in results],
+        }
 
     def _validate_architecture(self) -> None:
         if not self.source_root.is_dir():

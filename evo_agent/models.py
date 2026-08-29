@@ -521,6 +521,17 @@ class EventType(str, Enum):
     STRATEGIC_ACTION_QUEUED = "strategic_action_queued"
     STRATEGIC_ACTION_BLOCKED = "strategic_action_blocked"
 
+    # Sovereign boundary and integrated-capability events (docs/evolution/07 §5).
+    # Appended only: existing values are never reused or renumbered, because stored
+    # events are the audit record and an old row must keep its meaning.
+    SOVEREIGN_VERIFIED = "sovereign_verified"
+    SOVEREIGN_DRIFT_DETECTED = "sovereign_drift_detected"
+    INVARIANT_VIOLATION = "invariant_violation"
+    SECURITY_DEGRADED = "security_degraded"
+    RUNTIME_BACKEND_SELECTED = "runtime_backend_selected"
+    MEMORY_RETRIEVED = "memory_retrieved"
+    SOVEREIGN_DRIFT_ACCEPTED = "sovereign_drift_accepted"
+
 
 @dataclass
 class Goal:
