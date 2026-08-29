@@ -20,6 +20,12 @@ class ToolSpec:
     arguments: dict[str, Any]
     handler: Callable[[ToolCall], ToolResult]
 
+#: Risk ordering, declared here rather than derived from ``RiskLevel``'s declaration order: the enum is
+#: a value type that other modules compare for equality, and "which level is stricter" is a policy of the
+#: registry that enforces it. An overlay raising a floor must never be able to *lower* one, and that rule
+#: needs one authoritative ranking rather than two that happen to agree today.
+RISK_ORDER: tuple[RiskLevel, ...] = (RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL)
+
 
 #: Environment variables a confined command may inherit. Only non-secret navigation variables:
 #: the child that needs a credential should be given one deliberately, not find the parent's.
@@ -42,6 +48,12 @@ class ToolRegistry:
         #: cannot get a weaker gate by calling a different entry point.
         self.mediator = mediator or ApprovalMediator(policy, approver=approver, on_event=on_event)
         self.register_defaults()
+        #: Registration order, captured once. An overlay may reorder the tools; only this makes the
+        #: reordering reversible without a restart.
+        self._default_order: tuple[str, ...] = tuple(self._tools)
+        #: Registration risk floors, captured once for the same reason: an overlay raises a floor and a
+        #: rollback has to bring the old one back without restarting the process.
+        self._default_risks: dict[str, RiskLevel] = {name: spec.risk for name, spec in self._tools.items()}
 
     def register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
@@ -50,6 +62,108 @@ class ToolRegistry:
         if name not in self._tools:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name]
+
+    def risk_floors(self) -> dict[str, str]:
+        """The current per-tool risk floor, as names - the view an overlay's effect is reported from."""
+        return {name: spec.risk.value for name, spec in self._tools.items()}
+
+    def plan_risk_uplift(self, uplift: dict[str, int] | None) -> tuple[dict[str, dict[str, str]], list[str]]:
+        """Decide what each tool's floor should be, without writing anything. ``(changes, refusals)``.
+
+        The target value for every registered tool is ``uplift[name]`` if the overlay names it and the
+        **registered** floor otherwise - a merge over the shipped baseline, exactly like the resource-limit
+        leg. That single choice buys both properties that matter here: applying the same overlay twice
+        cannot drift, and a rollback (which names nothing) restores each raised floor, so a candidate's
+        value cannot outlive it.
+
+        Refusals are whole-leg refusals, and only two kinds: a name the registry does not have, and an
+        uplift that would put a tool *below* its registered floor. Ranking is compared against the
+        registered value rather than the current one so that a second application of the same overlay still
+        reads as "no change" instead of as an attempted downgrade.
+        """
+        requested = dict(uplift or {})
+        desired: dict[str, RiskLevel] = {}
+        refused: list[str] = []
+        for name in requested:
+            if str(name) not in self._tools:
+                refused.append(f"{name}: not a registered tool")
+        for name, spec in self._tools.items():
+            baseline = self._default_risks.get(name, spec.risk)
+            if name not in requested:
+                desired[name] = baseline
+                continue
+            try:
+                index = int(requested[name])
+            except (TypeError, ValueError):
+                refused.append(f"{name}: {requested[name]!r} is not a risk rank")
+                desired[name] = baseline
+                continue
+            if index < 1 or index >= len(RISK_ORDER):
+                refused.append(f"{name}: rank {index} is outside 1..{len(RISK_ORDER) - 1}")
+                desired[name] = baseline
+                continue
+            target = RISK_ORDER[index]
+            if RISK_ORDER.index(target) < RISK_ORDER.index(baseline):
+                refused.append(
+                    f"{name}: {target.value} is below the registered floor {baseline.value}; a risk floor may only rise"
+                )
+                desired[name] = baseline
+                continue
+            desired[name] = target
+        if refused:
+            return {}, refused
+        changes = {
+            name: {"from": self._tools[name].risk.value, "to": level.value}
+            for name, level in desired.items()
+            if self._tools[name].risk is not level
+        }
+        return changes, []
+
+    def apply_risk_uplift(self, decisions: dict[str, dict[str, str]]) -> None:
+        for name, move in (decisions or {}).items():
+            if name in self._tools:
+                self._tools[name].risk = RiskLevel(move["to"])
+
+    def reset_risk_floors(self) -> list[str]:
+        """Restore every floor to its registered value. Returns the tools that moved."""
+        restored: list[str] = []
+        for name, level in self._default_risks.items():
+            spec = self._tools.get(name)
+            if spec is not None and spec.risk is not level:
+                restored.append(name)
+                spec.risk = level
+        return restored
+
+    def plan_preference(self, preference: list[str] | tuple[str, ...] | None) -> tuple[list[str], list[str]]:
+        """Which names would be honoured, and which are unknown. Pure; see :meth:`reorder`."""
+        wanted = [str(name) for name in (preference or ()) if str(name) in self._tools]
+        unknown = [str(name) for name in (preference or ()) if str(name) not in self._tools]
+        return list(dict.fromkeys(wanted)), unknown
+
+    def reorder(self, preference: list[str] | tuple[str, ...] | None = None) -> list[str]:
+        """Put preferred tools first in the order a model is shown them, dropping nothing.
+
+        An overlay may express a *preference* among the tools that already exist (07 §4,
+        "capability-to-tool preference order within the permission set already granted"). It may not
+        add, remove, or rename a tool: unknown names are reported and ignored rather than failing the
+        cycle, and the tools nobody mentioned keep their registration order at the end, so a
+        preference can only ever change which tool is offered first - never which tools are offered.
+        """
+        if preference is None:
+            # Restore, not shuffle: the default order is recorded once at registration, so a rollback
+            # returns the exact view the agent shipped with rather than an unspecified one.
+            if self._default_order and set(self._default_order) == set(self._tools):
+                self._tools = {name: self._tools[name] for name in self._default_order}
+            return []
+        wanted = [name for name in (preference or ()) if name in self._tools]
+        ordered = {name: self._tools[name] for name in wanted}
+        ordered.update({name: spec for name, spec in self._tools.items() if name not in ordered})
+        unknown = [name for name in (preference or ()) if name not in self._tools]
+        self._tools = ordered
+        return unknown
+
+    def order(self) -> list[str]:
+        return list(self._tools)
 
     def schemas(self) -> list[dict[str, Any]]:
         return [

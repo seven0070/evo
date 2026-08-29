@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable
 
 from ..ports.contracts import ExecRequest, ExecResult, ProviderAvailability
+from ..ports.evolution_target import MountSet
 from .base import ConfinedLaunch, format_notes, merge_streams, sanitized_environment, terminate
 
 
@@ -48,6 +49,15 @@ class HostProvider:
             supports_pid_namespace=False,
             detail={"permitted": True, "platform": sys.platform},
         )
+
+    def mount_set_for(self, request: ExecRequest) -> MountSet:
+        """Nothing is read-only, nothing is masked. Stated, because the absence is the point.
+
+        The host provider exists so that a degraded run is *reported* as unconfined rather than
+        described as "no provider". Its mount set is the shape that says so: the whole filesystem is
+        writable and nothing is hidden.
+        """
+        return MountSet(read_only=(), writable=(str(Path(request.cwd)),), masked=(), deny_network=False, deny_host_pids=False)
 
     def prepare(self, request: ExecRequest) -> ConfinedLaunch:
         """The unconfined launch: same shape, so callers never special-case "no sandbox".

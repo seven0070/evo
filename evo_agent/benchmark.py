@@ -495,10 +495,18 @@ class BenchmarkEngine:
         return "from pathlib import Path\ndef test_benchmark_probe():\n    " + body + "\n"
 
     @staticmethod
-    def _bwrap_usable() -> bool:
+    def _bwrap_executable() -> str | None:
+        """The bubblewrap to *run*, or None. The same resolution SandboxEngine uses, for the same reason.
+
+        Probing with the absolute path and then exec'ing the bare name means the second lookup happens
+        in the child, against a sanitized ``PATH`` - a different lookup than the parent's. Two engines
+        duplicating this method is the smaller risk of the two available: the alternative is a shared
+        helper that only one of them uses on a bad day, and then a benchmark would confine a binary
+        other than the one the experiment confined.
+        """
         executable = shutil.which("bwrap")
         if not executable:
-            return False
+            return None
         try:
             probe = subprocess.run(
                 [executable, "--die-with-parent", "--unshare-user-try", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
@@ -507,19 +515,24 @@ class BenchmarkEngine:
                 timeout=3,
                 check=False,
             )
-            return probe.returncode == 0
         except (OSError, subprocess.SubprocessError):
-            return False
+            return None
+        return executable if probe.returncode == 0 else None
+
+    @classmethod
+    def _bwrap_usable(cls) -> bool:
+        return cls._bwrap_executable() is not None
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
-        if self._bwrap_usable():
+        bwrap = self._bwrap_executable()
+        if bwrap:
             experiment_dir = location.parent
             results_dir = experiment_dir / "results"
             home_dir = experiment_dir / "metadata" / "home"
             results_dir.mkdir(parents=True, exist_ok=True)
             home_dir.mkdir(parents=True, exist_ok=True)
             args = [
-                "bwrap",
+                bwrap,
                 "--die-with-parent",
                 "--unshare-user-try",
                 "--unshare-net",
@@ -527,6 +540,10 @@ class BenchmarkEngine:
                 "--ro-bind", "/", "/",
                 "--dev", "/dev",
                 "--proc", "/proc",
+                # Host sysfs describes the host's devices and interfaces, which a namespace with no
+                # network must not be shown. Same mask SandboxEngine applies, so the benchmark judges
+                # the same conditions the experiment measured.
+                "--tmpfs", "/sys",
                 "--setenv", "HOME", str(home_dir),
                 "--setenv", "TMPDIR", str(results_dir),
                 "--setenv", "PYTHONNOUSERSITE", "1",
@@ -541,7 +558,18 @@ class BenchmarkEngine:
                 "--chdir", str(location),
             ]
             return [*args, *command]
-        script = 'set -eu; mount --make-rprivate /; cd "$1"; shift 2; exec "$@"'
+        # ``$2`` is the production root, and it was already being passed and then shifted away without
+        # anything done to it. Read-only is what SandboxEngine's equivalent branch promises for the same
+        # path; a benchmark that lets the candidate write into the tree it is measuring makes the
+        # benchmark's own hash check the only thing standing between that write and the next run.
+        script = (
+            'set -eu; '
+            'mount --make-rprivate /; '
+            'mount --bind "$2" "$2"; '
+            'mount -o remount,bind,ro "$2"; '
+            'mount -t sysfs sysfs /sys 2>/dev/null || echo "EVO_SYSFS_NOT_REMOUNTED"; '
+            'cd "$1"; shift 2; exec "$@"'
+        )
         return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-benchmark", str(location), str(self.source_root), *command]
 
     @staticmethod

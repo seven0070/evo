@@ -322,6 +322,12 @@ class ExecRequest:
     cwd: Path
     writable: tuple[Path, ...] = ()
     read_only: tuple[Path, ...] = ()
+    #: Paths the child must not see at all. The third leg of a mount set, and the one that was
+    #: missing: read-only-ness and writability can both be expressed by a bind, but "the host's view
+    #: of this directory is not information you should have" needs a mask (an empty tmpfs, or simply
+    #: not binding it). Without a field for it, every provider would have to decide on its own what
+    #: to hide, which is how a *confinement* layer becomes a policy layer.
+    masked: tuple[Path, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     network: bool = False
     timeout_seconds: float = 30.0
@@ -350,6 +356,11 @@ class ExecRequest:
         object.__setattr__(self, "cwd", Path(self.cwd))
         object.__setattr__(self, "writable", tuple(Path(item) for item in self.writable))
         object.__setattr__(self, "read_only", tuple(Path(item) for item in self.read_only))
+        for field_name in ("writable", "read_only", "masked"):
+            for item in getattr(self, field_name):
+                if not str(item).startswith("/") and not str(item)[1:2] == ":":
+                    raise ValueError(f"ExecRequest.{field_name} entries must be absolute paths, got {item!r}")
+        object.__setattr__(self, "masked", tuple(Path(item) for item in self.masked))
         if self.timeout_seconds <= 0:
             # Clamped rather than rejected: this value arrives from a policy a user may edit, and a
             # ceiling that reads "0 means forever" is the failure this whole field exists to prevent.

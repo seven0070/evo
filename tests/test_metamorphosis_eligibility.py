@@ -42,11 +42,40 @@ def test_every_target_kind_declares_a_benchmark_suite():
         assert kind.benchmark_suites, f"{kind.name} is a target with no way to detect its regression"
 
 
-def test_nothing_is_claimed_loadable_before_materialization():
-    """P0-P2 must not quietly pretend the spine is causal (00 §B.3)."""
-    assert not [kind.name for kind in TARGET_KINDS if kind.loadable], (
-        "a loadable target kind means active_version.py exists; that is P3 work and needs its own phase"
-    )
+def test_a_loadable_claim_names_a_document_the_runtime_reads():
+    """The P0 version of this test asserted *nothing* was loadable (00 §B.3). P3 made it a check.
+
+    A blanket "false" was the honest state before materialization existed; keeping it would now be a
+    lie in the other direction, so the guard became a correspondence test instead: every ``loadable``
+    claim must name a kind that has (a) a document whose spec declares a consumer and (b) a
+    materializer that will write it. That is what stops the flag from being re-set to ``True`` for a
+    document nothing reads - the exact state this repository spent three phases removing.
+    """
+    from evo_agent.active_version import DOCUMENTS, TARGET_TO_KIND
+    from evo_agent.materialization import materializer_for
+
+    loaded_kinds = {spec.kind for spec in DOCUMENTS.values() if spec.loadable}
+    claimed = {TARGET_TO_KIND.get(kind.name, kind.name) for kind in TARGET_KINDS if kind.loadable}
+    assert claimed, "P3 exists to make promotion causal; nothing claiming to be loaded is a regression"
+    assert claimed <= loaded_kinds, f"claimed loadable without a loader: {sorted(claimed - loaded_kinds)}"
+    for kind in TARGET_KINDS:
+        if not kind.loadable:
+            continue
+        mapped = TARGET_TO_KIND.get(kind.name, kind.name)
+        materializer = materializer_for(mapped)
+        assert materializer is not None, f"{kind.name} is loadable but no materializer owns it"
+        assert any(DOCUMENTS[path].loadable for path in materializer.owned_documents if path in DOCUMENTS), (
+            f"{kind.name} is loadable but every document its materializer owns is refused as unloaded"
+        )
+
+
+def test_the_unloaded_kinds_say_which_phase_loads_them():
+    """A ``False`` with no phase attached is a permanent excuse, so the registry may not carry one."""
+    for kind in TARGET_KINDS:
+        if kind.loadable:
+            continue
+        assert kind.phase, f"{kind.name} is not loadable and names no phase to fix it"
+        assert kind.notes, f"{kind.name} is not loadable and states no reason"
 
 
 def test_source_code_is_not_a_target_and_says_so():
@@ -93,7 +122,9 @@ def test_monotonic_fields_are_named_so_hardening_can_be_checked():
 def test_eligible_kinds_are_a_view_of_the_registry():
     kinds = eligible_target_kinds()
     assert kinds and len(kinds) == len(TARGET_KINDS)
-    assert eligible_target_kinds(loadable_only=True) == ()
+    loadable = eligible_target_kinds(loadable_only=True)
+    assert loadable, "P3: the spine is causal for these kinds, so the view must show them"
+    assert {kind.name for kind in loadable} == {kind.name for kind in TARGET_KINDS if kind.loadable}
 
 
 def test_report_is_json_serialisable_and_versioned():

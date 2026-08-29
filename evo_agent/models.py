@@ -340,6 +340,12 @@ class EventType(str, Enum):
     CANDIDATE_INTEGRITY_VERIFIED = "candidate_integrity_verified"
     PROMOTION_STARTED = "promotion_started"
     PRODUCTION_VERSION_ACTIVATED = "production_version_activated"
+    #: The capability substrate an agent actually resolved (P3). A pair, not one event, because
+    #: "what is loaded" and "what its digest must be" answer different questions: the first is read
+    #: by anyone asking why behaviour changed, the second is compared by anyone checking that
+    #: activation delivered what promotion claimed.
+    OVERLAY_RESOLVED = "overlay_resolved"
+    ACTIVE_CAPABILITIES_DIGEST = "active_capabilities_digest"
     POST_PROMOTION_HEALTH_CHECK = "post_promotion_health_check"
     PROMOTION_COMPLETED = "promotion_completed"
     PROMOTION_FAILED = "promotion_failed"

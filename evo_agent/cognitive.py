@@ -802,6 +802,20 @@ class CognitivePersistence:
 
 
 class CognitiveOrchestrator:
+    #: The shipped caps, as data. The runtime needs them back on rollback (an overlay that disappears
+    #: must restore these numbers, not leave its own behind), and a second literal copy of the table in
+    #: ``runtime.py`` would be a third place for a default to disagree with the others.
+    DEFAULT_POLICY: dict[str, int] = {
+        "max_subtasks": 12,
+        "max_plan_candidates": 3,
+        "max_reasoning_iterations": 4,
+        "max_replans": 1,
+        "max_execution_time": 120,
+        "max_context_size": 12000,
+        "max_tool_calls": 24,
+    }
+
+
     """Bounded cognitive coordinator. Kernel, security, approvals, and Phase 9 remain authoritative."""
 
     def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: AgentKernel | None = None, kernel_factory: Callable[[Path, SQLiteStore], AgentKernel] | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, policy: dict[str, int] | None = None, external_integrations: Any | None = None, integration_intelligence: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None):
@@ -812,7 +826,7 @@ class CognitiveOrchestrator:
         self.kernel = kernel
         self.kernel_factory = kernel_factory
         self.evolution = evolution_orchestrator or EvolutionOrchestrator(self.store, Path(__file__).resolve().parent.parent)
-        self.policy = {"max_subtasks": 12, "max_plan_candidates": 3, "max_reasoning_iterations": 4, "max_replans": 1, "max_execution_time": 120, "max_context_size": 12000, "max_tool_calls": 24}
+        self.policy = dict(self.DEFAULT_POLICY)
         self.policy.update(policy or {})
         self.goal_engine = GoalUnderstandingEngine()
         self.intent_engine = IntentEngine()
@@ -839,6 +853,76 @@ class CognitiveOrchestrator:
         self.adaptive_learning = adaptive_learning
         self.self_model = self_model
         self.meta_reasoning = meta_reasoning
+
+    #: caps the engines captured at construction, and the attribute to re-bind when one changes.
+    #: Without this table an overlay could set ``policy["max_subtasks"]`` while the decomposition
+    #: engine went on using the number it was built with - a document that reads as applied and is
+    #: inert, which is the failure mode this phase exists to eliminate.
+    POLICY_BINDINGS: dict[str, tuple[str, str]] = {
+        "max_subtasks": ("decomposer", "max_subtasks"),
+        "max_plan_candidates": ("planner", "max_plan_candidates"),
+        "max_reasoning_iterations": ("reasoner", "max_reasoning_iterations"),
+        "max_replans": ("replanner", "max_replans"),
+        "max_context_size": ("context", "max_context_size"),
+    }
+
+    def apply_policy(self, overrides: dict[str, int] | None) -> dict[str, Any]:
+        """Adopt validated caps from an overlay and report exactly what moved.
+
+        The caller has already run the payload through the schema in :mod:`evo_agent.active_version`;
+        this method re-checks membership rather than trusting that, because it is public and will be
+        called from somewhere the schema is not. A cap that is not declared in ``policy`` is refused -
+        a new policy knob has to be a decision in two places before an evolution candidate can use it
+        to change behaviour.
+        """
+        decisions, refused = self.plan_policy(overrides)
+        if refused:
+            return {"applied": {}, "refused": refused, "not_applied": True}
+        applied: dict[str, dict[str, int]] = {}
+        for key, number, binding in decisions:
+            if int(self.policy[key]) == number:
+                continue
+            applied[key] = {"from": int(self.policy[key]), "to": number}
+            self.policy[key] = number
+            if binding:
+                owner_name, attribute = binding
+                setattr(getattr(self, owner_name), attribute, number)
+        return {"applied": applied, "refused": refused}
+
+    def plan_policy(self, overrides: dict[str, int] | None) -> tuple[list[tuple[str, int, tuple[str, str] | None]], list[str]]:
+        """Decide which caps would be adopted, without adopting any. Returns ``(decisions, refusals)``.
+
+        The whole-overlay atomicity in :mod:`evo_agent.active_version` needs every consumer to be able to
+        answer "would you accept this?" before anything is written, because a policy that half-applied
+        would leave the ledger saying *refused* while a planner ran under a raised cap - and the next
+        cycle re-applies from the shipped defaults, so the half-state would persist silently.
+
+        Each decision carries its binding target so the commit cannot re-derive (and so mis-derive) what
+        was approved here.
+        """
+        decisions: list[tuple[str, int, tuple[str, str] | None]] = []
+        refused: list[str] = []
+        for key, value in (overrides or {}).items():
+            if key not in self.policy:
+                refused.append(f"{key}: not a policy field this orchestrator declares")
+                continue
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                refused.append(f"{key}: {value!r} is not an integer")
+                continue
+            if number < 1:
+                refused.append(f"{key}: {number} is below the floor of 1")
+                continue
+            binding = self.POLICY_BINDINGS.get(key)
+            if binding:
+                owner_name, attribute = binding
+                owner = getattr(self, owner_name, None)
+                if owner is None or not hasattr(owner, attribute):
+                    refused.append(f"{key}: bound to {owner_name}.{attribute}, which is not present")
+                    continue
+            decisions.append((key, number, binding))
+        return decisions, refused
 
     def run(self, text: str, goal_id: str | None = None) -> CognitiveResult:
         return self.run_goal(text, goal_id)

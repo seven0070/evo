@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-ELIGIBILITY_VERSION = "metamorphosis-eligibility-v1"
+ELIGIBILITY_VERSION = "metamorphosis-eligibility-v2"
 
 #: Payload shapes that are structurally impossible targets. Evo does not evolve by
 #: editing its own source: there is no materializer for it (07 §4, "No — structurally
@@ -99,49 +99,53 @@ TARGET_KINDS: tuple[TargetKind, ...] = (
         payload="strategy artifact selection: which planner/heuristic set a task class uses",
         loadable=False,
         benchmark_suites=("core-local", "regression"),
-        phase="P3",
-        notes="Nothing reads evolution_config.json yet (00 §B.3); loadable flips with active_version.py",
+        phase="P4",
+        notes="the overlay can carry a preference list; the selector that consumes it is P4 work",
         sandbox_accepted=True,
     ),
     TargetKind(
         name="strategy parameters",
         payload="budgets, thresholds, retry counts and recovery knobs (clamped by R6)",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("recovery", "cost-latency"),
         phase="P3",
+        notes="loaded by AgentRuntime.run_cycle from overlay/config/runtime.json; unlisted keys revert to the shipped default on rollback",
         sandbox_accepted=True,
     ),
     TargetKind(
         name="tool-selection",
         payload="capability-to-tool preference order within the permission set already granted",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("tool-selection", "core-local"),
         phase="P3",
+        notes="loaded by ToolRegistry.reorder from overlay/config/tools.json; order only, never the permission set",
         sandbox_accepted=True,
     ),
     TargetKind(
         name="retry/recovery configuration",
         payload="retry policy and recovery ladder parameters",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("recovery",),
         phase="P3",
+        notes="max_retry_count and max_recovery_cycles come from the same document's limits",
         sandbox_accepted=True,
     ),
     TargetKind(
         name="recovery-policy",
         payload="which recovery class a failure family maps to",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("recovery",),
         phase="P3",
-        notes="Also ProposalRisk.HIGH by name (evolver.py:348); high risk is not the same as protected",
+        notes="overlay/config/runtime.json.recovery.never_retry, applied by RecoveryManager.apply_overlay; the set may only grow. Also ProposalRisk.HIGH by name (evolver.py:348); high risk is not the same as protected",
         sandbox_accepted=True,
     ),
     TargetKind(
         name="planning configuration",
         payload="planner shape: step caps, verification strictness within the allow-list",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("core-local", "verification-quality"),
         phase="P3",
+        notes="overlay/config/cognitive_policy.json, applied by CognitiveOrchestrator.apply_policy, which re-binds the engines that captured a cap at construction",
         sandbox_accepted=True,
     ),
     TargetKind(
@@ -149,7 +153,8 @@ TARGET_KINDS: tuple[TargetKind, ...] = (
         payload="heuristic weights and ordering functions supplied as data",
         loadable=False,
         benchmark_suites=("core-local",),
-        phase="P3",
+        phase="P4",
+        notes="weights are data an overlay can carry, but nothing reweights a planner from a document yet",
         sandbox_accepted=True,
     ),
     TargetKind(
@@ -157,7 +162,8 @@ TARGET_KINDS: tuple[TargetKind, ...] = (
         payload="prompt templates and provider settings from the reviewed allow-list",
         loadable=False,
         benchmark_suites=("core-local", "research"),
-        phase="P3",
+        phase="P5",
+        notes="there is no prompt registry to load them, so the materializer refuses rather than writing a file nothing reads",
         sandbox_accepted=True,
     ),
     TargetKind(
@@ -166,15 +172,15 @@ TARGET_KINDS: tuple[TargetKind, ...] = (
         loadable=False,
         benchmark_suites=("skill-acquisition", "core-local"),
         phase="P5",
-        notes="Requires the skills substrate; the substrate is deliberately not built at P0-P2",
+        notes="SkillMaterializer already validates name shape, frontmatter, size and executable markers; it refuses to write until the catalog exists",
     ),
     TargetKind(
         name="tool_binding",
         payload="tool catalog rows: risk floor, permissions, aliases, fallback order",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("tool-selection", "core-local"),
-        phase="P4",
-        notes="Risk floors and permission sets may only move upward (MONOTONIC_FIELDS + E3)",
+        phase="P3",
+        notes="the preference-order half is loaded today; risk floors may only move upward (MONOTONIC_FIELDS + E3) and permission sets are not overlay-writable at all",
     ),
     TargetKind(
         name="provider_config",
@@ -182,14 +188,15 @@ TARGET_KINDS: tuple[TargetKind, ...] = (
         loadable=False,
         benchmark_suites=("mcp-behaviour", "research", "cost-latency", "isolation-attestation"),
         phase="P5",
-        notes="A downgrade below the default isolation provider is not a valid candidate (R7)",
+        notes="a downgrade below the default isolation provider is not a valid candidate (R7), enforced in ProviderConfigMaterializer as well as the schema",
     ),
     TargetKind(
         name="pipeline_stage",
         payload="stage selection and stage parameters from a reviewed allow-list; never stage source",
-        loadable=False,
+        loadable=True,
         benchmark_suites=("regression", "guard-effectiveness"),
-        phase="P4",
+        phase="P3",
+        notes="stage *parameters* are loaded (cognitive policy); stage *selection* is not, until P4",
     ),
     TargetKind(
         name="memory_policy",
@@ -197,7 +204,7 @@ TARGET_KINDS: tuple[TargetKind, ...] = (
         loadable=False,
         benchmark_suites=("memory-recall", "long-horizon"),
         phase="P4",
-        notes="Policies only. Memory contents are evidence, never a target (see PROTECTED_COMPONENTS)",
+        notes="policies only. Memory contents are evidence, never a target (see PROTECTED_COMPONENTS); the retrieval path that would read these weights is P4",
     ),
 )
 
@@ -363,6 +370,25 @@ def consistency_with_sandbox() -> list[str]:
     for extra in sorted(declared - engine_targets):
         defects.append(f"registry marks '{extra}' as sandbox-accepted but SandboxEngine will not accept it")
     for kind in TARGET_KINDS:
-        if kind.sandbox_accepted and kind.phase.startswith("P") and kind.phase not in {"P0", "P1", "P2", "P3"}:
-            defects.append(f"'{kind.name}' is sandbox-accepted but scheduled for {kind.phase}")
+        if not kind.sandbox_accepted or not kind.phase.startswith("P"):
+            continue
+        try:
+            scheduled = int(kind.phase[1:])
+        except ValueError:
+            defects.append(f"'{kind.name}' declares an unparsable phase {kind.phase!r}")
+            continue
+        if kind.loadable and scheduled > 3:
+            # A kind that the runtime can already load must not claim a later phase needs to deliver
+            # it: that would be a loader without a schedule, i.e. an unaudited capability.
+            defects.append(f"'{kind.name}' is loadable but still scheduled for {kind.phase}")
+        if not kind.loadable and scheduled > 3:
+            # The state P3 deliberately left in place for four target names: the sandbox will accept a
+            # proposal for them, and the payload stays descriptive until a loader exists. Tolerated
+            # only with a stated reason, because "accepted but inert" is exactly the condition that a
+            # reader otherwise mistakes for "working".
+            if not kind.notes.strip():
+                defects.append(f"'{kind.name}' is sandbox-accepted, not loadable, and scheduled for {kind.phase} with no reason stated")
+            continue
+        if not kind.loadable and scheduled <= 3 and kind.phase == "P3":
+            defects.append(f"'{kind.name}' is scheduled for P3 but nothing loads it: the phase that promised it is not finished")
     return defects

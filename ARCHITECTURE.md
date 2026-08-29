@@ -558,6 +558,15 @@ still record themselves. The Evo source tree is mounted read-only inside every c
 `self-modification goes through staging, review, and promotion` is a filesystem property rather than
 a convention.
 
+`ExecRequest` states its isolation as three explicit legs - `writable`, `read_only`, `masked` - and
+`MountSet.validate` refuses only contradictions a mount cannot fix (a path both writable and masked).
+`/sys` is masked by default in every confined path (`--tmpfs /sys` for bwrap, a fresh `sysfs` remount in
+the `unshare` fallback, behind a cached capability probe) because a host `eth0` otherwise leaks through a
+"no network" namespace; the limitation is reported as a note rather than silently. Each provider can
+answer `mount_set_for(request)` and the result is diffed against the argv that provider actually built,
+and `benchmark.py`'s fallback enforces the same read-only source bind as `SandboxEngine`, so the two
+engines cannot disagree about what "isolated" meant for a given candidate.
+
 ### Backend seams (implemented in P2)
 
 `evo_agent/ports/contracts.py` declares the only interfaces an integrated runtime may speak
@@ -569,6 +578,45 @@ fails if the seam package ever grows an import of the promotion engine, the memo
 second persistence authority. A backend returns a `TurnResult`, which has **no** `success` field:
 verifying a goal remains the `Verifier`'s job (docs/evolution/07-UNIFIED-ARCHITECTURE-SPECIFICATION.md §6).
 
+
+### Capability overlays and active versions (implemented in P3)
+
+A promoted version now changes what the agent *does*, through three modules with strictly separated
+jobs. `evo_agent/ports/evolution_target.py` defines the shapes and nothing else: an `OverlayFragment`
+(a path, text, and the digest of exactly that text), the subpath allow-list a fragment must fall inside,
+and `MountSet` - the self-description of what a confined run was given. `evo_agent/active_version.py`
+owns the policy table `DOCUMENTS`: for each loadable document (`config/runtime.json`,
+`config/cognitive_policy.json`, `config/tools.json`) the fields an overlay may name, their types and
+bounds, and what may never be named at all (`sandbox_enforcement`, memory/storage ceilings).
+`evo_agent/materialization.py` turns an approved payload into fragments, and **refuses** rather than
+repairing: a field outside the allow-list is an error, and so is every document that no loader reads
+yet - the refusal names the phase that will build the loader, so "not implemented" and "implemented and
+ignored" stay distinguishable in the ledger.
+
+The overlay lives *inside* the version directory (`versions/<id>/overlay/…`), which is why staging,
+the manifest hash, the atomic link switch, and rollback needed no new state: the overlay is carried by
+the same machinery that carries source. The consequence, asserted rather than implied, is that a version is
+a whole snapshot: candidates are staged from the production root, so activating C reverts the fields only
+B's overlay named. Rollback therefore restores *that snapshot*, exactly. `AgentRuntime.run_cycle` re-resolves the active overlay at the
+start of **every** cycle, so promotion and rollback are causal without a restart. Three rules make that safe to
+run in a loop. Applying is **idempotent**: every target is computed from the baseline the process started
+with plus the overlay, never from the current value, so the same overlay cannot move a counter twice. It is
+**reset-capable**: the baseline is merged for every leg (limits, cognitive policy, tool order, tool risk
+floors, never-retry additions), so a knob the new overlay no longer mentions returns to its default - which
+is what turns a rollback into a rollback instead of a restart. And it is **all-or-nothing**: each consumer
+plans its own leg first, any refusal skips the whole commit, and a failure *during* the writes is unwound
+through a journal of inverse operations, because half an overlay is the one state a later cycle cannot
+repair. If the resolved overlay does not match its activation record, the cycle refuses to serve -
+`stopped_reason = overlay_digest_mismatch`, zero tasks processed - and nothing is applied, so a corrupt
+version cannot even widen a budget while the agent is halted. Recovery from that `DEGRADED` state is the
+existing operator path (`start()`, which revalidates provenance); the agent does not un-halt itself.
+
+`SandboxEngine.run_experiment(candidate_overlay=…)` materializes, digests both sides, and records the
+pair on the experiment; `PromotionEngine` re-reads the staged overlay after the switch and refuses the
+activation if the digest differs from what the experiment measured - including the case where the
+retained candidate was restaged after the benchmark, which the staged-hash check structurally cannot
+see. An overlay is never an approval: `EvolutionProposal` stays a fixed dataclass, and production
+still requires `promote()` behind an explicit approval.
 
 The Phase 12 registry facade extends the existing persisted structural capability registry with rich inspection and lifecycle operations. Runtime tool descriptors are persisted in the same SQLite store, alongside existing tasks, events, memory, experience, evaluation, evolution, metamorphosis, sandbox, benchmark, promotion, and rollback records. Built-in descriptors are synchronized from the existing runtime `ToolRegistry`; advisory descriptors for planning, verification, and memory retrieval are explicitly non-executable.
 

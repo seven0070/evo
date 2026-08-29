@@ -1,8 +1,8 @@
 # Evo → Unified Autonomous Agent: Architecture Audit & Integration Design
 
-Status: `00`–`07` are **analysis and specification** (they changed no source file). **P0, P1 and P2
+Status: `00`–`07` are **analysis and specification** (they changed no source file). **P0, P1, P2 and P3
 are implemented**; each phase's changes, measurements, and deviations from `07` are recorded in
-`08-IMPLEMENTATION-LOG.md`. P3–P8 are not started.
+`08-IMPLEMENTATION-LOG.md`. P4–P8 are not started.
 Approved on the record: **Q2 — ship the DeerFlow lead-agent bridge**; **Q4 — sandbox all tool execution**.
 Baseline audited: `main` @ `c84da91`, `__version__ == "1.0.0"`.
 Upstreams audited: `bytedance/deer-flow@main`, `deepseek-ai/deepseek-harness@master` (2026-08-28).
@@ -80,16 +80,30 @@ No vendoring of either upstream. No second agent loop. No self-modification of s
 ## Implementation status
 
 **`07-UNIFIED-ARCHITECTURE-SPECIFICATION.md` is the normative specification.** The user-approved
-scope was P0–P2: P0 (ratchet tests + live invariant enforcement), P1 (the three dead links +
+scope was P0–P3: P0 (ratchet tests + live invariant enforcement), P1 (the three dead links +
 documentation integrity), P2 (sovereign→DeerFlow bridge seam, DeepSeek Harness adapters, and the
-universal `SandboxProvider` for every executable tool path). All three are done and green:
-**539 passed / 1 skipped / 1 xfailed / 2 environmental bwrap failures** on `python3 -m pytest -o
-addopts="" -q tests/`, and `verify_sovereign_digest.py --gate` reports **10/10 invariants ok** over
-an 18-file protected set. Full integration and Evolutionary Metamorphosis remain out of scope for
-this batch.
+universal `SandboxProvider` for every executable tool path), and P3 (foundational runtime/backend
+materialisation: the approved payload becomes files, the sandbox digests them, promotion verifies the
+digest after the switch, and the runtime re-resolves every cycle). All four are done and green:
+**627 tests / 0 failed / 3 skipped** on `python3 -m pytest -o addopts="" -q tests/`, and
+`verify_sovereign_digest.py --gate` reports **10/10 invariants ok** over an 18-file protected set.
+The 2 environmental bwrap failures P2 ended with were investigated in P3 and are **resolved** -
+environment-only, no production defect, and the sandbox was not weakened to get there. Full
+integration and Evolutionary Metamorphosis remain out of scope for this batch.
 
-What P2 did **not** do, on purpose: the runtime still does not route turns through
-`BackendRegistry` (loop unification is P4), there is no `evo backends` CLI or `evo.toml`
-`[backends.*]` parsing, no provider grants network egress, and `requires-python` is unchanged so
-DeerFlow's 3.12 floor stays outside the base install. Each is listed with its reason under
-"Deviations from `07`" in `08`. No phase is claimed complete unless its acceptance tests pass.
+What P3 delivered that P0–P2 could not: promoting a version now **changes what the agent does**. The
+founding finding in `00` §B - an evolution loop whose payload nothing loaded - is closed by
+`evo_agent/active_version.py` (the policy table and resolver), `evo_agent/ports/evolution_target.py`
+(the fragment shapes, subpath allow-list, mount set, digest rule) and
+`evo_agent/materialization.py` (six materializers that refuse rather than repair), wired through
+`SandboxEngine.run_experiment(candidate_overlay=…)`, `PromotionEngine._verify_overlay_activated`, and
+`AgentRuntime.run_cycle`. `tests/test_metamorphosis_closed_loop.py` is the acceptance test: 1 task per
+cycle → activate → 3 → rollback → 1, in one live process, with every step digest-bound.
+
+What P3 did **not** do, on purpose: the runtime still does not route turns through `BackendRegistry`
+(loop unification is P4); there is no new approval authority - `candidate_overlay` is bound to the
+*experiment*, and the overlay↔approval-CLI binding is deferred; four documents
+(`strategy.json`, `heuristics.json`, `memory.json`, `prompts.json`) have schemas and refused writers
+until their loaders exist; `active_version.py` is not yet in the protected byte set; and the
+`MetamorphosisEngine` façade was left alone. Each is listed with its reason under "Deviations from
+`07`" in `08`. No phase is claimed complete unless its acceptance tests pass.

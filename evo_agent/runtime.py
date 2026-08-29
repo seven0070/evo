@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable
 
+from . import active_version
 from .cognitive import CognitiveOutcome, CognitiveOrchestrator, CognitiveResult
 from .models import Event, EventType, utc_now, new_id
 from .model_adapter import RuleBasedAdapter
@@ -669,6 +670,76 @@ class RecoveryManager:
 
     def __init__(self, runtime: AgentRuntime):
         self.runtime = runtime
+        #: ``NEVER_RETRY`` plus whatever an *approved, verified* overlay added. Seeded with the class
+        #: set so the property below has one representation of the truth, and kept a superset by
+        #: :meth:`apply_overlay`: a capability that may only tighten is only a capability that may
+        #: tighten if the widening direction is unreachable rather than merely discouraged.
+        self._never_retry: set[FailureClass] = set(self.NEVER_RETRY)
+
+    @property
+    def never_retry_classes(self) -> set[FailureClass]:
+        return set(self._never_retry) | set(self.NEVER_RETRY)
+
+    def apply_overlay(self, recovery: dict[str, Any] | None) -> dict[str, Any]:
+        """Adopt an overlay's never-retry additions, and report what moved.
+
+        Returns the applied and refused parts separately because a *refusal* here is the interesting
+        record: it means a candidate asked for a class to stop being blocked, and the answer is visible
+        in the ledger rather than only in the absence of a change.
+        """
+        decisions, refused = self.plan_overlay(recovery)
+        if refused:
+            # Nothing added, even for the classes that were fine. A half-applied never-retry set is the
+            # worst of both outcomes: the ledger says "refused" while some new class is blocked, and the
+            # next cycle's reset cannot tell which additions the candidate meant.
+            return {"added": [], "refused": refused, "removed": [], "not_applied": True}
+        before = set(self._never_retry)
+        # Assignment, not union. The overlay is the whole truth about the *additions*, so a set that only
+        # ever grew would still be blocking a class after the version that added it was rolled back - the
+        # same irreversibility the resource-limit leg exists to avoid, with the difference that here the
+        # residue makes the agent more cautious and nobody notices until a later candidate cannot clear a
+        # block the registry says it should. The floor this class declares is re-added by
+        # ``never_retry_classes``, so replacing it cannot weaken anything.
+        self._never_retry = set(self.NEVER_RETRY) | set(decisions)
+        return {
+            "added": sorted(item.value for item in set(decisions) - before),
+            "removed": sorted(item.value for item in before - set(decisions) - set(self.NEVER_RETRY)),
+            "refused": [],
+        }
+
+    def plan_overlay(self, recovery: dict[str, Any] | None) -> tuple[set[FailureClass], list[str]]:
+        """The complete set an overlay asks to block, or the reason it may not have any of it.
+
+        Pure by construction - the only mutator is :meth:`apply_overlay` - so a capability overlay can be
+        validated as a whole before any of its legs touch a live object. It returns the *full* desired set,
+        floor included, because that is what lets the commit be an assignment: a plan expressed as
+        "current plus additions" cannot express withdrawal at all.
+        """
+        desired = set(self.NEVER_RETRY)
+        requested = (recovery or {}).get("never_retry")
+        if not isinstance(requested, (list, tuple)):
+            return desired, []
+        refused: list[str] = []
+        for name in requested:
+            text = str(name).strip().lower()
+            try:
+                failure = FailureClass(text)
+            except ValueError:
+                refused.append(f"{name}: not a failure class")
+                continue
+            desired.add(failure)
+        return desired, refused
+
+    def reset_overlay(self) -> list[str]:
+        """Back to the class default, reporting what stopped being blocked.
+
+        Kept as its own entry point because "clear the overlay's additions" is a different operation from
+        "apply this overlay" - a shutdown path or an operator command wants the first without pretending a
+        payload was approved. Rollback may loosen only this: the additions, never the floor.
+        """
+        before = set(self._never_retry)
+        self._never_retry = set(self.NEVER_RETRY)
+        return sorted(item.value for item in before - set(self.NEVER_RETRY))
 
     def classify(self, result: CognitiveResult | None = None, error: str = "") -> FailureClass:
         text = error.lower()
@@ -695,8 +766,9 @@ class RecoveryManager:
         task.metadata["failure_class"] = failure.value
         task.metadata["last_failure_at"] = utc_now()
         task.metadata["consecutive_failures"] = int(task.metadata.get("consecutive_failures", 0)) + 1
-        if task.metadata.get("action_state_unknown") or failure in self.NEVER_RETRY:
-            task.status = RuntimeTaskStatus.BLOCKED if failure in self.NEVER_RETRY else RuntimeTaskStatus.FAILED
+        never_retry = self.never_retry_classes
+        if task.metadata.get("action_state_unknown") or failure in never_retry:
+            task.status = RuntimeTaskStatus.BLOCKED if failure in never_retry else RuntimeTaskStatus.FAILED
             task.metadata["recovery_required"] = True
             self.runtime.queue.update(task)
             return task.status.value
@@ -744,7 +816,7 @@ class AgentRuntime:
     RUNTIME_VERSION = "runtime-v1"
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None, strategic_autonomy: Any | None = None, security_policy: Any | None = None):
+    def __init__(self, workspace: Path, model: Any | None = None, store: SQLiteStore | None = None, kernel: Any | None = None, cognitive: CognitiveOrchestrator | None = None, evolution_orchestrator: EvolutionOrchestrator | None = None, source_root: Path | None = None, runtime_id: str | None = None, limits: RuntimeResourceLimits | None = None, approval_callback: Callable[[Any, str], bool] | None = None, safe_mode: bool = False, external_integrations: Any | None = None, specialist_delegation: Any | None = None, model_intelligence: Any | None = None, adaptive_learning: Any | None = None, self_model: Any | None = None, meta_reasoning: Any | None = None, strategic_autonomy: Any | None = None, security_policy: Any | None = None, versions_root: Path | None = None):
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
@@ -752,6 +824,26 @@ class AgentRuntime:
         self.source_root = Path(source_root or Path(__file__).resolve().parent.parent).expanduser().resolve()
         self.runtime_id = runtime_id or "runtime_" + hashlib.sha256(str(self.workspace).encode()).hexdigest()[:12]
         self.limits = limits or RuntimeResourceLimits()
+        #: Where the promotion engine keeps the version registry, and therefore where the active
+        #: capability overlay lives. Resolved once at construction rather than guessed per cycle, so
+        #: the runtime and the engine cannot disagree about which directory "active" means - a
+        #: disagreement of that shape looks exactly like an agent that silently ignores promotions.
+        self.versions_root = (
+            Path(versions_root).expanduser().resolve() if versions_root is not None
+            else active_version.default_versions_root(self.source_root)
+        )
+        self.active_overlay: active_version.ActiveOverlay | None = None
+        self.overlay_report: dict[str, Any] = {}
+        #: The limits as shipped, captured before any overlay can touch them. Rollback depends on this:
+        #: without a baseline to restore *to*, un-promoting an overlay would leave its values in place
+        #: until a restart, and the agent would keep behaving like the version that was withdrawn.
+        self._limits_defaults = self.limits.to_dict()
+        #: The orchestrator's policy as constructed, captured for the same reason as the limits: a
+        #: rollback restores the state this agent was actually running in, which for a customised launch
+        #: is not the state the source tree ships with.
+        #: Populated once the orchestrator exists (below): the snapshot has to be of the policy this
+        #: agent was built with, and that object is not constructed until after this point.
+        self._policy_defaults: dict[str, int] = {}
         self.runtime_record = self._load_record()
         self.queue = TaskQueue(self.store, self.limits)
         self.evolution = evolution_orchestrator or EvolutionOrchestrator(self.store, self.source_root)
@@ -775,6 +867,10 @@ class AgentRuntime:
             self.cognitive = CognitiveOrchestrator(self.workspace, model=self.model, store=self.store, kernel=self.kernel, evolution_orchestrator=self.evolution, policy={"max_replans": self.limits.max_replans, "max_execution_time": self.limits.max_task_duration}, external_integrations=self.external_integrations, specialist_delegation=self.specialist_delegation, model_intelligence=self.model_intelligence, self_model=self.self_model, meta_reasoning=self.meta_reasoning)
         elif self.kernel is None:
             self.kernel = getattr(self.cognitive, "kernel", None)
+        # The policy the orchestrator was *constructed* with, not the class default: the default agent is
+        # built with two caps mirrored from the limits, so a merge over ``DEFAULT_POLICY`` would "restore"
+        # a deployment to numbers it never ran.
+        self._policy_defaults = dict(getattr(self.cognitive, "policy", {}) or {})
         if self.specialist_delegation is not None and getattr(self.cognitive, "specialist_delegation", None) is None:
             self.cognitive.specialist_delegation = self.specialist_delegation
         if self.external_integrations is not None:
@@ -1086,6 +1182,101 @@ class AgentRuntime:
             self._transition(RuntimeState.READY, "exact task approval received")
         return approval
 
+    def _resolve_overlay(self) -> active_version.ActiveOverlay:
+        """Read the active capability overlay, apply what it changes, and record both.
+
+        Resolved at *cycle* start rather than once at construction, so that a promotion (or a rollback)
+        takes effect on the next cycle without a restart. That is the difference between a version registry
+        that switches behaviour and one that switches a directory: the loop reads what the link points at,
+        so promotion is causal and rollback is too.
+
+        Two properties make that safe to run every cycle. The apply step is **idempotent** - targets are
+        computed from the shipped defaults plus the overlay, never from the current value, so the same
+        overlay cannot move a counter twice. And it is **all-or-nothing**: if the overlay does not match
+        its activation record, or a consumer refuses one leg of it, nothing is applied at all. Half an
+        overlay is the outcome no later cycle can repair, because the next cycle re-plans from the
+        defaults and would report the *other* half.
+        """
+        overlay = active_version.resolve(self.versions_root, source_root=self.source_root)
+        self.active_overlay = overlay
+        report = active_version.verify_activation(self.versions_root, overlay)
+        if not report.get("consistent", True):
+            # Nothing is applied, not even "the parts that match". Applying first and refusing after
+            # leaves the live budgets holding values that came from bytes nobody benchmarked, and
+            # ``resources.can_run`` reads those objects: a cycle that "did no work" would still have
+            # widened what the next authorisation could ask for.
+            report["applied"] = {
+                "resource_limits": {}, "policy": {}, "tool_preference": {}, "risk_floors": {},
+                "recovery": {}, "refused": [f"overlay not applied: {report.get('reason', '')}"], "reset": [],
+            }
+            report["not_applied"] = True
+            self.overlay_report = report
+            self._emit(EventType.OVERLAY_RESOLVED, {
+                "cycle_id": "",
+                "overlay": overlay.to_dict(),
+                "consistent": False,
+                "refused": True,
+                "reason": report.get("reason", ""),
+            })
+            self._emit(EventType.ACTIVE_CAPABILITIES_DIGEST, {
+                "digest": overlay.digest,
+                "version_id": overlay.version_id,
+                "source": overlay.source,
+                "expected_digest": report.get("expected_digest"),
+                "consistent": False,
+                "documents": list(overlay.relpaths),
+                "applied": False,
+            })
+            return overlay
+        tools = getattr(self.kernel, "tools", None) if self.kernel is not None else None
+        applied = active_version.apply_overlays(
+            overlay,
+            limits=self.limits,
+            limits_defaults=self._limits_defaults,
+            cognitive=self.cognitive,
+            # The baseline is what *this process* started with, not what the class ships with: an operator
+            # who launched the agent with a customised policy must get their own values back on a
+            # rollback, and a merge over the wrong baseline would silently promote the source tree's
+            # defaults into a deployment that never ran them.
+            policy_defaults=self._policy_defaults,
+            tools=tools,
+            recovery=self.recovery,
+        )
+        report["applied"] = applied
+        report["refused"] = list(applied.get("refused") or [])
+        for key in ("cognitive", "tool_preference", "recovery", "risk_floors"):
+            if key in applied:
+                report[key] = applied[key]
+        self.overlay_report = report
+        if applied.get("not_applied"):
+            # A leg the consumers refused is not a partial success, and it is not a halt either: the cycle
+            # keeps serving on the last configuration that *was* verified, and records why this one was
+            # not adopted. Silently applying the acceptable half is how an overlay becomes a negotiation.
+            self._emit(EventType.OVERLAY_RESOLVED, {
+                "cycle_id": "",
+                "overlay": overlay.to_dict(),
+                "consistent": True,
+                "refused": True,
+                "reason": "; ".join(applied["refused"])[:500],
+            })
+        else:
+            self._emit(EventType.OVERLAY_RESOLVED, {
+                "cycle_id": "",
+                "overlay": overlay.to_dict(),
+                "consistent": True,
+                "refused": False,
+            })
+        self._emit(EventType.ACTIVE_CAPABILITIES_DIGEST, {
+            "digest": overlay.digest,
+            "version_id": overlay.version_id,
+            "source": overlay.source,
+            "expected_digest": report.get("expected_digest"),
+            "consistent": report.get("consistent", True),
+            "applied": not bool(applied.get("not_applied")),
+            "documents": list(overlay.relpaths),
+        })
+        return overlay
+
     def run_cycle(self, now: str | None = None) -> RuntimeCycleResult:
         with self._lock:
             if self.state is RuntimeState.STOPPED:
@@ -1094,6 +1285,18 @@ class AgentRuntime:
                 return RuntimeCycleResult(new_id("rtcycle"), self.state.value, stopped_reason="runtime_not_runnable")
             result = RuntimeCycleResult(new_id("rtcycle"), self.state.value)
             try:
+                overlay = self._resolve_overlay()
+                if not self.overlay_report.get("consistent", True):
+                    # S11: an overlay that does not match what was activated is not a degraded
+                    # service, it is a refusal to serve. Continuing while recording the mismatch would
+                    # put the audit trail in the position of describing something the agent did anyway.
+                    result.stopped_reason = "overlay_digest_mismatch"
+                    result.failures.append(f"active overlay does not match its activation record: {self.overlay_report.get('reason', '')}")
+                    if self.state is not RuntimeState.DEGRADED:
+                        self._transition(RuntimeState.DEGRADED, "capability overlay failed its activation check")
+                    self._persist_record()
+                    return result
+                self.overlay_report["cycle_id"] = result.cycle_id
                 self.event_loop.drain(self.event_loop.pending())
                 self.heartbeat.beat()
                 self.scheduler.tick(now)

@@ -231,7 +231,10 @@ def test_bwrap_command_preserves_working_directory_and_private_writable_state(tm
     experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
     monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: str(stub_bwrap.path) if name == "bwrap" else None)
     command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
-    assert command[0] == "bwrap"  # argv[0] is the bare name; see the P3 seam test on exec resolution
+    # argv[0] is the executable that was *probed*, not the bare name "bwrap": one resolution for
+    # both the probe and the exec, so a bwrap outside the sanitized PATH cannot be selected and then
+    # fail (or be swapped) at spawn time. See tests/test_isolation_boundaries.py.
+    assert command[0] == str(stub_bwrap.path)
     assert {"--unshare-user-try", "--unshare-net", "--unshare-pid"}.issubset(command)
     assert command[command.index("--bind") + 1] == str(candidate_dir)
     assert command[command.index("--chdir") + 1] == str(candidate_dir)
@@ -314,11 +317,10 @@ def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, stu
         # alone does not select the branch. The stub answers the probe and refuses to execute.
         monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda name: str(stub_bwrap.path) if name == "bwrap" else None)
         command = engine._isolated_command(location, ["python3", "-m", "pytest", "-q"])
-        # The benchmark engine re-implements this construction and spawns the bare name "bwrap"
-        # rather than the executable it probed; the sandbox engine uses the resolved path. The
-        # difference is recorded as a P3 dedupe item, and asserted here so the day it is unified this
-        # test is where it shows up.
-        assert command[0] == "bwrap"
+        # P3 unified this: both engines now exec the path they probed, so the benchmark runs under
+        # exactly the conditions the experiment measured. The duplicated *construction* is still
+        # P4's dedupe item.
+        assert command[0] == str(stub_bwrap.path)
         assert stub_bwrap.probe_calls and stub_bwrap.executed_payloads == []
         assert ["--bind", str(location), str(location)] == command[command.index("--bind"):command.index("--bind") + 3]
     else:

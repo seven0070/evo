@@ -306,3 +306,268 @@ it possible for them to become second agents. Q4 and Q2 are this phase's two app
 7. **`requires-python` is unchanged.** Q1 stays open on purpose: because the bridge is a *process*
    boundary over a venv interpreter, DeerFlow's `>=3.12` floor never enters Evo's base install, and
    `dependencies = []` survives (`I-import-purity` ok).
+
+## P3 — Foundational runtime/backend materialisation (the loop can now change behaviour)
+
+`07` §8 line 309 and `04` §Phase 3. This phase closes founding finding (1) from `00`/`06`: an approved
+proposal produced a benchmark verdict about a payload nothing loaded, so promotion was a bookkeeping
+event. The spine is now *causal* - activating a version changes what the next cycle does, and rolling it
+back changes it back - and the change is falsifiable, because one digest rule is computed once and
+re-read by three components.
+
+Evolutionary Metamorphosis was **not** implemented in this phase (explicit instruction): no new
+autonomous loop, no unrestricted self-modification, no rewiring of the metamorphosis façade (item 3.5
+below), and no unrelated refactoring.
+
+### Built
+
+* **3.1 `evo_agent/active_version.py`** (new, 637 lines). `DOCUMENTS` is the policy table - one row per
+  overlay document, with `Field` kinds (`int`, `str`, `list_name`, `map_int`, `doc`), bounds, allow-lists,
+  and a `loadable` bit naming the loader (`evo_agent.runtime:AgentRuntime.run_cycle`).
+  `resolve()` reads only a directory named `overlay` under `versions/active`; `apply_overlays()` is the
+  merge over shipped defaults described below; `write_activation_record()` / `verify_activation()` put a
+  digest beside the version so "what is running" is a checkable claim rather than a hope;
+  `overlay_digest()` is the single digest rule (schema-version-tagged, order-insensitive, content-only).
+* **3.2 `evo_agent/ports/evolution_target.py`** (new, 335 lines) + **`evo_agent/materialization.py`**
+  (new, 446 lines). The port holds the *shapes* and no policy: `OverlayFragment` (whose `__post_init__`
+  makes a source-shaped or escaping path unrepresentable), `ALLOWED_SUBPATHS`,
+  `relpath_is_allow_listed`, `MountSet`, `overlay_digest`, `verify_fragment_tree`, and the
+  `Materializer` protocol. `materialization.py` holds six materializers - `strategy_params`,
+  `pipeline_stage`, `tool_binding`, `provider_config`, `memory_policy`, `skill` - sharing one
+  `validate` against `DOCUMENTS`, plus `_loader_gate`, which is where "no loader → no materialization"
+  lives. `registry_problems()` is the self-check that keeps the materializer table, the document table,
+  and the engine's accepted names from drifting apart.
+* **3.3 Staging.** The overlay is written *inside* the candidate/version directory
+  (`versions/<id>/overlay/config/…`), so `_stage_candidate`, `_manifest_hash`, `_copy_tree`,
+  `_atomic_switch` and rollback carry it with no new state and no new manifest format. A version
+  directory stays immutable and read-only; the activation record deliberately lives *beside* it.
+* **3.4 Sandbox.** `SandboxEngine.run_experiment(proposal_id, command, retain_sandbox,
+  candidate_overlay=…)` materializes the payload after `apply_approved_proposal`, raises on a refusal
+  (the experiment is recorded `ABORTED` with the reason rather than "passing" with an empty candidate),
+  then digests baseline and candidate from **the files** and stores the pair under
+  `resource_information["overlay"]` with `OVERLAY_RESOLVED` + `ACTIVE_CAPABILITIES_DIGEST` events.
+  `materialize_overlay()` and `overlay_digests()` are the only two new authorities, and neither can
+  promote anything.
+* **3.4 (isolation parity, from the baseline commit forward).** `ExecRequest.masked`; `MountSet` with
+  `for_execution`/`validate`/`to_dict`; `mount_set_for()` on all three providers; the counted `ro:`/`mask:`
+  promise list in `unshare`'s mount script, where a failure is fatal (`MOUNT_FAILURE_MARKER`, exit 97)
+  rather than a warning; `/sys` masked by both engines and by `local_bwrap` and freshly remounted by the
+  `unshare` fallback behind a cached probe; `benchmark.py` gained the same read-only source bind it was
+  missing; the two stale `command[0] == "bwrap"` assertions now name the *probed* path, because probe and
+  exec must agree. Both P0 `xfail(strict=True)` markers are deleted - their subjects are fixed.
+* **3.6 `tests/test_metamorphosis_closed_loop.py`** (new, 11 tests) — the phase's definition of done,
+  driven through `run_experiment(candidate_overlay=…)` → evidence → `register_candidate` →
+  `request_promotion` → `approve_promotion` → `promote` → `AgentRuntime.run_cycle`, asserting
+  `tasks_started` 1 → 3 → 1 with no restart and no hand-written overlay directories.
+* **3.7 Post-activation verification.** `PromotionEngine._verify_overlay_activated` compares three
+  digests (the experiment's `candidate_digest`, the staged manifest's, the resolved active one), refuses
+  on any mismatch, and routes the refusal through the *same* rollback path as a failed health check, so
+  "the overlay did not land" and "the smoke test failed" cannot diverge into two notions of a bad
+  activation. `_measured_overlay_digest()` is the new comparison that catches a candidate restaged after
+  its benchmark. `rollback()` re-points the link **and** re-writes the activation record for the restored
+  version, then the runtime re-verifies on its next cycle.
+* **Apply-side atomicity and true withdrawal** (added while writing the acceptance tests, which is where
+  it belongs). `active_version.plan_overlays()` computes every leg - limits, cognitive policy, tool
+  preference, tool risk floors, never-retry additions - against the *shipped* baseline, and
+  `apply_overlays()` commits only if no consumer refused anything. Each consumer plans for itself
+  (`RuntimeResourceLimits` via a trial construction, `CognitiveOrchestrator.plan_policy`,
+  `ToolRegistry.plan_preference`/`plan_risk_uplift`, `RecoveryManager.plan_overlay`), so no rule is
+  duplicated here; a mid-commit failure is unwound through a journal of inverse operations.
+  `RecoveryManager.apply_overlay` became an *assignment* over the class floor rather than a union, so a
+  never-retry addition is withdrawn by a rollback like everything else, and `ToolRegistry` gained
+  `risk_floors`/`plan_risk_uplift`/`apply_risk_uplift`/`reset_risk_floors`, which is what makes the
+  `risk_floor_uplift` field in `config/tools.json` a real capability instead of the next dead config key.
+* **Runtime load points.** `AgentRuntime` takes `versions_root`; `run_cycle` calls `_resolve_overlay()`
+  once per cycle and emits the resolved view before doing any work; `RecoveryManager` gained
+  `apply_overlay`/`reset_overlay` (never-retry additions only, floor re-added by the class);
+  `CognitiveOrchestrator.apply_policy()` with `DEFAULT_POLICY` extracted as a class attribute so the
+  shipped defaults are one readable value; `ToolRegistry.reorder()`/`order()` for `config/tools.json`
+  preference, with `reorder(None)` restoring registration order after a rollback.
+
+### Deliberate design choices worth reviewing
+
+1. **`resolve` accepts only a directory named `overlay`.** An earlier version accepted "any directory" and
+   duly read a candidate copy's own `config/*.json` as materialized state, producing a digest that looked
+   verified. A resolver that trusts its caller's notion of "overlay root" is a confidentiality bug with a
+   checksum on it.
+
+2. **The digest covers the files, not the loaded documents.** A payload that was *refused* by the schema
+   still changes the digest, so "the overlay was empty" and "the overlay was rejected" remain two
+   different audit facts and a silently-ignored file can never masquerade as no change.
+
+3. **The empty overlay has a real digest** (`6c902313…`, not `""`), so the pre-P3 state is comparable and a
+   missing manifest cannot be confused with "no capabilities changed".
+
+4. **Refusal, never clamping.** A materializer that clamped `max_tasks_per_cycle: 5000` to `10` would
+   measure a payload nobody ran. Out-of-range and unknown keys are errors; the only *directional* rule is
+   "may only grow" (`never_retry`, tool risk floors), which is expressed by refusing the smaller set.
+
+5. **`memory_bytes`/`storage_bytes` are not overlay-writable at all.** A candidate that can enlarge them
+   can enlarge its own sandbox. Documented in the table's own `notes`, not only in a test.
+
+6. **No `.py` fragment can exist**, enforced by the fragment shape rather than by a blocklist of names -
+   `07` §4's "structurally impossible" made literal. Skill payloads are validated in full and *still*
+   refused on write (no catalog until P5); `SkillMaterializer.write_candidate` exists to raise, so P5's
+   diff is "delete this body", not "invent a class".
+
+7. **Per-cycle resolution rather than construction-time.** Promotion is causal and rollback is causal
+   because the loop re-reads what the link points at. This is also what makes a tampered file a *refusal*
+   on the next cycle rather than a slow leak.
+
+8. **Apply is a merge over the shipped defaults, and it reports `reset`.** The first implementation set
+   only what the overlay named, which meant a rollback left the promoted value in force in the live
+   process; the smoke run caught it. Idempotence and reversibility are the same property: targets are
+   computed from defaults, never from current values.
+
+9. **P3 adds no new approval authority.** `EvolutionProposal` is unchanged; `candidate_overlay` is an
+    argument validated by the materializer and digest-bound on both sides, and production still requires
+    `promote()` behind an explicit human approval. The overlay↔approval-CLI binding is P4 (deviation 1).
+
+10. **Event payloads carry shape and digests, never values.** `ActiveOverlay.to_dict()` names documents
+    and warnings; thresholds and prompt text stay in the version directory the digest points at, because
+    the audit ledger is read more widely than the overlay is.
+
+11. **Nothing is applied when the activation check fails.** The check moved *before* the apply step after
+   a test showed a tampered `42` had already been written into the runtime's limits before the refusal.
+   The alternative - reset to defaults on mismatch - would replace one unverified state with another.
+    Kept as its own rule because a test found it rather than a design: the first version applied and then
+    refused, which left a tampered value in the live limits while the ledger said "refused".
+
+12. **A refused leg blocks all legs.** An overlay whose tool preference names a tool this build does not
+    have is a governance disagreement, not a candidate to be partially accommodated: adopting the acceptable
+    half would leave the agent running a mixture no document describes and no experiment measured. The
+    cycle then continues on the last *verified* configuration and records the refusal.
+
+13. **The baseline is the process's own starting state, not the class default.** `AgentRuntime` captures
+    `_limits_defaults` and `_policy_defaults` at construction, so an operator who launched the agent with
+    raised budgets or a customised cognitive policy gets *those* values back on a rollback. Merging over
+    `DEFAULT_POLICY` instead would hide a second behaviour change inside the recovery path - and the
+    default agent's orchestrator is constructed with caps mirrored from the limits, so the two baselines
+    genuinely differ.
+
+14. **Withdrawal is a property of the algorithm, not of each consumer remembering it.** `apply_overlays`
+    merges over the baseline for *every* leg (limits, policy, tool order, risk floors, never-retry
+    additions), so "the overlay does not mention it" means "restore the default", uniformly. That single
+    rule is what makes `A → B → C → rollback → B → rollback → A` land on B and then on A exactly, which
+    `tests/test_metamorphosis_closed_loop.py` asserts as whole-state dictionary equality.
+
+15. **`risk_floor_uplift` is applied, not just validated.** It was declared in the document table, and a
+    field nothing reads is the defect this phase exists to close, so the tool registry now carries it
+    (may only rise above the *registered* floor) and restores it on withdrawal. The alternative - dropping
+    the field from the table - was rejected because the refusal rule already prevents the *write* of any
+    key no loader reads, and this one now has one.
+
+### Measured
+
+* `python3 -m pytest -o addopts="" -q tests/` → **633 tests, 0 failures, 0 errors, 3 skipped, 0 xfailed**
+  in 329 s (exit 0, with **no** `EVO_ALLOW_SOVEREIGN_DRIFT` set, so the tree matches the published
+  manifest). P3 began at 543 collected with 2 failures and 2 xfails; it ends at 633 with none of either.
+* Per-file, the parts P3 owns or touched: `test_active_version.py` **33**, `test_materialization.py`
+  **29**, `test_metamorphosis_closed_loop.py` **13**, `test_isolation_boundaries.py` **13**,
+  `test_metamorphosis_eligibility.py` 23 → **24**, `test_sandbox.py` 21, `test_sandbox_providers.py` 26,
+  `test_backend_seams.py` 47, `test_promotion.py` 8 (unchanged: no P3 edit altered its expectations),
+  `test_sovereign_invariants.py` 37, `test_documentation_integrity.py` 40, `test_runtime.py` 13.
+  `test_runtime.py` (13), `test_cognitive.py` (20), `test_promotion.py` (8) and `test_production*.py` are
+  unchanged in count and all green, which is the evidence that the apply-side refactor did not move
+  behaviour anyone else depends on. Net growth since P2's 543 collected is +90: 13 isolation-boundary
+  tests from the baseline commit, 75 from the three new P3 files, and the eligibility correspondence tests,
+  less the 2 P0 xfails that were deleted after their subjects were fixed.
+* The 3 skips are all honest and each names its reason: `bwrap` is not installed here, so the
+  real-confinement parity test and the bwrap-branch provider test skip (the *branch-selection and
+  command-shape* halves are asserted unconditionally against a refusing stub); and
+  `test_verifier_refuses_an_expectation_it_cannot_check` remains characterised pending P4.
+* `python3 scripts/verify_sovereign_digest.py --gate` → **10/10 invariants ok** over **18** protected
+  files. Re-publication was required twice during the phase (once for the `sandbox`/`promotion`/
+  `runtime`/`benchmark`/`eligibility` edits, once after the apply-order fix in `runtime.py`), and the
+  suite was re-run afterwards to prove the published digests match.
+* The two bwrap failures that opened this phase are **resolved - environment-only, no production defect,
+  and the sandbox was not weakened**. The tests now assert branch selection and command shape against a
+  stub that refuses to execute payloads (`executed_payloads == []`), and claim actual confinement only
+  under a real `bwrap`.
+* Rollback, as measured by whole-state comparison: `effective_state()` snapshots the limits table, the
+  orchestrator's policy, the caps bound onto its components, the tool order, the tool risk floors, the
+  never-retry set and the resolved digest. `A → B → C → rollback → B → rollback → A` reproduces `state_b`
+  and `state_a` **exactly** (dictionary equality), and a payload naming a tool this build lacks is refused
+  with every leg left untouched. `A → B` with the *recovery* leg raising mid-write leaves the recovery set
+  at its prior value, which is the undo journal rather than optimism being tested.
+* Causality, as measured by the tests rather than by a smoke script: baseline cycle `tasks_started == 1`;
+  after `promote()`, the *same* runtime process resolves `max_tasks_per_cycle: 3` and takes 3; after
+  `rollback()`, it takes 1 again with `applied["reset"] == ["max_tasks_per_cycle"]`. Four digest sources -
+  materializer, experiment record, staged manifest, live resolver - agree on one value, and each of the
+  two tamper windows is refused by a *different* check with a different reason string.
+
+### Deviations from `07`
+
+1. **The overlay↔approval binding is deferred to P4.** `07` §8's materialisation expectation is read as
+   "an approved human decision is bound to the payload that ships". P3 binds the payload to the
+   *experiment* (digest both sides, refuse on mismatch) and leaves `PromotionRequest` as the only place a
+   human decision is recorded; threading the overlay digest into the approval CLI's confirmation text and
+   into `request_promotion`'s stored approval is P4 work, since it changes what a reviewer is asked to
+   sign and therefore belongs with the loop unification that decides who reviews what.
+2. **3.5 (replacing `MetamorphosisEngine.create_structural_candidate()` with the materialization façade)
+   was not done.** Per instruction, metamorphosis stays out of scope; `metamorphosis.py` remains a
+   compatibility façade over the same tables, and the new seam is reachable from the promotion path
+   without going through it. The one thing P3 did take from that item is the *refusal* semantics, which
+   the façade already documented.
+3. **No `Materializer` member was added to `PORTS`.** `07`'s P3 line implies a new port, but
+   `tests/test_backend_seams.py:90` pins the exact seam set (`EventSink`, `SandboxProvider`,
+   `ExecutionBackend`, `TurnEngine`, `VerifierPlugin`) and `I-ports-contract` counts shapes per port. The
+   materializer contract is a `Protocol` in `ports/evolution_target.py`, checked by
+   `materializer_obligations()`/`registry_problems()` instead of by registry membership - which keeps the
+   invariant's meaning ("no seam carries authority") intact rather than widened to cover a write path.
+4. **`consistency_with_sandbox()` was rewritten instead of the registry phases being reverted.** Its old
+   rule was "sandbox-accepted ⇒ scheduled no later than P3", which was fine while every accepted kind was
+   loadable and is wrong now that four kinds are deliberately accepted-but-inert. The rule now requires a
+   sandbox-accepted kind to be loadable-and-≤P3, or to name a later phase **and** state why; a loadable
+   kind may never claim a later phase. Relaxing the phases to satisfy the old rule would have been the
+   easier change and would have hidden the gap this phase is explicitly leaving open.
+5. **`active_version.py` is not in the protected byte set.** It holds the field allow-list, so it is a
+   governance file in every sense but `PROTECTED_PATHS`, which `07` defines by *module authority* (kernel,
+   promotion, sandbox, `sovereign/*`). Nothing in the agent can write to it - tools are workspace-scoped
+   and evolution cannot stage a `.py` - so the risk is human, not loop-shaped. Promoting it (and
+   `materialization.py`) into the manifest is a one-line change proposed for P4 alongside the approval
+   binding, so that the write path and the review path become immutable together.
+6. **`MountSet` is not consulted by `ApprovalMediator`, and the `/sys` default lives in the providers.**
+   `07` sketches the mount set as something the mediation layer assembles. Measured against the actual
+   code, the mediator's job is *whether* a run may happen; which paths are masked is a property of the
+   confinement technology, and a mask that a policy layer could forget is a mask that will be forgotten.
+   `MountSet` is therefore a self-description for auditing (`mount_set_for()` diffed against argv), never
+   a decision object.
+7. **`benchmark.py` keeps its own mount script.** It is a standalone `execvpe` path, not a provider, and
+   importing a provider into it would give the benchmark a second execution authority. Parity is instead
+   *asserted* (same `--tmpfs /sys`, same read-only source bind, same fatal-mount convention) by
+   `tests/test_isolation_boundaries.py`. A shared helper is the better shape; adopting one means moving
+   the benchmark onto a provider, which is P4's loop work, not P3's.
+8. **A candidate forks from the production root, so overlays do not accumulate across versions.**
+   Activating C - which carries only `config/tools.json` - reverts the budgets B's overlay had set, because
+   each version is a whole snapshot and `register_candidate` stages from `source_root`, not from the active
+   version. P3 leaves that pre-existing staging model untouched and asserts the consequence instead of
+   hiding it (`test_rollback_restores_the_complete_previous_effective_state`); making candidates stack is
+   P4 work, since it changes what "the candidate" means for the benchmark too.
+9. **No storage-schema migration was performed.** Overlay digests ride in existing JSON columns
+   (`resource_information`, version `metadata`), consistent with the standing P0–P3 constraint. The
+   120-table memory model and the promotion tables are untouched.
+
+### Blockers carried forward (into P4)
+
+* **Approval↔overlay binding** (deviation 1) - the reviewer must see the digest of what they are signing,
+  and `approve_promotion` should refuse a request whose staged digest differs from the requested one.
+* **`active_version.py` / `materialization.py` protection** (deviation 5) - one-line `PROTECTED_PATHS`
+  change plus re-publication; do it in the same commit as the approval binding.
+* **`MetamorphosisEngine` façade rewiring** (3.5) - deliberately untouched; P4's loop unification decides
+  whether the façade is replaced or deleted.
+* **`config/strategy.json`, `config/heuristics.json`, `config/memory.json`, `config/prompts.json`** have
+  schema rows and refused writers; each needs its loader (P4 planning/strategy, P5 prompt registry) before
+  it can become loadable, and `_loader_gate` will keep refusing until then.
+* **`Verifier` expectation-checking** - still characterised as an xfail-turned-skip; P4's "verifier owns
+  done" work must delete `tests/test_audit_defects_characterisation.py` by fixing it.
+* **Candidate staging forks from `source_root`** (deviation 8). Stacking a candidate on the active version
+  would let a promotion carry forward the overlays it was built on, which changes what the benchmark
+  compares and therefore belongs with P4's loop work, not here.
+* **`ToolRegistry` risk floors are per-process state**, so a version that raises a floor is the only place
+  that floor exists; if P4 gives the kernel its own registry per turn, `_resolve_overlay`'s `tools` leg has
+  to move with it. The rule itself (may only rise above the registered floor) is in `tools.py` and stays.
+* Per-cycle overlay resolution adds three file reads and one JSON parse per cycle. Measured cost is
+  unremarkable here (the suite shows no regression), but if a deployment ever makes it hot, the fix is a
+  digest-keyed cache **inside `resolve`**, never a return to construction-time resolution - the second
+  would undo causality to save microseconds.

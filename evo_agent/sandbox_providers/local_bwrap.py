@@ -19,6 +19,7 @@ import time
 from typing import Any, Callable
 
 from ..ports.contracts import ExecRequest, ExecResult, ProviderAvailability
+from ..ports.evolution_target import MountSet
 from .base import (
     ConfinedLaunch,
     child_tmp_directory,
@@ -77,10 +78,18 @@ class LocalBwrapProvider:
         )
 
     def command_for(self, request: ExecRequest, scratch: Path) -> list[str]:
-        """The bwrap argv for one request. Exposed for tests and for parity assertions."""
+        """The bwrap argv for one request. Exposed for tests and for parity assertions.
+
+        argv[0] is the executable this provider *probed*, not the name ``bwrap``. Resolving twice -
+        once with ``shutil.which`` to decide usability and once by the operating system at exec time,
+        against the child's sanitized PATH - allows a different binary to run than the one that was
+        tested. When ``which`` finds nothing the bare name is kept, so the argv remains a readable
+        description of the intent for callers that build it without running it (``run`` refuses on a
+        failed probe long before that name reaches an exec).
+        """
         workspace = Path(request.cwd)
         command = [
-            "bwrap",
+            shutil.which("bwrap") or "bwrap",
             "--die-with-parent",
             "--unshare-user-try",
             "--unshare-pid",
@@ -91,6 +100,11 @@ class LocalBwrapProvider:
             "/dev",
             "--proc",
             "/proc",
+            # The host's sysfs describes the host's devices and interfaces. Inside a namespace that
+            # sees no network, that is not merely useless - it is stale information a tool may act on,
+            # and bwrap has no "--sysfs" to replace it with, so the tree is masked.
+            "--tmpfs",
+            "/sys",
             "--setenv",
             "HOME",
             str(scratch),
@@ -107,8 +121,32 @@ class LocalBwrapProvider:
             resolved = Path(path)
             if resolved.exists():
                 command += ["--bind", str(resolved), str(resolved)]
+        for path in request.masked:
+            # Masks last: an explicit mask must win over an inherited bind of the same path, and
+            # bwrap applies its arguments in order, so the later ``--tmpfs`` replaces the earlier view.
+            if Path(path).exists():
+                command += ["--tmpfs", str(Path(path))]
         command += ["--chdir", str(workspace), *request.argv]
         return command
+
+    def mount_set_for(self, request: ExecRequest) -> MountSet:
+        """What this provider's argv actually mounts, as data the caller can audit.
+
+        A self-description, not a decision: the argv above remains the thing that confines. It exists
+        because a list of flags is not a record - the P2 parity check between a tool's confinement and
+        a candidate's needs to compare *promises* ("what is writable, what is masked"), and comparing
+        flag strings for two different binaries is how that check quietly becomes a diff of spelling.
+        """
+        workspace = Path(request.cwd)
+        scratch = child_tmp_directory(workspace)
+        masked = [str(Path(item)) for item in request.masked if Path(item).exists()]
+        return MountSet(
+            read_only=("/",),
+            writable=tuple(str(Path(item).resolve()) for item in (workspace, *request.writable, scratch) if Path(item).exists()),
+            masked=tuple(dict.fromkeys(["/sys", *masked])),
+            deny_network=self.deny_network and not request.network,
+            deny_host_pids=True,
+        )
 
     def prepare(self, request: ExecRequest) -> ConfinedLaunch:
         """Wrap the request for a caller-managed process (no shell, explicit mounts)."""
