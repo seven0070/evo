@@ -14,7 +14,12 @@ import threading
 import time
 from typing import Any, Iterable
 
-from .runtime import AgentRuntime, RuntimeCycleResult
+from .runtime import (
+    AgentRuntime,
+    MAX_PARALLEL_TOOL_CALLS_MAX,
+    RuntimeCycleResult,
+    TURN_BUDGET_MAX,
+)
 from .storage import SQLiteStore
 from .version import __version__
 
@@ -80,6 +85,14 @@ class ProductionConfig:
     backup_directory: str = ".evo/backups"
     log_level: str = "INFO"
     schema_version: int = PRODUCTION_SCHEMA_VERSION
+    #: Which loop serves a turn. The supervisor may pin it to Evo's own loop and may *lower* the turn
+    #: allowance; it may not hand a turn to an external harness, because enabling a backend is a
+    #: supply-chain decision made where the registry is assembled, not a bound to be tightened here.
+    #: A file that could widen authority would make this whole dataclass a way to bypass the review.
+    agent_loop: str = "native"
+    #: ``0`` means "inherit the runtime's own value"; any positive number may only go down (R6).
+    turn_budget: int = 0
+    max_parallel_tool_calls: int = 0
 
     def __post_init__(self) -> None:
         integer_fields = ("max_cycles_per_run", "max_total_runtime_seconds", "backup_retention", "max_journal_rows", "health_stale_seconds", "schema_version")
@@ -98,6 +111,26 @@ class ProductionConfig:
         path = Path(self.backup_directory)
         if path.is_absolute() or ".." in path.parts:
             raise ValueError("backup_directory must remain inside the workspace")
+        if self.turn_budget < 0 or int(self.turn_budget) > TURN_BUDGET_MAX:
+            raise ValueError(f"turn_budget must be 0 (inherit) or between 1 and {TURN_BUDGET_MAX}")
+        if self.max_parallel_tool_calls < 0 or int(self.max_parallel_tool_calls) > MAX_PARALLEL_TOOL_CALLS_MAX:
+            raise ValueError(
+                f"max_parallel_tool_calls must be 0 (inherit) or between 1 and {MAX_PARALLEL_TOOL_CALLS_MAX}"
+            )
+        # Resolved here so that a typo is a startup failure with the accepted names in it, and
+        # refused here so that "the supervisor enabled the harness" is not a thing this file can do.
+        from .backends import LoopUnavailable, UnknownBackend, resolve_agent_loop
+
+        try:
+            resolved = resolve_agent_loop(self.agent_loop)
+        except (UnknownBackend, LoopUnavailable) as exc:
+            raise ValueError(f"agent_loop is invalid: {exc}") from exc
+        if resolved != "native":
+            raise ValueError(
+                f"agent_loop='{self.agent_loop}' would widen what the supervisor may do: production "
+                "configuration bounds the runtime, and routing work to an external harness is a "
+                "startup decision recorded where the registry is assembled"
+            )
 
     @classmethod
     def load(cls, workspace: Path, path: Path | None = None) -> "ProductionConfig":
@@ -118,11 +151,22 @@ class ProductionConfig:
         return asdict(self)
 
     def bounded_for(self, runtime: AgentRuntime) -> dict[str, Any]:
-        """Return stricter limits for a supervisor invocation, never wider limits."""
-        return {
+        """Return stricter limits for a supervisor invocation, never wider limits.
+
+        Every key is a ``min`` (or an inherit-when-unset) against the runtime's own value, which is
+        what makes this method safe to call on every supervised cycle: a production file that disagrees
+        with the runtime tightens it and says so, and a production file that is looser changes nothing.
+        """
+        bounds: dict[str, Any] = {
             "max_cycles": min(self.max_cycles_per_run, runtime.limits.max_tasks_per_cycle * self.max_cycles_per_run),
             "max_total_runtime_seconds": min(self.max_total_runtime_seconds, runtime.limits.max_total_runtime),
+            "agent_loop": "native",
         }
+        if self.turn_budget:
+            bounds["turn_budget"] = min(self.turn_budget, runtime.turn_budget)
+        if self.max_parallel_tool_calls:
+            bounds["max_parallel_tool_calls"] = min(self.max_parallel_tool_calls, runtime.max_parallel_tool_calls)
+        return bounds
 
 
 class ProductionSchemaManager:
@@ -434,6 +478,9 @@ class ProductionSupervisor:
             try:
                 self.runtime.start()
                 started_runtime = True
+                # Applied after start() and before the first cycle, so a supervised run cannot be
+                # measured against limits it never honoured. ``apply_production_bounds`` only lowers.
+                self.runtime.apply_production_bounds(self.config.bounded_for(self.runtime))
                 for index in range(requested):
                     if time.monotonic() - started >= min(self.config.max_total_runtime_seconds, self.runtime.limits.max_total_runtime):
                         report.status = "stopped"

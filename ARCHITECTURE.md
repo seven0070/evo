@@ -515,6 +515,197 @@ Experience / Evaluation -> Phase 11 Memory
 
 A `Capability` describes an outcome or function, such as `filesystem_read`, `text_processing`, `report_generation`, `verification`, or `memory_retrieval`. It carries category, version, lifecycle, provider, implementation, dependencies, constraints, environment requirements, reliability, risk, availability, compatibility, and provenance. A `Tool` describes an implementation method and carries capability mappings, input/output schemas, declared permissions, risk, timeout and resource descriptions, environment requirements, health counters, reliability, lifecycle, version, provider, implementation reference, and provenance. Tool metadata is descriptive only; it cannot authorize the tool.
 
+### Implemented tool surface (authoritative list)
+
+The runtime registers exactly the tools below, from `evo_agent/tools.py`. Capability records
+such as `web_research`, `report_generation`, `text_processing`, and `multimedia_generation`
+describe *outcomes the model can be asked about*; they are declared without an executable
+provider, and the availability field on the record is what a planner must consult. Tool
+metadata is descriptive and cannot authorize anything - the `SecurityPolicy` plus the
+approval callback are the only authority (see the invariant `test_documentation_integrity.py`
+asserts this table and `ToolRegistry` agree).
+
+| Tool | Risk | Approval required | Confines to workspace | Notes |
+|---|---|---|---|---|
+| `workspace_list` | low | no | yes | directory listing under the allowlisted root; a path operation, not a process |
+| `workspace_read` | low | no | yes | UTF-8 text read; traversal rejected; a path operation, not a process |
+| `workspace_write` | medium | yes | yes | UTF-8 text write; parent directories created; a path operation, not a process |
+| `shell` | high | yes | yes | argv-only command inside the selected isolation provider, bounded by `max_command_seconds` and `max_output_bytes` |
+
+There is no built-in web, filesystem-search, editor, or multimedia tool; `evo_agent/capability.py`
+lists the ones the integration phases are intended to add (docs/evolution/00-AUDIT.md §B.2,
+§B.12). Any statement elsewhere in this repository that implies a wider runtime tool surface is
+stale.
+
+### Execution isolation (implemented in P2)
+
+Every process Evo starts - including the `shell` tool above - goes through
+`evo_agent/sandbox_providers/`, and `evo_agent/sovereign/mediation.py` is the only thing that
+decides whether it may. Before P2 the boundary was inverted: evolution candidates were confined
+while the runtime's own tools ran on the host, guarded only by an argv pattern list (see
+`docs/evolution/00-AUDIT.md` §B.7).
+
+| Provider | Mechanism | Network denied by | Read-only mounts by |
+|---|---|---|---|
+| `local_bwrap` | bubblewrap user/mount/PID namespaces | the unshare-net flag | ro-bind of the whole hierarchy |
+| `unshare` | unshare(1) user/mount/PID/net namespaces | the net flag | explicit bind plus remount read-only; a mount that cannot be applied is a refusal, not a warning |
+| `host` | none - permitted only by explicit policy | nothing | nothing |
+
+`SecurityPolicy.sandbox_enforcement` selects the behaviour when nothing is usable: `auto` (default)
+degrades **with a `SECURITY_DEGRADED` event** on a platform that has no namespaces at all and refuses
+on one that should; `strict` never runs unconfined; `degrade` and `off` are operator overrides that
+still record themselves. The Evo source tree is mounted read-only inside every confined command, so
+`self-modification goes through staging, review, and promotion` is a filesystem property rather than
+a convention.
+
+`ExecRequest` states its isolation as three explicit legs - `writable`, `read_only`, `masked` - and
+`MountSet.validate` refuses only contradictions a mount cannot fix (a path both writable and masked).
+`/sys` is masked by default in every confined path (`--tmpfs /sys` for bwrap, a fresh `sysfs` remount in
+the `unshare` fallback, behind a cached capability probe) because a host `eth0` otherwise leaks through a
+"no network" namespace; the limitation is reported as a note rather than silently. Each provider can
+answer `mount_set_for(request)` and the result is diffed against the argv that provider actually built,
+and `benchmark.py`'s fallback enforces the same read-only source bind as `SandboxEngine`, so the two
+engines cannot disagree about what "isolated" meant for a given candidate.
+
+### Backend seams (implemented in P2)
+
+`evo_agent/ports/contracts.py` declares the only interfaces an integrated runtime may speak
+through; `evo_agent/backends/` holds the implementations - `native` (Evo's own kernel, with
+accounting), `lead_agent` (a confined child process speaking line-delimited JSON, every action
+still mediated), and `dsh` (an external CLI, one invocation per turn, disabled by default).
+`evo backends status`-style reporting comes from `probe()`, and the invariant `I-ports-contract`
+fails if the seam package ever grows an import of the promotion engine, the memory store, or a
+second persistence authority. A backend returns a `TurnResult`, which has **no** `success` field:
+verifying a goal remains the `Verifier`'s job (docs/evolution/07-UNIFIED-ARCHITECTURE-SPECIFICATION.md §6).
+
+
+### Capability overlays and active versions (implemented in P3)
+
+A promoted version now changes what the agent *does*, through three modules with strictly separated
+jobs. `evo_agent/ports/evolution_target.py` defines the shapes and nothing else: an `OverlayFragment`
+(a path, text, and the digest of exactly that text), the subpath allow-list a fragment must fall inside,
+and `MountSet` - the self-description of what a confined run was given. `evo_agent/active_version.py`
+owns the policy table `DOCUMENTS`: for each loadable document (`config/runtime.json`,
+`config/cognitive_policy.json`, `config/tools.json`) the fields an overlay may name, their types and
+bounds, and what may never be named at all (`sandbox_enforcement`, memory/storage ceilings).
+`evo_agent/materialization.py` turns an approved payload into fragments, and **refuses** rather than
+repairing: a field outside the allow-list is an error, and so is every document that no loader reads
+yet - the refusal names the phase that will build the loader, so "not implemented" and "implemented and
+ignored" stay distinguishable in the ledger.
+
+The overlay lives *inside* the version directory (`versions/<id>/overlay/…`), which is why staging,
+the manifest hash, the atomic link switch, and rollback needed no new state: the overlay is carried by
+the same machinery that carries source. The consequence, asserted rather than implied, is that a version is
+a whole snapshot: candidates are staged from the production root, so activating C reverts the fields only
+B's overlay named. Rollback therefore restores *that snapshot*, exactly. `AgentRuntime.run_cycle` re-resolves the active overlay at the
+start of **every** cycle, so promotion and rollback are causal without a restart. Three rules make that safe to
+run in a loop. Applying is **idempotent**: every target is computed from the baseline the process started
+with plus the overlay, never from the current value, so the same overlay cannot move a counter twice. It is
+**reset-capable**: the baseline is merged for every leg (limits, cognitive policy, tool order, tool risk
+floors, never-retry additions), so a knob the new overlay no longer mentions returns to its default - which
+is what turns a rollback into a rollback instead of a restart. And it is **all-or-nothing**: each consumer
+plans its own leg first, any refusal skips the whole commit, and a failure *during* the writes is unwound
+through a journal of inverse operations, because half an overlay is the one state a later cycle cannot
+repair. If the resolved overlay does not match its activation record, the cycle refuses to serve -
+`stopped_reason = overlay_digest_mismatch`, zero tasks processed - and nothing is applied, so a corrupt
+version cannot even widen a budget while the agent is halted. Recovery from that `DEGRADED` state is the
+existing operator path (`start()`, which revalidates provenance); the agent does not un-halt itself.
+
+`SandboxEngine.run_experiment(candidate_overlay=…)` materializes, digests both sides, and records the
+pair on the experiment; `PromotionEngine` re-reads the staged overlay after the switch and refuses the
+activation if the digest differs from what the experiment measured - including the case where the
+retained candidate was restaged after the benchmark, which the staged-hash check structurally cannot
+see. An overlay is never an approval: `EvolutionProposal` stays a fixed dataclass, and production
+still requires `promote()` behind an explicit approval.
+
+### Runtime unification (implemented in P4)
+
+One loop, and one place that decides which backend serves a turn. `BackendRegistry`
+(`evo_agent/backends/registry.py`) is the authority: a registration must satisfy the `TurnEngine` port or
+`BackendContractError` is raised at registration time, an *enabled* external backend must carry provenance
+(`source`, `license`, `source_url`, `accepted_by`), and `candidates(request)` answers "serving / declined /
+unavailable" for a `CapabilityRequest` before anything runs. `AgentRuntime` asks that registry for every turn -
+`select_backend` returns the name, the plan, and a refusal - and an unknown or unavailable loop **refuses the
+task** rather than falling back to `native`. A silent fallback is the failure mode this phase exists to
+remove, so the registry's own preference and the operator's declaration are both recorded
+(`auto_preference`, `preference_note`) and a reader of the audit never has to guess which one produced a turn.
+`[agent] loop` accepts `native`, `cognitive`, or a registered backend name; there is deliberately no `auto`,
+because "whatever is available" is how an integration silently becomes the authoritative one.
+
+The turn's *sequence* is data rather than code. `evo_agent/pipeline/engine.py` declares fourteen stages, each
+with a placement (`MODEL_LOGICAL` / `MODEL_PHYSICAL` / `TOOL_VISIBLE` / `RUNTIME`), the reason for that
+placement, the invariant it protects, and its parameters; `validate_order` refuses any ordering that would let
+a stage run after the thing it must precede (`input_sanitize` first, the guards before dispatch, `RECEIPTS`
+outermost on the tool edge). `TurnPipeline` implements `TurnEngine` and is called at exactly two points -
+`prepare` before the loop is entered, `finish` after it returns - so the pipeline may correct, bound, redact,
+and account, and may not dispatch a tool. An approved overlay may supply the eight bounded knobs in
+`HEURISTIC_PARAMS` and toggle non-mandatory stages (`from_overlay`); it may not add a stage. The `pipeline`
+package is on `LOOP_FORBIDDEN_PACKAGES` and `I-single-loop` declares `covers=("kernel", "pipeline")`, so "the
+ordering file grew a loop" is a failing invariant rather than a code-review finding.
+`config/heuristics.json` became the first overlay document whose loader is the pipeline itself, which is the
+shape every later document must follow: a schema row with no consumer is dead configuration, so
+`active_version.DOCUMENTS` marks it loadable only now.
+
+Capabilities are offered from proof, not from a name list. `ToolCatalog` (`evo_agent/tools.py`) resolves
+`read` / `edit` / `run_command`-style aliases to canonical names *before* anything is decided, refuses an alias
+that would invent a tool, and reports `Usability(registered, permitted, confined, reasons)`: three legs or the
+tool is not offered. The confinement leg is answered by the mediator's own `isolation_state()`, never by a
+second provider selection inside the tool layer - two places deciding "is this confined" is how a catalog
+starts claiming safety that the launcher does not provide.
+
+Both integrations are operational rather than declared. The lead-agent bridge runs a real turn: a confined
+child speaking line-delimited JSON in two modes - probe and turn - with exit codes 0, 2, 3, and 4, every `tool_request` answered
+only after the canonical-name gate, and a `Receipt` for each call - refusals included, so a harness that was
+denied is visible in the ledger instead of merely quiet. `evo_agent/backends/dsh.py` renders one invocation per
+turn from an operator template, re-checks the rendered argv against that template before launching, and fails
+the turn when the harness prints an invariant marker whatever its exit code. Infrastructure launches execute
+`_resolve_program(expected)` as `argv[0]`, so the name that was checked is the path that runs: before this,
+authorisation resolved a program through the host `PATH` while the confined child re-resolved the same bare
+word through the sandbox's, which is both a "not found" and a shadowing hazard.
+
+An external turn never completes itself. `TurnResult` carries no `success` field; `_record_turn_result` sends
+every external observation to the `Verifier`, which fails closed - and since P4 it also refuses an expectation
+it cannot check instead of passing it. Approval is bound to content: `approve_promotion(..., expected_digest=…)`
+is refused when the candidate moved after the reviewer read it, and the CLI requires the flag, so "I approved
+the overlay I looked at" is a checked statement rather than a memory.
+
+### Capability boundaries (implemented in P5)
+
+A capability is integrated or it is refused, and the difference is recorded where a reader can find it.
+P5 gave every document in the version table either a consumer or a stated refusal: `config/memory.json` is
+now read - `MemoryPolicy` (`evo_agent/memory.py`) holds the seven retrieval ranking weights,
+`RetrievalEngine` ranks through it, `--memory-config` sets it at launch, `config/memory.json` is an
+overlay-writable payload, and withdrawal restores the *launch* values including the operator's own - while
+`config/prompts.json` is refused permanently (`phase="never"`) because prompt text the agent writes to move
+its own guardrails is out of scope, and `config/strategy.json` is refused until a selector exists. Both
+refusals are data on the row (`DocumentSpec.blocked_by`) and two distinct sentences from `_loader_gate`, so
+a caller can never confuse "not yet" with "not ever". Memory *contents* stay outside evolution entirely:
+retention and staleness are operator-only fields, because expiring a row is a durable write that no
+rollback can undo.
+
+Skills are the phase's other half, and the dangerous one, because their payload is text a model reads.
+`evo_agent/skills.py` installs, validates, and mounts them; validation is *delegated* to
+`SkillMaterializer.validate` rather than copied, so the loader can never be weaker than the writer. The
+installer refuses traversal, absolute paths, a colon anywhere in a name (drive prefix and NTFS alternate
+stream, on every platform), symlinks, special files, executables, any suffix outside prose and data,
+member-count and byte bombs, a `name` that disagrees with its directory, and a literal credential - and it
+writes nothing when it refuses, including when the scanner itself raises, because a control that exists only
+on the days it works is not a control. Installing a bundle does not activate it: activation is promotion,
+the same path every payload takes. What a promoted version *does* is narrower than it looks: the enabled
+bundles' directories are appended to `SecurityPolicy.sandbox_read_only_paths`, which
+`ApprovalMediator.read_only_roots` feeds to every confined child, so a skill's files become read-only in
+every sandboxed execution for as long as that version is active and stop being so the cycle after it is
+withdrawn. A skill may name the tools it expects; an unknown name is **refused** rather than clamped, and a
+required secret is a name the caller may resolve into a child's environment - never a value in a prompt.
+
+The boundary itself is now machine-readable. `evo_agent/upstream.py` holds two tables - the upstream
+components reviewed, each with its pin, licence, Evo-side accepted surface, and the paths whose existence
+would prove it was vendored, and one row per capability naming its owner, the `module:attribute` that
+decides it, and whether a promoted overlay may move its values - and `I-ownership-boundary` refuses to start
+when a row lies: an authority that cannot be imported, one capability with two owners, a `sovereign` row no
+protected code reaches, or a non-negotiable capability marked candidate-writable. Eleven invariants run at
+startup over the same 20-file protected set; P5 added an invariant and no protected file.
+
 The Phase 12 registry facade extends the existing persisted structural capability registry with rich inspection and lifecycle operations. Runtime tool descriptors are persisted in the same SQLite store, alongside existing tasks, events, memory, experience, evaluation, evolution, metamorphosis, sandbox, benchmark, promotion, and rollback records. Built-in descriptors are synchronized from the existing runtime `ToolRegistry`; advisory descriptors for planning, verification, and memory retrieval are explicitly non-executable.
 
 ### Requirements, discovery, and compatibility

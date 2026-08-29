@@ -12,6 +12,9 @@ import tempfile
 from typing import Any, Callable
 import uuid
 
+# Imported as a module, not for a name: the resolver *is* the layout, and promotion must not have its
+# own idea of where an overlay lives. See ``default_versions_root``.
+from . import active_version
 from .models import Event, EventType, PromotionApprovalStatus, PromotionEligibilityStatus, PromotionStatus, VersionStatus
 from .storage import SQLiteStore
 from .version import __version__
@@ -53,6 +56,11 @@ class PromotionRequest:
     status: PromotionStatus = PromotionStatus.REQUESTED
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     promotion_policy_version: str = "promotion-v1"
+    #: The bytes this approval is about. Recorded by :meth:`PromotionEngine.approval_digest_for` at
+    #: request time, re-derived at approval, and re-checked at promotion, so that "approved" is a
+    #: statement about content rather than about a version id that a later edit could still point at.
+    #: Lives in the request's JSON payload, which is why no storage migration is involved (07 §8 P3).
+    approval_digest: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -130,7 +138,11 @@ class PromotionEngine:
         self.source_root = Path(source_root).expanduser().resolve()
         if not self.source_root.is_dir():
             raise FileNotFoundError(f"Production source root does not exist: {self.source_root}")
-        self.versions_root = (versions_root or self.source_root.parent / ".evo-production").expanduser().resolve()
+        # The default comes from the resolver that reads the directory, not from a literal here. Two
+        # copies of ``.evo-production`` in two modules would let the engine write an activation record
+        # next to a link the runtime never looks at, and every digest check would then compare an empty
+        # overlay with an empty overlay and report perfect health.
+        self.versions_root = (versions_root or active_version.default_versions_root(self.source_root)).expanduser().resolve()
         if self.versions_root == self.source_root or self.versions_root.is_relative_to(self.source_root):
             raise ValueError("Version registry must be outside the production source root")
         self.version_dir = self.versions_root / "versions"
@@ -248,9 +260,10 @@ class PromotionEngine:
         version = self._version_from_row(self.store.version_by_id(candidate_version))
         eligible, errors, context = self.validate_eligibility(candidate_version, evidence_id)
         active = self._active_version()
-        request = PromotionRequest(self._new_id("promotion"), version.proposal_id, version.experiment_id, evidence_id, candidate_version, active.version_id if active else None, self._now(), requested_by, eligibility_status=PromotionEligibilityStatus.ELIGIBLE if eligible else PromotionEligibilityStatus.REJECTED, status=PromotionStatus.REQUESTED if eligible else PromotionStatus.REJECTED)
+        binding = self.approval_digest_for(version, evidence_row=evidence_row)
+        request = PromotionRequest(self._new_id("promotion"), version.proposal_id, version.experiment_id, evidence_id, candidate_version, active.version_id if active else None, self._now(), requested_by, eligibility_status=PromotionEligibilityStatus.ELIGIBLE if eligible else PromotionEligibilityStatus.REJECTED, status=PromotionStatus.REQUESTED if eligible else PromotionStatus.REJECTED, approval_digest=binding["digest"])
         self.store.save_promotion_request(request)
-        self._event(EventType.PROMOTION_REQUESTED, request, {"candidate_version": candidate_version, "requested_by": requested_by})
+        self._event(EventType.PROMOTION_REQUESTED, request, {"candidate_version": candidate_version, "requested_by": requested_by, "approval_digest": binding["digest"], "digest_components": binding["components"]})
         self._event(EventType.PROMOTION_ELIGIBILITY_CHECKED, request, {"eligible": eligible, "errors": errors, "context": context})
         if not eligible:
             request.approval_reason = "; ".join(errors)
@@ -258,15 +271,54 @@ class PromotionEngine:
             self._event(EventType.PROMOTION_REJECTED, request, {"reason": request.approval_reason})
         return request
 
-    def approve_promotion(self, promotion_id: str, reason: str, approved_by: str = "human") -> PromotionRequest:
+    def approve_promotion(self, promotion_id: str, reason: str, approved_by: str = "human", expected_digest: str = "") -> PromotionRequest:
+        """Record an approval, bound to the candidate bytes it covers.
+
+        The digest is re-derived here rather than copied from the stored request: the question is
+        "what is the candidate *now*", because that is what the reviewer is agreeing to. When a caller
+        supplies ``expected_digest`` - which the CLI requires, since a human approving across two
+        commands is approving whatever the tree happens to hold at the second one - a moved digest is a
+        refusal, not a warning.
+
+        An empty stored digest is tolerated only for rows written before this binding existed, and it is
+        reported, because "unbound" and "approved with no changes" must not read alike in the ledger.
+        """
         request = self._request(promotion_id)
         if request.eligibility_status is not PromotionEligibilityStatus.ELIGIBLE:
             raise PermissionError("Ineligible promotion cannot be approved")
+        binding = self.approval_digest_for(request.candidate_version, evidence_id=request.evidence_id)
+        if expected_digest and expected_digest.strip() != binding["digest"]:
+            self._event(
+                EventType.PROMOTION_REJECTED,
+                request,
+                {
+                    "reason": "the candidate changed after the request; approval refused",
+                    "expected_digest": expected_digest.strip(),
+                    "current_digest": binding["digest"],
+                    "digest_components": binding["components"],
+                },
+            )
+            raise PermissionError(
+                "approval digest mismatch: the candidate bytes differ from the ones this approval was "
+                f"asked to confirm (approval asks for {binding['digest'][:16]}..., request carried "
+                f"{expected_digest.strip()[:16]}...); re-read --request-promotion and approve against the digest it prints"
+            )
         request.approval_status = PromotionApprovalStatus.APPROVED
         request.approval_reason = reason
         request.status = PromotionStatus.APPROVED
+        request.approval_digest = binding["digest"]
         self.store.save_promotion_request(request)
-        self._event(EventType.PROMOTION_APPROVED, request, {"approved_by": approved_by, "reason": reason})
+        self._event(
+            EventType.PROMOTION_APPROVED,
+            request,
+            {
+                "approved_by": approved_by,
+                "reason": reason,
+                "approval_digest": binding["digest"],
+                "digest_components": binding["components"],
+                "unbound_request": not bool(binding.get("previous_digest")),
+            },
+        )
         return request
 
     def reject_promotion(self, promotion_id: str, reason: str, rejected_by: str = "human") -> PromotionRequest:
@@ -308,6 +360,29 @@ class PromotionEngine:
         version.version_path = str(staged_path)
         version.manifest_hash = integrity["staged_hash"]
         self.store.save_version(version)
+        # The approval is about bytes, so the bytes that are about to activate are compared against the
+        # ones that were approved - after staging, because staging is the first moment the candidate that
+        # will actually run exists as a directory of its own. A candidate edited between approval and
+        # promotion is refused here, and the refusal is recorded with both digests so the reviewer can
+        # see what moved rather than being told something disagreed.
+        if request.approval_digest:
+            bound = self.approval_digest_for(version, evidence_id=request.evidence_id)
+            bound["previous_digest"] = request.approval_digest
+            if bound["digest"] != request.approval_digest:
+                request.status = PromotionStatus.REJECTED
+                request.approval_reason = "the candidate changed after approval; promotion refused"
+                self.store.save_promotion_request(request)
+                self._event(
+                    EventType.PROMOTION_FAILED,
+                    request,
+                    {
+                        "reason": request.approval_reason,
+                        "approved_digest": request.approval_digest,
+                        "current_digest": bound["digest"],
+                        "digest_components": bound["components"],
+                    },
+                )
+                raise ValueError(request.approval_reason)
         request.status = PromotionStatus.INTEGRITY_VERIFIED
         self.store.save_promotion_request(request)
         self._event(EventType.CANDIDATE_INTEGRITY_VERIFIED, request, integrity)
@@ -325,7 +400,19 @@ class PromotionEngine:
             request.status = PromotionStatus.HEALTH_CHECK
             self.store.save_promotion_request(request)
             self._event(EventType.PRODUCTION_VERSION_ACTIVATED, request, {"active_version": version.version_id})
+            overlay_report = self._verify_overlay_activated(version, staged_path, request)
             health = self.health_checker(staged_path)
+            health["overlay"] = overlay_report
+            if not overlay_report["consistent"]:
+                # A version that activated without the overlay it was benchmarked with is not a
+                # degraded deployment, it is an untested one. Routed through the same rollback path as
+                # a failed health check so "the overlay did not land" and "the smoke test failed"
+                # cannot diverge into two different notions of a bad activation (S11).
+                record.health_result = health
+                self.store.save_promotion_record(record)
+                return self._rollback_after_failure(
+                    request, record, checkpoint, overlay_report["reason"] or "active overlay does not match the candidate", old_target
+                )
             record.health_result = health
             record.smoke_test_result = health.get("smoke_test", {})
             self.store.save_promotion_record(record)
@@ -371,6 +458,26 @@ class PromotionEngine:
         self._atomic_switch(Path(previous.version_path))
         self._set_version_status(version_id, VersionStatus.ROLLED_BACK)
         self._set_version_status(previous.version_id, VersionStatus.ACTIVE)
+        # Re-record what is now active. Without this, the restored version would be verified against
+        # the *promoted* overlay's digest and every cycle after a rollback would refuse to serve - a
+        # rollback that "restored" the agent into a state where it no longer runs.
+        restored = active_version.resolve(self.versions_root, source_root=self.source_root)
+        active_version.write_activation_record(self.versions_root, restored, version_id=previous.version_id)
+        self._event(EventType.OVERLAY_RESOLVED, previous, {
+            "source": restored.source,
+            "digest": restored.digest,
+            "reason": "rollback",
+            "documents": list(restored.relpaths),
+            "consistent": True,
+            "refused": False,
+        })
+        self._event(EventType.ACTIVE_CAPABILITIES_DIGEST, previous, {
+            "digest": restored.digest,
+            "version_id": previous.version_id,
+            "source": restored.source,
+            "consistent": True,
+            "rollback": True,
+        })
         verification = self._verify_active(previous)
         rollback.verification = verification
         rollback.completed_at = self._now()
@@ -449,6 +556,139 @@ class PromotionEngine:
         valid = staged_hash == source_hash == version.manifest_hash
         return {"valid": valid, "reason": "staged candidate matches registered candidate" if valid else "staged candidate integrity mismatch", "staged_hash": staged_hash, "source_hash": source_hash, "expected_hash": version.manifest_hash}
 
+    def candidate_overlay_digest(self, version_path: Path) -> str | None:
+        """The digest recorded by the materializer inside a staged version, if it has an overlay.
+
+        Read from the version itself rather than from the experiment record, because the question the
+        activation check asks is "what is in the directory that just became active". A number fetched
+        from the ledger describes what the *experiment* saw, which is the right comparison to make -
+        but as a second, separately recorded value, not as a substitute for looking.
+        """
+        manifest = Path(version_path) / "overlay" / "manifest.json"
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        digest = payload.get("digest") if isinstance(payload, dict) else None
+        return str(digest) if digest else None
+
+    def approval_digest_for(self, candidate: Any, evidence_id: str = "", evidence_row: dict[str, Any] | None = None) -> dict[str, Any]:
+        """The digest an approval covers: candidate bytes, overlay, lineage, and what is active now.
+
+        ``components`` is returned alongside it because a digest nobody can decompose is a magic number,
+        and the whole purpose of binding an approval to bytes is that a reviewer can answer "which
+        bytes?" later. The active version is included deliberately: approving a candidate against
+        version A is not the same act as approving it against version B, and without this component the
+        two records would be indistinguishable.
+        """
+        version = candidate if isinstance(candidate, VersionRecord) else self._version_from_row(self.store.version_by_id(str(candidate)))
+        if version is None:
+            raise KeyError(f"candidate version not found: {candidate}")
+        path = Path(version.metadata.get("candidate_source_path", version.version_path)).expanduser().resolve()
+        manifest = self._manifest_hash(path) if path.is_dir() else "missing"
+        overlay_digest = self.candidate_overlay_digest(path) if path.is_dir() else None
+        evidence = evidence_row or (self.store.evidence_by_id(evidence_id) if evidence_id else {})
+        active = self._active_version()
+        components = {
+            "candidate_version": version.version_id,
+            "manifest_hash": manifest,
+            "candidate_path_present": bool(path.is_dir()),
+            "overlay_digest": overlay_digest or active_version.overlay_digest(()),
+            "proposal_id": version.proposal_id,
+            "experiment_id": version.experiment_id,
+            "evidence_id": version.evidence_id or str(evidence.get("evidence_id") or ""),
+            "active_version": active.version_id if active else "",
+            "promotion_policy_version": self.policy_version,
+        }
+        canonical = json.dumps(components, sort_keys=True, separators=(",", ":"), default=str)
+        return {"digest": hashlib.sha256(canonical.encode("utf-8")).hexdigest(), "components": components, "previous_digest": ""}
+
+    def _measured_overlay_digest(self, version: VersionRecord) -> str | None:
+        """The candidate digest the *experiment* recorded, if that experiment recorded one.
+
+        Optional by necessity: experiments predate P3 and carry no overlay, and a promotion of a
+        payload-free candidate is the common case. Absence is therefore not a failure - it is the
+        same "no overlay" state the resolver reports as ``repo-default``.
+        """
+        row = self.store.experiment_by_id(version.experiment_id) if version.experiment_id else None
+        if not row:
+            return None
+        experiment = self._payload(row) if isinstance(row, dict) else {}
+        overlay = (experiment.get("resource_information") or {}).get("overlay") or {}
+        digest = overlay.get("candidate_digest")
+        return str(digest) if digest else None
+
+    def _verify_overlay_activated(self, version: VersionRecord, staged_path: Path, request: PromotionRequest) -> dict[str, Any]:
+        """Prove the active version resolves to what the candidate was measured with, then record it.
+
+        Order matters: the activation record is written *after* the comparison, so a mismatch leaves no
+        record claiming an overlay is active that nobody verified. Rollback then re-points the link and
+        re-writes the record for the restored version.
+        """
+        overlay = active_version.resolve(self.versions_root, source_root=self.source_root)
+        expected = self.candidate_overlay_digest(staged_path)
+        measured = self._measured_overlay_digest(version)
+        if measured is not None and expected is not None and measured != expected:
+            # What the sandbox measured and what is being activated are two different files, and both
+            # are on disk. Comparing them is the only way to catch an overlay that was edited in the
+            # retained candidate between the experiment and the promotion, which the staged-hash check
+            # below cannot see because it compares the *copy* against the same edited original.
+            report = {
+                "consistent": False,
+                "reason": "the overlay differs from what the experiment measured (expected "
+                f"{measured[:12]}, found {expected[:12]})",
+                "expected_digest": measured,
+                "actual_digest": overlay.digest,
+                "candidate_digest": expected,
+                "source": overlay.source,
+                "version_id": version.version_id,
+                "documents": list(overlay.relpaths),
+                "warnings": list(overlay.warnings),
+            }
+            self._event(EventType.OVERLAY_RESOLVED, request, {**report, "refused": True})
+            return report
+        report: dict[str, Any] = {
+            "consistent": True,
+            "reason": "",
+            "expected_digest": expected,
+            "actual_digest": overlay.digest,
+            "source": overlay.source,
+            "version_id": version.version_id,
+            "documents": list(overlay.relpaths),
+            "warnings": list(overlay.warnings),
+        }
+        if expected is None and overlay.digest == active_version.active_capabilities_digest(None):
+            # No overlay on either side: the common case, and worth naming because "consistent" here
+            # means "nothing was overlaid", not "the overlay was checked and matched".
+            report["reason"] = "no overlay in this version; the runtime loads repo defaults"
+        elif expected is None:
+            report["consistent"] = False
+            report["reason"] = "the active overlay exists but the candidate recorded none"
+        elif expected != overlay.digest:
+            report["consistent"] = False
+            report["reason"] = (
+                "the overlay in the activated version does not match the one the candidate was benchmarked with"
+            )
+        if overlay.warnings and report["consistent"]:
+            # Warnings never overturn consistency - the digest does that - but they must survive into
+            # the record, since an ignored file inside the overlay is how a shadowed default starts.
+            report["reason"] = (report["reason"] + "; " if report["reason"] else "") + "overlay carried ignored paths"
+        if report["consistent"]:
+            active_version.write_activation_record(
+                self.versions_root, overlay, promotion_id=request.promotion_id, version_id=version.version_id
+            )
+            report["activation_record"] = str(self.versions_root / active_version.ACTIVATION_RECORD)
+        self._event(EventType.OVERLAY_RESOLVED, request, {**report, "refused": not report["consistent"]})
+        self._event(EventType.ACTIVE_CAPABILITIES_DIGEST, request, {
+            "digest": overlay.digest,
+            "expected_digest": expected,
+            "version_id": version.version_id,
+            "source": overlay.source,
+            "consistent": report["consistent"],
+            "documents": list(overlay.relpaths),
+        })
+        return report
+
     def _rollback_after_failure(self, request: PromotionRequest, record: PromotionRecord, checkpoint: PromotionCheckpoint, reason: str, old_target: str | None) -> PromotionRecord:
         record.health_result = {"healthy": False, "reason": reason}
         self.store.save_promotion_record(record)
@@ -456,7 +696,15 @@ class PromotionEngine:
         self.rollback(record.candidate_version, reason, record.promotion_id)
         return self._promotion_record_from_row(self.store.promotion_record_by_id(record.promotion_id))
 
-    def _active_version(self) -> VersionRecord | None:
+    def active_version(self) -> VersionRecord | None:
+        """The version ``versions/active`` currently resolves to.
+
+        Public by design. "What is running right now" was only answerable through
+        ``_active_version``, a private method of this class, so the orchestrator reached
+        around the object for it (00 §B.3). Any consumer that reimplements that lookup is a
+        consumer that can disagree with the promotion engine about what is active, which is
+        the exact confusion promotion and rollback exist to prevent.
+        """
         if self.active_link.is_symlink():
             target = self.active_link.resolve()
             row = next((item for item in self.store.find_versions(status=VersionStatus.ACTIVE.value) if Path(self._version_from_row(item).version_path).resolve() == target), None)
@@ -464,6 +712,10 @@ class PromotionEngine:
                 return self._version_from_row(row)
         row = next(iter(self.store.find_versions(status=VersionStatus.ACTIVE.value)), None)
         return self._version_from_row(row) if row else None
+
+    def _active_version(self) -> VersionRecord | None:
+        """Deprecated alias for :meth:`active_version`; kept for existing callers."""
+        return self.active_version()
 
     def _previous_version(self, exclude: str) -> VersionRecord | None:
         rows = self.store.find_versions(status=VersionStatus.PREVIOUS.value)

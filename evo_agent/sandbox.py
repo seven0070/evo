@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 from typing import Any, Iterable
 
+from . import active_version, materialization
 from .evolver import Evolver, EvolutionProposal
 from .models import CandidateStatus, ComparisonClass, Event, EventType, ExperimentStatus, ProposalRisk, ProposalStatus
 from .storage import SQLiteStore
@@ -115,6 +116,11 @@ class SandboxEngine:
         "planning configuration",
         "planning-heuristics",
         "prompt/configuration parameters",
+        "memory_policy",
+        # A skill changes what a model is told and which files a confined child may see; it never widens
+        # what that child may write. The bundle is mounted read-only, and installing one is inert until a
+        # version is promoted, so the isolation spine covers it exactly as it covers a configuration document.
+        "skill",
     }
     PROTECTED_TERMS = Evolver.PROTECTED_TERMS
 
@@ -250,6 +256,57 @@ class SandboxEngine:
         experiment = self._load_experiment(candidate.experiment_id)
         self._event(EventType.PROPOSAL_APPLIED, experiment, {"path": str(config_path), "mode": config["mode"], "target_component": proposal.target_component})
 
+    def materialize_overlay(
+        self,
+        proposal: EvolutionProposal,
+        candidate: CandidateVersion,
+        payload: dict[str, Any],
+    ) -> materialization.MaterializationResult:
+        """Write the approved payload into the candidate as a materialized overlay.
+
+        Refusal is the return value, not an exception, for the ordinary cases: an evolution loop that
+        aborts on a payload its own schema rejected would hide the reason in a traceback, while
+        ``result.errors`` is what the ledger and the reviewer need. The exception is reserved for a
+        payload that failed *inside* the writer, which means the caller sequenced something wrongly.
+        """
+        candidate_dir = Path(candidate.sandbox_path).resolve()
+        result = materialization.materialize(proposal.target_component, payload, candidate_dir)
+        experiment = self._load_experiment(candidate.experiment_id)
+        self._event(
+            EventType.OVERLAY_RESOLVED,
+            experiment,
+            {
+                "role": "candidate",
+                "materialized": result.ok,
+                "kind": result.kind,
+                "digest": result.digest,
+                "documents": [fragment.relpath for fragment in result.fragments],
+                "errors": list(result.errors),
+            },
+        )
+        self.store.save_experiment(experiment)
+        return result
+
+    def overlay_digests(self, baseline_dir: Path, candidate_dir: Path) -> dict[str, Any]:
+        """The two digests an experiment must agree on: what was measured, baseline and candidate.
+
+        Computed from the directories themselves, not from the materialization result, because the
+        claim under test is about *files on disk in the version that would be activated*. A digest read
+        back off the manifest is also what the promotion engine compares against after the switch,
+        which is the only way "the experiment passed" and "the agent is running that" become the same
+        statement instead of two statements nobody reconciles.
+        """
+        baseline = active_version.resolve(overlay_dir=baseline_dir)
+        candidate = active_version.resolve(overlay_dir=candidate_dir)
+        return {
+            "baseline_digest": baseline.digest,
+            "candidate_digest": candidate.digest,
+            "changed": baseline.digest != candidate.digest,
+            "baseline_documents": list(baseline.relpaths),
+            "candidate_documents": list(candidate.relpaths),
+            "warnings": sorted(set(baseline.warnings) | set(candidate.warnings)),
+        }
+
     def execute_candidate(self, experiment: EvolutionExperiment, location: Path, label: str, command: Iterable[str] = ("python3", "-m", "pytest", "-q")) -> ExecutionResult:
         command_list = self._validate_test_command(command)
         location = Path(location).resolve()
@@ -353,12 +410,37 @@ class SandboxEngine:
         self.store.save_experiment(experiment)
         return experiment
 
-    def run_experiment(self, proposal_id: str, command: Iterable[str] = ("python3", "-m", "pytest", "-q", "test_sandbox_controlled.py"), retain_sandbox: bool = False) -> EvolutionExperiment:
+    def run_experiment(
+        self,
+        proposal_id: str,
+        command: Iterable[str] = ("python3", "-m", "pytest", "-q", "test_sandbox_controlled.py"),
+        retain_sandbox: bool = False,
+        candidate_overlay: dict[str, Any] | None = None,
+    ) -> EvolutionExperiment:
+        """Benchmark one approved proposal, optionally with a materialized overlay on the candidate.
+
+        ``candidate_overlay`` is the payload the materializer turns into files - the difference between
+        "the candidate differs from the baseline" being a string in a config and being the capability
+        set the runtime would load. Both sides are then digested, and the pair travels with the
+        experiment, so a later promotion can be checked against what was actually measured here.
+
+        The payload is *not* an approval. Nothing in this method promotes anything: an overlay written
+        here dies with the sandbox unless the promotion engine activates the version that was staged
+        from it, and activation requires its own approved request. That ordering is the reason an
+        unreviewed payload cannot reach the running agent.
+        """
         production_hash_before = self._manifest_hash(self.source_root)
         experiment, proposal, baseline_dir, candidate_dir = self.create_sandbox(proposal_id)
         try:
             candidate = self.prepare_candidate(experiment, candidate_dir)
             self.apply_approved_proposal(proposal, candidate)
+            if candidate_overlay is not None:
+                materialized = self.materialize_overlay(proposal, candidate, candidate_overlay)
+                if not materialized.ok:
+                    raise materialization.MaterializationError(list(materialized.errors), kind=materialized.kind)
+            digests = self.overlay_digests(baseline_dir, candidate_dir)
+            experiment.resource_information = {**(experiment.resource_information or {}), "overlay": digests}
+            self._event(EventType.ACTIVE_CAPABILITIES_DIGEST, experiment, digests)
             experiment.status = ExperimentStatus.RUNNING
             self.store.save_experiment(experiment)
             baseline_result = self.execute_candidate(experiment, baseline_dir, "baseline", command)
@@ -484,10 +566,19 @@ class SandboxEngine:
         return command_list
 
     @staticmethod
-    def _bwrap_usable() -> bool:
+    def _bwrap_executable() -> str | None:
+        """The bubblewrap to *run*, or None. One resolution, used for both the probe and the exec.
+
+        This used to answer a boolean, after which the caller spawned the bare name ``bwrap`` and the
+        operating system resolved it a second time - against the child's sanitized ``PATH``, which is a
+        different lookup than the parent's. Two resolutions can disagree, and the disagreement is silent:
+        a bwrap outside the standard directories would be probed, declared usable, and then either not
+        found at exec time or replaced by a different build than the one that was tested. Returning the
+        path makes "the binary we checked" and "the binary we run" the same sentence.
+        """
         executable = shutil.which("bwrap")
         if not executable:
-            return False
+            return None
         try:
             probe = subprocess.run(
                 [executable, "--die-with-parent", "--unshare-user-try", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
@@ -496,15 +587,22 @@ class SandboxEngine:
                 timeout=3,
                 check=False,
             )
-            return probe.returncode == 0
         except (OSError, subprocess.SubprocessError):
-            return False
+            return None
+        return executable if probe.returncode == 0 else None
+
+    #: Kept for callers that only want the yes/no answer; implemented once, on top of the resolver,
+    #: so a second copy of the probe cannot drift from the first.
+    @classmethod
+    def _bwrap_usable(cls) -> bool:
+        return cls._bwrap_executable() is not None
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
         # Bubblewrap is preferred when its network namespace setup is usable. Some
         # hosted runners ship bwrap but deny loopback configuration; probe first.
         # The unshare path remains a conservative fallback with the same namespaces.
-        if self._bwrap_usable():
+        bwrap = self._bwrap_executable()
+        if bwrap:
             location_bind = "--bind" if location.name == "candidate" else "--ro-bind"
             experiment_dir = location.parent
             results_dir = experiment_dir / "results"
@@ -512,7 +610,7 @@ class SandboxEngine:
             results_dir.mkdir(parents=True, exist_ok=True)
             home_dir.mkdir(parents=True, exist_ok=True)
             return [
-                "bwrap",
+                bwrap,
                 "--die-with-parent",
                 "--unshare-user-try",
                 "--unshare-net",
@@ -520,6 +618,11 @@ class SandboxEngine:
                 "--ro-bind", "/", "/",
                 "--dev", "/dev",
                 "--proc", "/proc",
+                # bwrap has no "--sysfs". The host's sysfs inside a new network namespace reports the
+                # host's interfaces, which is both a disclosure and a lie the child can act on, so the
+                # tree is masked rather than bound. An empty /sys is the honest answer to "what
+                # interfaces do you see" when the answer is "none but loopback".
+                "--tmpfs", "/sys",
                 "--setenv", "HOME", str(home_dir),
                 "--setenv", "TMPDIR", str(results_dir),
                 "--setenv", "PYTHONNOUSERSITE", "1",
@@ -541,6 +644,11 @@ class SandboxEngine:
             "mount --make-rprivate /; "
             "mount --bind \"$2\" \"$2\"; "
             "mount -o remount,bind,ro \"$2\"; "
+            # Same intent as ``--tmpfs /sys`` above, expressed as what a namespace can actually do:
+            # mount a fresh sysfs so the child's interface list is its own. A failure to do so is
+            # printed rather than fatal - the network namespace still denies egress, and refusing to
+            # run a candidate because a *cosmetic* mount was unavailable would be a worse record.
+            "mount -t sysfs sysfs /sys 2>/dev/null || echo \"EVO_SYSFS_NOT_REMOUNTED\"; "
             "cd \"$1\"; "
             "shift 2; "
             "exec \"$@\""

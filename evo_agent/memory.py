@@ -352,11 +352,196 @@ class MemoryStore:
         return [_memory_from_row(row) for row in rows]
 
 
+#: Retrieval components a promoted candidate may re-weight. The list is closed and every entry is a
+#: *preference*: the terms that are not preference - version compatibility, environment match, the
+#: conflict penalty, and expiry - are deliberately absent, because zeroing one of those would let a
+#: candidate make a contradictory or stale record look authoritative. ``evo_agent.active_version`` keeps
+#: the same tuple as the schema allow-list, and ``tests/test_memory_policy.py`` pins the two together so
+#: a document field can never exist without a consumer that reads it (00 §A's founding defect).
+RETRIEVAL_WEIGHT_FIELDS: tuple[str, ...] = (
+    "topic_relevance", "task_similarity", "strategy_similarity", "tool_similarity",
+    "capability_similarity", "importance", "confidence",
+)
+
+#: The shipped ranking, as integers 0-1000 so the overlay can carry an int map (the schema has no float).
+#: ``topic_relevance`` is ``overlap * 0.45`` today; the others are the fixed bonuses in ``_score``.
+DEFAULT_RETRIEVAL_WEIGHTS: dict[str, int] = {
+    "topic_relevance": 450,
+    "task_similarity": 200,
+    "strategy_similarity": 150,
+    "tool_similarity": 150,
+    "capability_similarity": 150,
+    "importance": 200,
+    "confidence": 200,
+}
+
+#: Keys an operator may name in ``config/memory.json`` outside the overlay path. They change what is
+#: *kept*, so they are not overlay-writable: a candidate that shortens retention expires records through
+#: ``ForgettingEngine``, and a rollback cannot un-expire them. A withdrawn value whose effect survives is
+#: exactly what the P3 rollback rules forbid, and the mechanism that would fix it (re-activating expired
+#: rows on rollback) would make rollback a writer of memory content, which memory never is.
+OPERATOR_ONLY_MEMORY_FIELDS: tuple[str, ...] = ("retention_days", "staleness_ratio")
+
+
+@dataclass(frozen=True)
+class MemoryPolicy:
+    """How retrieval ranks what it found, and how long a record stays interesting.
+
+    Ranking is a preference and may be promoted. Lifetime is a side effect on stored rows and may not.
+    """
+
+    retrieval_weights: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_RETRIEVAL_WEIGHTS))
+    retention_days: int = 365
+    staleness_ratio: int = 100
+    #: ``"default"``, ``"operator"``, or the version id whose overlay produced this - the report says so
+    #: rather than the reader guessing whether a ranking came from the shipped build.
+    source: str = "default"
+
+    @classmethod
+    def from_payload(cls, payload: Any, *, from_overlay: bool = True) -> tuple["MemoryPolicy", list[str]]:
+        """Validate without half-applying: refusals come back, they are not raised.
+
+        ``from_overlay`` is the governance distinction. The same document read by an operator at startup
+        may name retention and staleness; the same document arriving as a *candidate payload* may not,
+        because only one of those two paths can be rolled back cleanly.
+        """
+        problems: list[str] = []
+        if not isinstance(payload, dict):
+            return cls(), ["memory.json: expected an object"]
+        allowed = {"retrieval_weights"} | (set() if from_overlay else set(OPERATOR_ONLY_MEMORY_FIELDS))
+        unknown = sorted(set(payload) - allowed)
+        if unknown:
+            problems.append(
+                "memory.json: field(s) this build does not read from a candidate payload: " + ", ".join(unknown)
+                + ("" if not from_overlay else " (lifetime knobs are operator configuration; see MemoryPolicy OPERATOR_ONLY_MEMORY_FIELDS)")
+            )
+        weights = dict(DEFAULT_RETRIEVAL_WEIGHTS)
+        raw_weights = payload.get("retrieval_weights", {}) or {}
+        if not isinstance(raw_weights, dict):
+            problems.append("memory.json.retrieval_weights: expected a map of component to integer")
+            raw_weights = {}
+        for name, value in raw_weights.items():
+            key = str(name)
+            if key not in RETRIEVAL_WEIGHT_FIELDS:
+                problems.append(f"memory.json.retrieval_weights: '{key}' is not a component this build ranks by")
+                continue
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                problems.append(f"memory.json.retrieval_weights.{key}: expected an integer 0-1000")
+                continue
+            if not 0 <= number <= 1000:
+                problems.append(f"memory.json.retrieval_weights.{key}: {number} is outside 0-1000")
+                continue
+            weights[key] = number
+        retention = cls().retention_days
+        staleness = cls().staleness_ratio
+        if not from_overlay:
+            try:
+                retention = int(payload.get("retention_days", retention))
+            except (TypeError, ValueError):
+                problems.append("memory.json.retention_days: expected an integer number of days")
+            if not 1 <= retention <= 3650:
+                problems.append("memory.json.retention_days: outside 1-3650")
+            try:
+                staleness = int(payload.get("staleness_ratio", staleness))
+            except (TypeError, ValueError):
+                problems.append("memory.json.staleness_ratio: expected an integer percentage")
+            if not 1 <= staleness <= 100:
+                problems.append("memory.json.staleness_ratio: outside 1-100")
+        if problems:
+            return cls(), problems
+        return cls(retrieval_weights=weights, retention_days=retention, staleness_ratio=staleness), []
+
+    @classmethod
+    def load(cls, path: Path | str) -> tuple["MemoryPolicy", list[str]]:
+        """An operator's ``config/memory.json``. All three knobs are legal here, and none is edited.
+
+        Read once, at startup, by whoever builds the runtime. The overlay path is
+        :meth:`from_payload` with ``from_overlay=True``, which is where the lifetime fields become a
+        refusal - so there is one validation for both, and the difference between them is one flag
+        rather than two parsers that can drift.
+        """
+        candidate = Path(path)
+        if not candidate.is_file():
+            return cls(), [f"{candidate}: no such file"]
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return cls(), [f"{candidate}: unreadable ({type(exc).__name__}: {exc})"]
+        policy, problems = cls.from_payload(payload, from_overlay=False)
+        return (policy if not problems else cls()), ([] if not problems else problems)
+
+    def weight(self, component: str) -> float:
+        return int(self.retrieval_weights.get(component, DEFAULT_RETRIEVAL_WEIGHTS[component])) / 1000.0
+
+    @property
+    def staleness_days(self) -> float:
+        """Beyond this age a record is still retrievable, and is labelled as history."""
+        return max(1.0, self.retention_days * (self.staleness_ratio / 100.0))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "retrieval_weights": dict(self.retrieval_weights),
+            "retention_days": self.retention_days,
+            "staleness_ratio": self.staleness_ratio,
+            "source": self.source,
+        }
+
+
+class MemoryPolicyTarget:
+    """One policy, applied to every retrieval engine in the process.
+
+    ``AgentRuntime`` owns a memory manager and the cognitive layer owns another; both read the same
+    store. The leg is a *list* of engines rather than one, because applying a promoted ranking to the
+    kernel and not to the planner would mean the same query is ranked twice under two policies, and the
+    disagreement would surface as nondeterminism rather than as a configuration fact.
+    """
+
+    def __init__(self, *consumers: Any) -> None:
+        self.consumers = tuple(item for item in consumers if item is not None)
+
+    def current_weights(self) -> dict[str, int]:
+        for consumer in self.consumers:
+            policy = getattr(consumer, "policy", None)
+            if isinstance(policy, MemoryPolicy):
+                return dict(policy.retrieval_weights)
+        return dict(DEFAULT_RETRIEVAL_WEIGHTS)
+
+    def plan_policy(self, weights: dict[str, int]) -> tuple[list[dict[str, Any]], list[str]]:
+        """Report each component that would move, and refuse anything not on the closed list."""
+        if not self.consumers:
+            return [], ["no memory retrieval engine is wired"]
+        problems = [f"retrieval_weights.{name}: not a rankable component" for name in sorted(set(weights) - set(RETRIEVAL_WEIGHT_FIELDS))]
+        if problems:
+            return [], problems
+        before = self.current_weights()
+        decisions = [
+            {"component": name, "from": before.get(name, DEFAULT_RETRIEVAL_WEIGHTS[name]), "to": int(value)}
+            for name, value in sorted(weights.items())
+            if int(before.get(name, -1)) != int(value)
+        ]
+        return decisions, []
+
+    def apply_policy(self, weights: dict[str, int], *, source: str = "overlay") -> dict[str, Any]:
+        policy = MemoryPolicy(retrieval_weights={**DEFAULT_RETRIEVAL_WEIGHTS, **{str(k): int(v) for k, v in weights.items()}}, source=source)
+        for consumer in self.consumers:
+            consumer.policy = policy
+        return {"applied": {name: int(value) for name, value in sorted(weights.items())}, "source": source}
+
+    def to_dict(self) -> dict[str, Any]:
+        policy = getattr(self.consumers[0], "policy", None) if self.consumers else None
+        return policy.to_dict() if isinstance(policy, MemoryPolicy) else MemoryPolicy().to_dict()
+
+
 class RetrievalEngine:
-    def __init__(self, memory_store: MemoryStore, default_max_memories: int = 10, default_max_bytes: int = 12000):
+    def __init__(self, memory_store: MemoryStore, default_max_memories: int = 10, default_max_bytes: int = 12000, policy: MemoryPolicy | None = None):
         self.memory_store = memory_store
         self.default_max_memories = default_max_memories
         self.default_max_bytes = default_max_bytes
+        #: Never ``None``: an absent policy reading as "no weights" would be a ranking that silently
+        #: differs from the shipped one, and the only way to notice is to compare two retrievals.
+        self.policy = policy if policy is not None else MemoryPolicy()
 
     def retrieve(self, query: RetrievalQuery) -> list[RetrievedMemory]:
         started = datetime.now(timezone.utc)
@@ -403,17 +588,18 @@ class RetrievalEngine:
     def _score(self, memory: MemoryRecord, query: RetrievalQuery, query_tokens: set[str]) -> dict[str, float]:
         memory_tokens = _tokens(f"{memory.content} {memory.summary} {memory.key} {memory.metadata}")
         overlap = len(query_tokens & memory_tokens) / max(1, len(query_tokens))
-        task = 0.2 if query.task_type and query.task_type.lower() in str(memory.metadata).lower() else 0.0
-        strategy = 0.15 if query.strategy and query.strategy.lower() in str(memory.metadata).lower() else 0.0
-        tool = 0.15 if query.tool and query.tool.lower() in str(memory.metadata).lower() else 0.0
-        capability = 0.15 if query.capability and query.capability.lower() in str(memory.metadata).lower() else 0.0
+        weight = self.policy.weight
+        task = weight("task_similarity") if query.task_type and query.task_type.lower() in str(memory.metadata).lower() else 0.0
+        strategy = weight("strategy_similarity") if query.strategy and query.strategy.lower() in str(memory.metadata).lower() else 0.0
+        tool = weight("tool_similarity") if query.tool and query.tool.lower() in str(memory.metadata).lower() else 0.0
+        capability = weight("capability_similarity") if query.capability and query.capability.lower() in str(memory.metadata).lower() else 0.0
         environment = self._environment_score(memory, query.environment)
         version = 0.15 if not query.architecture_version or not memory.architecture_version or memory.architecture_version == query.architecture_version else -0.2
         recency = self._recency(memory)
-        importance = max(0.0, min(0.2, memory.importance * 0.2))
-        confidence = max(0.0, min(0.2, memory.confidence_score * 0.2))
+        importance = max(0.0, min(weight("importance"), memory.importance * weight("importance")))
+        confidence = max(0.0, min(weight("confidence"), memory.confidence_score * weight("confidence")))
         conflict_penalty = -0.15 if memory.status is MemoryStatus.CONFLICT else 0.0
-        return {"topic_relevance": round(overlap * 0.45, 6), "task_similarity": task, "strategy_similarity": strategy, "tool_similarity": tool, "capability_similarity": capability, "environment_match": environment, "version_compatibility": version, "recency": recency, "importance": importance, "confidence": confidence, "conflict_penalty": conflict_penalty}
+        return {"topic_relevance": round(overlap * weight("topic_relevance"), 6), "task_similarity": task, "strategy_similarity": strategy, "tool_similarity": tool, "capability_similarity": capability, "environment_match": environment, "version_compatibility": version, "recency": recency, "importance": importance, "confidence": confidence, "conflict_penalty": conflict_penalty}
 
     @staticmethod
     def _recency(memory: MemoryRecord) -> float:
@@ -429,11 +615,22 @@ class RetrievalEngine:
             return 0.05
         return 0.1 if memory.environment.os_name == environment.os_name and memory.environment.runtime == environment.runtime else -0.1
 
-    @staticmethod
-    def _filter_warnings(memory: MemoryRecord, query: RetrievalQuery) -> list[str]:
+    def _filter_warnings(self, memory: MemoryRecord, query: RetrievalQuery) -> list[str]:
+        # An instance method rather than a static one because the staleness window it reports comes from
+        # the applied policy, and a policy that could not be read from the scoring object would be a
+        # second, unenforced copy of the first.
         warnings: list[str] = []
         if memory.expiration and memory.expiration <= now():
             warnings.append("expired")
+        stale_after = self.policy.staleness_days
+        try:
+            age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(memory.updated_at)).total_seconds() / 86400
+        except (TypeError, ValueError):
+            age_days = 0.0
+        if age_days > stale_after:
+            # Advisory, and deliberately not a status change: the policy says "this is history", and the
+            # reader decides. Retiring rows is ``ForgettingEngine``'s job and is not overlay-writable.
+            warnings.append(f"older than the {int(round(stale_after))}-day staleness window; historical")
         if memory.confidence is ConfidenceLevel.UNKNOWN:
             warnings.append("confidence unknown")
         if memory.status is MemoryStatus.CONFLICT:

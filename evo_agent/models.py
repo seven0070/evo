@@ -340,6 +340,12 @@ class EventType(str, Enum):
     CANDIDATE_INTEGRITY_VERIFIED = "candidate_integrity_verified"
     PROMOTION_STARTED = "promotion_started"
     PRODUCTION_VERSION_ACTIVATED = "production_version_activated"
+    #: The capability substrate an agent actually resolved (P3). A pair, not one event, because
+    #: "what is loaded" and "what its digest must be" answer different questions: the first is read
+    #: by anyone asking why behaviour changed, the second is compared by anyone checking that
+    #: activation delivered what promotion claimed.
+    OVERLAY_RESOLVED = "overlay_resolved"
+    ACTIVE_CAPABILITIES_DIGEST = "active_capabilities_digest"
     POST_PROMOTION_HEALTH_CHECK = "post_promotion_health_check"
     PROMOTION_COMPLETED = "promotion_completed"
     PROMOTION_FAILED = "promotion_failed"
@@ -520,6 +526,23 @@ class EventType(str, Enum):
     STRATEGIC_CYCLE_BLOCKED = "strategic_cycle_blocked"
     STRATEGIC_ACTION_QUEUED = "strategic_action_queued"
     STRATEGIC_ACTION_BLOCKED = "strategic_action_blocked"
+
+    # Sovereign boundary and integrated-capability events (docs/evolution/07 §5).
+    # Appended only: existing values are never reused or renumbered, because stored
+    # events are the audit record and an old row must keep its meaning.
+    SOVEREIGN_VERIFIED = "sovereign_verified"
+    SOVEREIGN_DRIFT_DETECTED = "sovereign_drift_detected"
+    INVARIANT_VIOLATION = "invariant_violation"
+    SECURITY_DEGRADED = "security_degraded"
+    RUNTIME_BACKEND_SELECTED = "runtime_backend_selected"
+    MEMORY_RETRIEVED = "memory_retrieved"
+    SOVEREIGN_DRIFT_ACCEPTED = "sovereign_drift_accepted"
+    #: P4's routing record. ``..._REFUSED`` is a refusal to route at all (the operator asked for a
+    #: backend that cannot serve), which is a different fact from a backend running and failing;
+    #: collapsing them would make a configuration error look like a harness defect in the ledger.
+    RUNTIME_BACKEND_REFUSED = "runtime_backend_refused"
+    RUNTIME_BACKEND_EVENT = "runtime_backend_event"
+    RUNTIME_TURN_PIPELINE = "runtime_turn_pipeline"
 
 
 @dataclass

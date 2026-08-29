@@ -20,6 +20,14 @@ evo = "evo_agent.cli:main"
 [tool.setuptools.packages.find]
 include = ["evo_agent*"]
 
+[tool.setuptools.package-data]
+# The sovereign manifest must ship inside the wheel: startup verification protects the
+# installed package, not the git checkout.
+"evo_agent.sovereign" = ["sovereign.manifest.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The xfail ledger is a ratchet: a defect that stops failing must fail the run until the
+# marker is removed in review, so "we fixed it" and "we deleted the test" cannot look alike.
+xfail_strict = true

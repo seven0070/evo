@@ -761,7 +761,7 @@ class EvolutionOrchestrator:
         if not item or not item.promotion_id:
             raise KeyError(work_item_id)
         promotion = self._get_promotion()
-        active = promotion._active_version()
+        active = promotion.active_version()
         if not active or active.version_id != item.candidate_version:
             return self._transition_terminal(item, WorkItemState.ROLLED_BACK, "Existing PromotionEngine indicates candidate is no longer active")
         promotion.rollback(item.candidate_version or "", reason, item.promotion_id)
@@ -924,7 +924,7 @@ class EvolutionOrchestrator:
     def _current_versions(self) -> tuple[str, str]:
         current = "v0"
         if self.promotion_engine:
-            active = self.promotion_engine._active_version()
+            active = self.promotion_engine.active_version()
             if active:
                 current = active.version_id
         architecture = self.metamorphosis.get_architecture().architecture_version

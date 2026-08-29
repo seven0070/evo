@@ -39,7 +39,12 @@ class AgentKernel:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
         self.policy = security_policy or SecurityPolicy(self.workspace)
-        self.tools = ToolRegistry(self.policy)
+        # The provider layer reports degradations through this callback. It is wired here, at the
+        # one place a tool registry is built for production, because "the tool result said
+        # isolated=False" is only evidence if somebody can find it later: the ledger is where a
+        # reviewer looks, and an audit trail that omits every degraded run is how a permanent
+        # downgrade becomes invisible one command at a time.
+        self.tools = ToolRegistry(self.policy, on_event=self._record_isolation_event)
         self.model = model
         self.verifier = Verifier(self.policy)
         self.checkpoints = CheckpointManager(self.workspace, self.store)
@@ -54,12 +59,17 @@ class AgentKernel:
         self.max_adaptations = max_adaptations
         from .capability import CapabilityIntelligence
         self.capability_intelligence = CapabilityIntelligence(self.store, self.workspace, self.tools, self.policy)
+        from .memory import MemoryManager
+        # The kernel owns one memory manager per store. Retrieval, consolidation and
+        # provenance rules live behind it; `store.recent_memories()` is a row query, not the
+        # governed read path, and using it at plan time was the G10 dead link (00 §B.1).
+        self.memory = MemoryManager(self.store, self.workspace)
+        self._architecture_cache: str | None = None
         self.external_integrations = external_integrations
         if self.external_integrations is not None:
             self.external_integrations.capability_intelligence = self.capability_intelligence
             if getattr(self.external_integrations, "memory", None) is None:
-                from .memory import MemoryManager
-                self.external_integrations.memory = MemoryManager(self.store, self.workspace)
+                self.external_integrations.memory = self.memory
         self.world_intelligence = None
 
     def run_external_operation(self, operation_id: str, payload: dict[str, Any] | None = None) -> Any:
@@ -94,7 +104,7 @@ class AgentKernel:
         record(EventType.TASK_CREATED, {"goal": goal.text})
         try:
             checkpoint = self.checkpoints.create(goal.task_id, "before-task")
-            memories = self.store.recent_memories()
+            memories, memory_provenance = self._plan_time_memories(goal)
             world = self._get_world_intelligence()
             world_model = world.observe(goal.text)
             world_snapshot = world.create_snapshot(world_model)
@@ -108,6 +118,8 @@ class AgentKernel:
             context.assessment = self.flexibility.assess(goal, context)
             historical = self.experience_engine.retrieve(goal=goal.text, limit=5)
             context.constraints["historical_experiences"] = [item.to_dict() for item in historical]
+            context.constraints["memories"] = memories
+            context.constraints["memory_provenance"] = memory_provenance
             capability_analysis = self.capability_intelligence.analyze_goal(goal.text, architecture_version=self._architecture_version())
             context.constraints["capability_analysis"] = [item.to_dict() for item in capability_analysis]
             for item in capability_analysis:
@@ -115,7 +127,8 @@ class AgentKernel:
 
             if historical:
                 record(EventType.EXPERIENCE_RETRIEVED, {"count": len(historical), "experience_ids": [item.experience_id for item in historical]})
-            record(EventType.PLAN_CREATED, {"checkpoint": str(checkpoint), "assessment": context.assessment.to_dict(), "memories": memories, "historical_experiences": context.constraints["historical_experiences"]})
+            record(EventType.PLAN_CREATED, {"checkpoint": str(checkpoint), "assessment": context.assessment.to_dict(), "memories": memories, "memory_provenance": memory_provenance, "historical_experiences": context.constraints["historical_experiences"]})
+            record(EventType.MEMORY_RETRIEVED, dict(memory_provenance))
             recommendations = self.flexibility.select_tools(goal)
             for recommendation in recommendations:
                 record(EventType.TOOL_RECOMMENDED, recommendation.to_dict())
@@ -247,8 +260,84 @@ class AgentKernel:
             self.world_intelligence = WorldModelEngine(self.store, observer, WorldRefreshEngine(observer, self.store))
         return self.world_intelligence
 
+    def _plan_time_memories(self, goal: Goal) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Relevant memory for planning, ranked by the retrieval engine.
+
+        Returns ``(memories, provenance)``. The payload shape is the one the planner already
+        consumes from ``store.recent_memories()`` - ``kind``/``content``/``created_at`` - plus
+        the scores and ids the governed path can offer, so no prompt or stored expectation
+        changes meaning. When nothing has ever been written through the governed store, the
+        legacy table is consulted instead: an install that has only used ``save_memory`` must
+        keep retrieving what it has, and silently losing that would look like an improvement.
+        """
+        from .memory import RetrievalQuery
+
+        query = RetrievalQuery(
+            goal=goal.text,
+            agent_version=self.agent_version,
+            architecture_version=self._architecture_version(),
+            max_memories=6,
+            min_confidence=0.25,
+        )
+        try:
+            retrieved = self.memory.retrieve(query)
+        except Exception as exc:
+            retrieved = []
+            return self.store.recent_memories(), {"source": "recent_memories_fallback", "count": 0, "error": f"{type(exc).__name__}: {exc}"}
+        if not retrieved:
+            return self.store.recent_memories(), {"source": "recent_memories_fallback", "count": 0, "candidate_count": 0}
+        memories: list[dict[str, Any]] = []
+        for item in retrieved:
+            record = item.memory
+            memories.append({
+                "kind": record.type.value,
+                "content": record.summary or record.content,
+                "created_at": record.created_at,
+                "memory_id": record.memory_id,
+                "score": round(float(item.score), 4),
+            })
+        return memories, {
+            "source": "retrieval_engine",
+            "count": len(memories),
+            "memory_ids": [item["memory_id"] for item in memories],
+            "max_score": max((item["score"] for item in memories), default=0.0),
+        }
+
     def _architecture_version(self) -> str:
-        return ""
+        """The architecture this kernel is running, resolved once per instance.
+
+        Previously ``return ""``, which made every experience recorded through this path
+        unattributable - the correlation that benchmark-driven promotion is built on
+        (00 §B.10). Resolution is shared with the runtime via
+        :mod:`evo_agent.sovereign.architecture` so the two loops cannot drift again.
+        """
+        if self._architecture_cache is None:
+            from .sovereign import resolve_architecture_version
+
+            self._architecture_cache = resolve_architecture_version(self.store, self.workspace, agent_version=self.agent_version)
+        return self._architecture_cache
+
+    def _record_isolation_event(self, kind: str, payload: dict[str, Any]) -> None:
+        """Append an isolation fact to the ledger. Never raises (R9).
+
+        ``security_degraded`` and ``isolation_unavailable`` are the two that a reviewer must not be
+        able to miss, so they get the dedicated event type; everything the providers report -
+        mediation decisions, provider notes - is recorded as a rejected-adjacent event so it stays
+        searchable without pretending to be a verdict. The task id is a fixed bucket, not a task,
+        because a degradation belongs to the machine's configuration rather than to the goal that
+        happened to notice it.
+        """
+        event_type = EventType.SECURITY_DEGRADED if kind in {"security_degraded", "isolation_unavailable"} else EventType.TOOL_REJECTED
+        try:
+            self.store.append_event(
+                Event(
+                    "isolation",
+                    event_type,
+                    {"source": "sandbox_providers", "kind": kind, **dict(payload or {})},
+                )
+            )
+        except Exception:
+            pass
 
     def _finalize(self, outcome: TaskOutcome, record: Callable[[EventType, dict[str, Any]], None]) -> TaskOutcome:
         try:
