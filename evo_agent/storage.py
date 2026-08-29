@@ -848,9 +848,16 @@ class SQLiteStore:
                     last_seen TEXT NOT NULL,
                     occurrence_count INTEGER NOT NULL,
                     metadata TEXT NOT NULL,
-                    payload TEXT NOT NULL
+                    payload TEXT NOT NULL,
+                    scope_key TEXT NOT NULL DEFAULT 'local'
                 );
                 CREATE INDEX IF NOT EXISTS idx_memory_type_status ON memory_records(memory_type, status);
+                -- ``idx_memory_scope`` is deliberately NOT created here. This script runs before the
+                -- additive ALTER below, so on a database written before P5 - where memory_records already
+                -- exists and the CREATE TABLE above is a no-op - the statement would fail with "no such
+                -- column: scope_key" and the store could not be opened at all. The index is created beside
+                -- the column that carries it, which is the only ordering where a fresh install, an upgrade,
+                -- and a re-open all converge.
                 CREATE INDEX IF NOT EXISTS idx_memory_source ON memory_records(source, source_id);
                 CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_records(memory_key);
                 CREATE TABLE IF NOT EXISTS memory_history (
@@ -1239,12 +1246,172 @@ class SQLiteStore:
                     verified INTEGER NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_goal_verification_goal ON goal_verification(goal_id, created_at);
+
+                -- P5's capability inventory (07 §5). These rows record *what was reviewed*; they are not
+                -- the activation authority, which stays the overlay link plus its activation record - and
+                -- ``test_the_inventory_never_overrides_the_overlay`` is the assertion that keeps it that
+                -- way. A second source of "what is live" is the duplicate authority this programme keeps
+                -- refusing, and a status column is the easiest one to accidentally create.
+                CREATE TABLE IF NOT EXISTS skill_packages (
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    digest TEXT NOT NULL,
+                    provenance TEXT NOT NULL,
+                    scan_verdict TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY (name, digest)
+                );
+                CREATE INDEX IF NOT EXISTS idx_skill_packages_status ON skill_packages(status, name);
+                CREATE TABLE IF NOT EXISTS skill_grants (
+                    skill_name TEXT NOT NULL,
+                    canonical_tool TEXT NOT NULL,
+                    permissions TEXT NOT NULL,
+                    granted_by TEXT NOT NULL,
+                    granted_at TEXT NOT NULL,
+                    PRIMARY KEY (skill_name, canonical_tool)
+                );
+                CREATE TABLE IF NOT EXISTS mcp_servers (
+                    server TEXT NOT NULL PRIMARY KEY,
+                    command TEXT NOT NULL,
+                    allowed_tools TEXT NOT NULL,
+                    max_output_bytes INTEGER NOT NULL,
+                    timeout_seconds INTEGER NOT NULL,
+                    mutating_allowed INTEGER NOT NULL,
+                    credential_scope TEXT NOT NULL,
+                    approved_by TEXT NOT NULL,
+                    registered_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS mcp_tools (
+                    fully_qualified TEXT NOT NULL PRIMARY KEY,
+                    server TEXT NOT NULL,
+                    tool TEXT NOT NULL,
+                    risk_floor TEXT NOT NULL,
+                    requires_approval INTEGER NOT NULL,
+                    recorded_at TEXT NOT NULL
+                );
                 """
 
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
             if columns and "payload" not in columns:
                 db.execute("ALTER TABLE memory_records ADD COLUMN payload TEXT NOT NULL DEFAULT '{}' ")
+            if columns and "scope_key" not in columns:
+                # Additive-only, per the schema policy in 07 §5: ``ALTER TABLE ADD COLUMN`` with a default
+                # that back-fills existing rows, never a rewrite and never a drop. Existing memories are
+                # the operator's own, so they belong to ``local`` - the scope every unscoped read gets.
+                db.execute("ALTER TABLE memory_records ADD COLUMN scope_key TEXT NOT NULL DEFAULT 'local'")
+            if columns:
+                # ``columns`` is non-empty only when the table exists, and the ALTER above has just given it
+                # the column when it was missing - so this is the one ordering that works for a fresh
+                # install, an upgrade, and a re-open. An index is the schema object that cannot precede its
+                # column, and an upgrade that fails on open is worse than an unindexed read.
+                db.execute("CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory_records(scope_key, updated_at)")
+
+    # -- P5 capability inventory ------------------------------------------------
+    #
+    # Narrow on purpose: an append/upsert and a read, no update and no delete. A row that could be edited
+    # in place would let the record of a scan verdict disagree with the bytes it described, which is the
+    # failure the digest in the primary key exists to prevent.
+
+    def record_skill_package(self, *, name: str, version: str, digest: str, provenance: str, scan_verdict: str, status: str, path: str, recorded_at: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO skill_packages(name, version, digest, provenance, scan_verdict, status, path, recorded_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, version, digest, provenance, scan_verdict, status, path, recorded_at),
+            )
+
+    def list_skill_packages(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clause, values = ("", ()) if status is None else (" WHERE status = ?", (status,))
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM skill_packages{clause} ORDER BY recorded_at DESC LIMIT ?", (*values, int(limit))).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_skill_grant(self, *, skill_name: str, canonical_tool: str, permissions: tuple[str, ...] | list[str], granted_by: str, granted_at: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO skill_grants(skill_name, canonical_tool, permissions, granted_by, granted_at) VALUES (?, ?, ?, ?, ?)",
+                (skill_name, canonical_tool, json.dumps(sorted(str(item) for item in permissions)), granted_by, granted_at),
+            )
+
+    def list_skill_grants(self, skill_name: str | None = None) -> list[dict[str, Any]]:
+        clause, values = ("", ()) if skill_name is None else (" WHERE skill_name = ?", (skill_name,))
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM skill_grants{clause} ORDER BY skill_name, canonical_tool", values).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["permissions"] = json.loads(item.get("permissions") or "[]")
+            result.append(item)
+        return result
+
+    def record_mcp_server(self, record: dict[str, Any]) -> None:
+        columns = ("server", "command", "allowed_tools", "max_output_bytes", "timeout_seconds", "mutating_allowed", "credential_scope", "approved_by", "registered_at")
+        values = []
+        for key in columns:
+            value = record.get(key)
+            if key in {"allowed_tools", "credential_scope"} and isinstance(value, (list, tuple)):
+                value = json.dumps(list(value))
+            if key == "mutating_allowed":
+                value = 1 if value else 0
+            values.append(value)
+        with self._connect() as db:
+            db.execute(f"INSERT OR REPLACE INTO mcp_servers({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})", tuple(values))
+
+    def list_mcp_servers(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM mcp_servers ORDER BY server").fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key in ("allowed_tools", "credential_scope"):
+                try:
+                    item[key] = json.loads(item.get(key) or "[]")
+                except (TypeError, ValueError):
+                    item[key] = []
+            item["mutating_allowed"] = bool(item.get("mutating_allowed"))
+            result.append(item)
+        return result
+
+    def record_mcp_tool(self, *, fully_qualified: str, server: str, tool: str, risk_floor: str, requires_approval: bool, recorded_at: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO mcp_tools(fully_qualified, server, tool, risk_floor, requires_approval, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (fully_qualified, server, tool, risk_floor, 1 if requires_approval else 0, recorded_at),
+            )
+
+    def list_mcp_tools(self, server: str | None = None) -> list[dict[str, Any]]:
+        clause, values = ("", ()) if server is None else (" WHERE server = ?", (server,))
+        with self._connect() as db:
+            rows = db.execute(f"SELECT * FROM mcp_tools{clause} ORDER BY fully_qualified", values).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["requires_approval"] = bool(item.get("requires_approval"))
+            result.append(item)
+        return result
+
+    # -- the deprecated ``memories`` mirror (07 §5: write-only, one release, folded away by migration) --
+    #
+    # The mirror is read by exactly two paths: the kernel's documented fallback, and this migration. It is
+    # deliberately *not* dropped by the migration - "folded away" in the spec means the copy is preserved so
+    # a rollback of the application still has its own rows - and a script that deletes user history on the
+    # strength of a schema note is not a migration, it is data loss with a plan.
+
+    def count_legacy_memories(self) -> int:
+        with self._connect() as db:
+            return int(db.execute("SELECT COUNT(*) AS n FROM memories").fetchone()["n"])
+
+    def count_memory_records(self) -> int:
+        with self._connect() as db:
+            return int(db.execute("SELECT COUNT(*) AS n FROM memory_records").fetchone()["n"])
+
+    def legacy_memory_rows(self, limit: int = 10_000) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT memory_id, kind, content, created_at FROM memories ORDER BY memory_id LIMIT ?", (int(limit),)).fetchall()
+        return [dict(row) for row in rows]
 
     def create_task(self, goal: Goal) -> None:
         with self._connect() as db:
@@ -1303,7 +1470,7 @@ class SQLiteStore:
                 record.metadata["fingerprint"] = fingerprint
                 payload = record.to_dict()
             environment = json.dumps(record.environment.to_dict())
-            db.execute("INSERT OR REPLACE INTO memory_records(memory_id, memory_type, content, summary, source, source_id, provenance, confidence, confidence_score, importance, relevance, created_at, updated_at, last_accessed_at, access_count, version, memory_version, status, expiration, valid_from, valid_until, agent_version, architecture_version, source_version, environment, knowledge_kind, fingerprint, memory_key, source_ids, first_seen, last_seen, occurrence_count, metadata, payload) VALUES (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?)", (record.memory_id, record.type.value, record.content, record.summary, record.source.value, record.source_id, json.dumps(record.provenance.to_dict()), record.confidence.value, record.confidence_score, record.importance, record.relevance, record.created_at, record.updated_at, record.last_accessed_at, record.access_count, record.version, record.memory_version, record.status.value, record.expiration, record.valid_from, record.valid_until, record.agent_version, record.architecture_version, record.source_version, environment, record.knowledge_kind.value if record.knowledge_kind else None, fingerprint, record.key, json.dumps(record.source_ids), record.first_seen or record.created_at, record.last_seen or record.updated_at, record.occurrence_count, json.dumps(record.metadata), json.dumps(payload)))
+            db.execute("INSERT OR REPLACE INTO memory_records(memory_id, memory_type, content, summary, source, source_id, provenance, confidence, confidence_score, importance, relevance, created_at, updated_at, last_accessed_at, access_count, version, memory_version, status, expiration, valid_from, valid_until, agent_version, architecture_version, source_version, environment, knowledge_kind, fingerprint, memory_key, source_ids, first_seen, last_seen, occurrence_count, metadata, payload, scope_key) VALUES (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?)", (record.memory_id, record.type.value, record.content, record.summary, record.source.value, record.source_id, json.dumps(record.provenance.to_dict()), record.confidence.value, record.confidence_score, record.importance, record.relevance, record.created_at, record.updated_at, record.last_accessed_at, record.access_count, record.version, record.memory_version, record.status.value, record.expiration, record.valid_from, record.valid_until, record.agent_version, record.architecture_version, record.source_version, environment, record.knowledge_kind.value if record.knowledge_kind else None, fingerprint, record.key, json.dumps(record.source_ids), record.first_seen or record.created_at, record.last_seen or record.updated_at, record.occurrence_count, json.dumps(record.metadata), json.dumps(payload), str(getattr(record, "scope_key", "local") or "local")))
 
     def memory_by_id(self, memory_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -1330,7 +1497,14 @@ class SQLiteStore:
             rows = db.execute(f"SELECT * FROM memory_records WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC LIMIT ?", (*values, limit)).fetchall()
         return [dict(row) for row in rows]
 
-    def find_memories(self, memory_type: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def find_memories(self, memory_type: str | None = None, status: str | None = None, limit: int = 100, scope: str | None = None) -> list[dict[str, Any]]:
+        """One read path for memory rows, scoped by the query rather than by the caller's discipline.
+
+        ``scope=None`` and ``scope="*"`` mean "no filter" - that is the listing default, so an operator
+        auditing what the agent wrote sees everything. ``RetrievalEngine`` is the caller that always passes a
+        scope, and :class:`RetrievalQuery.scope` defaults to ``local``, which is where the isolation actually
+        lives: on the path that feeds a prompt.
+        """
         clauses: list[str] = []
         values: list[Any] = []
         if memory_type:
@@ -1339,6 +1513,13 @@ class SQLiteStore:
         if status:
             clauses.append("status = ?")
             values.append(status)
+        if scope is not None and scope != "*":
+            # ``is not None``, not truthiness: an empty scope must not fall through to the unfiltered
+            # listing, because `str(policy.scope or "")` is a shape a caller will eventually write. An empty
+            # filter matches the rows that are scoped "" - none - and reads as nothing rather than as
+            # everything.
+            clauses.append("scope_key = ?")
+            values.append(scope)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as db:
             rows = db.execute(f"SELECT * FROM memory_records {where} ORDER BY updated_at DESC LIMIT ?", (*values, limit)).fetchall()

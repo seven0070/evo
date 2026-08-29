@@ -309,7 +309,12 @@ DOCUMENTS: dict[str, DocumentSpec] = {
             "preference": Field(kind="list_name", allowed=TOOL_NAMES, max_entries=len(TOOL_NAMES)),
             "risk_floor_uplift": Field(kind="map_int", allowed=TOOL_NAMES, value=Field(kind="int", minimum=1, maximum=4), max_entries=len(TOOL_NAMES)),
         },
-        notes="preference within the already-granted set; permission sets are not overlay-writable",
+        notes=(
+            "preference within the already-granted set; permission sets are not overlay-writable. Neither is "
+            "MCP policy: an MCP server is registered against evo_agent/mcp.py by a named operator and recorded "
+            "in the mcp_servers table, so a candidate overlay cannot add a tool by writing a document - which "
+            "matters most in the phase where the transport is still inert and a namespaced name is only a claim"
+        ),
     ),
     "config/prompts.json": DocumentSpec(
         relpath="config/prompts.json",

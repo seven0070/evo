@@ -116,6 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--delete-user-memory", metavar="MEMORY_ID", help="Explicitly archive user-owned memory")
     parser.add_argument("--show-capability", metavar="CAPABILITY_ID", help="Show one rich Phase 12 capability")
     parser.add_argument("--find-capability", metavar="QUERY", help="Find rich capabilities by name or description")
+    parser.add_argument("--agent-mode", choices=("build", "plan"), default="build", help="Plan mode is a read-only phase: mutating tools, skill staging, extension activation, and promotion are refused regardless of approval settings")
+    parser.add_argument("--skills-list", action="store_true", help="List the skill catalog, the reviewed inventory, and the active mount")
+    parser.add_argument("--skill-install", metavar="DIRECTORY", help="Scan and stage a skill bundle into .evo/skills-staging without activating it")
+    parser.add_argument("--skill-name", metavar="NAME", help="Name to stage a skill bundle under (defaults to the directory name)")
+    parser.add_argument("--skill-show", metavar="NAME", help="Show one skill's manifest, digest, and scan state")
     parser.add_argument("--list-tools", action="store_true", help="List rich Phase 12 tool descriptors")
     parser.add_argument("--show-tool", metavar="TOOL_ID", help="Show one rich Phase 12 tool descriptor")
     parser.add_argument("--find-tools", metavar="QUERY", help="Find rich tools by name, description, or capability")
@@ -273,6 +278,49 @@ def approval_prompt(call: ToolCall, reason: str) -> bool:
     return answer.strip().lower() in {"y", "yes"}
 
 
+def _with_agent_mode(policy, requested: object):
+    """Apply ``--agent-mode`` to a profile-built policy, normalising garbage to the *plan* answer.
+
+    Two details carry the weight. The mode is applied here, at the two places a :class:`SecurityPolicy` is
+    constructed for a command, rather than inside ``PersonalOperatingProfile.build_security_policy``: the
+    profile is a document an evolution candidate may one day touch, and a phase that decides whether the
+    agent may write should not be readable from a file the agent is allowed to propose edits to. And an
+    unrecognised value resolves to ``plan``, not ``build``, by the same least-privilege reasoning that makes
+    an unknown sandbox level resolve to ``strict``.
+    """
+    from dataclasses import replace
+
+    from .modes import AgentMode
+
+    mode = AgentMode.parse(str(requested or "build"))
+    current = str(getattr(policy, "agent_mode", "build") or "build")
+    if current == mode.value:
+        return policy
+    return replace(policy, agent_mode=mode.value)
+
+
+def _load_memory_policy(args: argparse.Namespace):
+    """Load and validate ``--memory-config`` once, for whichever command is running.
+
+    Hoisted out of the runtime branch because a flag that is honoured by one verb and ignored by the next is
+    worse than a flag that does not exist: ``--show-profile --memory-config broken.json`` used to print a
+    profile and exit ``0``, which reads as "this configuration was considered". The refusal now happens
+    before any verb runs.
+
+    The plain ``evo 'goal'`` path still consumes memory through the kernel's own plan-time retrieval rather
+    than through this policy object, and that is stated in ``08`` as a remaining wiring item rather than
+    claimed as finished here: loading an object and not using it would be the same theatre in a new costume.
+    """
+    if not getattr(args, "memory_config", None):
+        return None
+    from .memory import MemoryPolicy
+
+    loaded_policy, problems = MemoryPolicy.load(Path(args.memory_config).expanduser().resolve())
+    if problems:
+        raise refuse_startup({"error": "memory policy is not valid", "path": args.memory_config, "problems": problems[:6]})
+    return loaded_policy
+
+
 def refuse_startup(payload: dict) -> SystemExit:
     """Print a refusal and hand back the exception that ends the process with a failing code.
 
@@ -291,17 +339,59 @@ def print_json(value: object) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> bool:
-    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.show_approval_digest or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_backends or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.production_status or args.production_run or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.list_models or args.show_model or args.model_health is not None or args.find_models or args.analyze_model_selection or args.model_evaluation or args.compare_models or args.list_learning or args.show_learning or args.learning_stats or args.model_routing_report or args.learning_status or args.learning_cycle or args.list_learning_patterns or args.show_learning_pattern or args.list_learning_hypotheses or args.show_learning_hypothesis or args.list_adaptive_policies or args.show_adaptive_policy or args.list_adjustments or args.show_adjustment or args.learning_evaluate or args.learning_rollback or args.learning_feedback or args.learning_counterfactual or args.self_model or args.self_model_refresh or args.self_model_status or args.self_model_claims or args.self_model_limitations or args.self_model_assumptions or args.self_model_uncertainty or args.self_model_conflicts or args.decision_readiness or args.meta_reason or args.self_diagnostics or args.self_reflect or args.confidence_report or args.goal_create or args.goal_list or args.goal_show or args.goal_prioritize or args.goal_plan or args.goal_progress or args.goal_blockers or args.goal_strategy or args.goal_alternatives or args.goal_reassess or args.goal_conflicts or args.goal_decisions is not None or args.goal_verify or args.show_profile):
+    # Validated before the gate's early returns, so a broken operator policy cannot be skipped by choosing
+    # a verb that happens not to read it.
+    memory_policy = _load_memory_policy(args)
+    if not (args.list_experiences or args.show_experience or args.show_evaluation or args.analyze_evolution or args.list_proposals or args.show_proposal or args.approve_proposal or args.reject_proposal or args.list_experiments or args.show_experiment or args.sandbox_proposal or args.list_benchmarks or args.run_benchmark or args.show_evidence or args.list_versions or args.show_version or args.show_approval_digest or args.request_promotion or args.approve_promotion or args.reject_promotion or args.promote or args.rollback or args.list_components or args.list_capabilities or args.show_architecture or args.analyze_metamorphosis or args.list_metamorphosis or args.show_metamorphosis or args.approve_metamorphosis or args.list_opportunities or args.show_opportunity or args.list_work_items or args.show_work_item or args.list_approval_requests or args.approve_orchestration or args.run_orchestrator or args.resume_work_item or args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal or args.list_memory or args.show_memory or args.search_memory or args.memory_history or args.memory_provenance or args.list_procedures or args.show_procedure or args.memory_stats or args.memory_integrity or args.archive_memory or args.restore_memory or args.delete_user_memory or args.show_capability or args.find_capability or args.list_tools or args.show_tool or args.find_tools or args.analyze_capability_gap or args.analyze_tool_selection or args.capability_stats or args.tool_health or args.show_environment or args.environment_snapshot or args.environment_diff or args.show_world_state or args.show_observations or args.show_environment_changes or args.refresh_environment is not None or args.environment_stats or args.runtime_start or args.runtime_stop or args.runtime_kill_switch or args.runtime_status or args.runtime_backends or args.runtime_pause or args.runtime_resume or args.runtime_safe_mode or args.runtime_cancel_task or args.runtime_pause_task or args.runtime_resume_task or args.runtime_list_tasks or args.runtime_show_task or args.runtime_submit or args.runtime_cycle or args.runtime_heartbeat or args.runtime_health or args.production_status or args.production_run or args.list_integrations or args.show_integration or args.external_health or args.test_integration or args.external_policy or args.list_external_policies or args.show_external_policy or args.list_integration_capabilities or args.list_external_operations or args.show_external_operation or args.external_submit or args.external_enqueue or args.approve_external_operation or args.list_external_observations or args.external_diff or args.list_external_changes or args.external_stats or args.list_specialists or args.show_specialist or args.specialist_health is not None or args.specialist_stats or args.specialist_task or args.queue_specialist_task or args.delegate_task or args.cancel_specialist_task or args.list_specialist_tasks or args.show_specialist_task or args.list_delegations or args.show_delegation or args.list_specialist_evidence or args.show_specialist_evidence or args.list_specialist_conflicts or args.show_conflicts or args.list_models or args.show_model or args.model_health is not None or args.find_models or args.analyze_model_selection or args.model_evaluation or args.compare_models or args.list_learning or args.show_learning or args.learning_stats or args.model_routing_report or args.learning_status or args.learning_cycle or args.list_learning_patterns or args.show_learning_pattern or args.list_learning_hypotheses or args.show_learning_hypothesis or args.list_adaptive_policies or args.show_adaptive_policy or args.list_adjustments or args.show_adjustment or args.learning_evaluate or args.learning_rollback or args.learning_feedback or args.learning_counterfactual or args.self_model or args.self_model_refresh or args.self_model_status or args.self_model_claims or args.self_model_limitations or args.self_model_assumptions or args.self_model_uncertainty or args.self_model_conflicts or args.decision_readiness or args.meta_reason or args.self_diagnostics or args.self_reflect or args.confidence_report or args.goal_create or args.goal_list or args.goal_show or args.goal_prioritize or args.goal_plan or args.goal_progress or args.goal_blockers or args.goal_strategy or args.goal_alternatives or args.goal_reassess or args.goal_conflicts or args.goal_decisions is not None or args.goal_verify or args.show_profile or args.agent_mode != "build" or args.skills_list or args.skill_install or args.skill_show):
         return False
     workspace = Path(args.workspace).expanduser().resolve()
     profile = PersonalOperatingProfile.load(Path(args.profile).expanduser().resolve() if args.profile else None, workspace)
     if args.show_profile:
         print_json(profile.to_dict())
         return True
+    if args.skills_list or args.skill_install or args.skill_show:
+        from .skills import SkillInstaller, catalog_from_policy
+
+        # Built here rather than read from the local below: the skills verbs answer before the runtime and
+        # the memory/capability sections run, and the *only* thing they need from the policy is the phase. A
+        # second call to the same builder is cheap; a stale or missing mode on a refusal would not be.
+        skills_policy = _with_agent_mode(profile.build_security_policy(workspace), args.agent_mode)
+        skills_store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
+        catalog = catalog_from_policy(workspace, skills_policy)
+        installer = SkillInstaller(workspace / ".evo" / "skills-staging", store=skills_store, policy=skills_policy)
+        if args.skill_install:
+            report = installer.stage(Path(args.skill_install).expanduser().resolve(), name=args.skill_name)
+            if not report["ok"]:
+                raise refuse_startup({"error": "skill bundle was not staged", "skill": report["name"], "refusals": report["refusals"][:8]})
+            print_json({**report, "activated": False, "note": "staged only: installation never activates, and the overlay plus its activation record remain the sole activation authority"})
+            return True
+        if args.skill_show:
+            bundle = catalog.get(args.skill_show)
+            allowed, problems = catalog.tool_policy(args.skill_show)
+            print_json({
+                "name": args.skill_show,
+                "found": bundle is not None,
+                "manifest": bundle.manifest.to_dict() if bundle is not None else None,
+                "findings": [item.to_dict() for item in (bundle.findings if bundle is not None else [])],
+                "tool_policy": {"allowed": list(allowed), "problems": problems},
+                "secrets": list(catalog.secret_names(args.skill_show)),
+                "instructions": catalog.instructions(args.skill_show),
+                "inventory": [row for row in skills_store.list_skill_packages() if row["name"] == args.skill_show],
+                "grants": skills_store.list_skill_grants(args.skill_show),
+            })
+            return True
+        print_json({
+            "catalog": catalog.report(),
+            "bundles": [bundle.manifest.to_dict() for bundle in catalog.bundles() if bundle.ok],
+            "inventory": skills_store.list_skill_packages(),
+            "grants": skills_store.list_skill_grants(),
+            "agent_mode": skills_policy.agent_mode,
+        })
+        return True
     if (args.external_submit or args.external_enqueue or args.approve_external_operation or args.test_integration) and not profile.allow_external_actions:
         print_json({"status": "blocked", "reason": "external actions are disabled by the personal operating profile", "profile_id": profile.profile_id})
         return True
-    security_policy = profile.build_security_policy(workspace)
+    security_policy = _with_agent_mode(profile.build_security_policy(workspace), args.agent_mode)
     selected_model = args.model if args.model != "offline" else profile.model
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     memory = MemoryManager(store, workspace)
@@ -365,18 +455,9 @@ def inspect_command(args: argparse.Namespace) -> bool:
             if not isinstance(loaded, dict):
                 raise refuse_startup({"error": "backends file must contain a JSON object", "path": str(path)})
             backend_config = loaded
-        memory_policy = None
-        if args.memory_config:
-            # Loaded once, here, and passed in as an object: the runtime must not be reading operator
-            # config from a file it re-discovers per cycle, and a policy that failed to validate is a
-            # startup error rather than "run with the shipped defaults", which is what a silently
-            # ignored typo in a retention window would otherwise become.
-            from .memory import MemoryPolicy
-
-            loaded_policy, problems = MemoryPolicy.load(Path(args.memory_config).expanduser().resolve())
-            if problems:
-                raise refuse_startup({"error": "memory policy is not valid", "path": args.memory_config, "problems": problems[:6]})
-            memory_policy = loaded_policy
+        # Already loaded and validated at the top of this function, like every other command that accepts
+        # the flag; `AgentRuntime` takes the object rather than a path so no component re-reads operator
+        # config from a file it discovers per cycle.
         runtime = AgentRuntime(workspace, model=(RuleBasedAdapter() if selected_model == "offline" else OpenAICompatibleAdapter(selected_model, args.base_url)), store=store, source_root=Path(args.source_root), external_integrations=external_manager, specialist_delegation=specialist_manager, model_intelligence=model_intelligence, adaptive_learning=adaptive_learning, self_model=self_model, meta_reasoning=meta_reasoning, limits=profile.to_runtime_limits(), safe_mode=profile.safe_mode_default, security_policy=security_policy, backends=backend_config, agent_loop=args.agent_loop, turn_budget=(args.turn_budget or None), max_parallel_tool_calls=(args.max_parallel_tool_calls or None), memory_policy=memory_policy)
     cognitive = None
     if args.run_goal or args.show_goal or args.show_plan or args.show_task or args.show_cognitive_state or args.clarify_goal:
@@ -860,6 +941,18 @@ def inspect_command(args: argparse.Namespace) -> bool:
         elif args.reject_promotion:
             print_json(promotion.reject_promotion(args.reject_promotion, args.proposal_reason).to_dict())
         elif args.promote:
+            from .modes import is_plan_mode
+
+            if is_plan_mode(security_policy):
+                raise refuse_startup({
+                    "error": "promotion is refused in plan mode",
+                    "promotion_id": args.promote,
+                    "reason": (
+                        "plan mode is a read-only phase, and promoting a candidate changes the effective "
+                        "state; the mode is deliberately not treated as an approval prompt, because an "
+                        "approval that flipped the phase off would make the phase advisory"
+                    ),
+                })
             print_json(promotion.promote(args.promote).to_dict())
         elif args.rollback:
             print_json(promotion.rollback(args.rollback, args.rollback_reason).to_dict())
@@ -868,6 +961,9 @@ def inspect_command(args: argparse.Namespace) -> bool:
 
 def main() -> int:
     args = build_parser().parse_args()
+    # Same rule as `inspect_command`: a refused configuration is refused whatever the command is. The object
+    # itself is consumed by the runtime paths; the legacy kernel path is recorded as a gap, not papered over.
+    _load_memory_policy(args)
     if inspect_command(args):
         return 0
     if not args.request:
@@ -877,7 +973,7 @@ def main() -> int:
     profile = PersonalOperatingProfile.load(Path(args.profile).expanduser().resolve() if args.profile else None, workspace)
     selected_model = args.model if args.model != "offline" else profile.model
     adapter = RuleBasedAdapter() if selected_model == "offline" else OpenAICompatibleAdapter(selected_model, args.base_url)
-    security_policy = profile.build_security_policy(workspace)
+    security_policy = _with_agent_mode(profile.build_security_policy(workspace), args.agent_mode)
     store = SQLiteStore(workspace / ".evo" / "agent.sqlite3")
     kernel = AgentKernel(workspace, adapter, store=store, approval_callback=approval_prompt, security_policy=security_policy)
     if args.legacy_kernel:

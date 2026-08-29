@@ -98,6 +98,12 @@ class ApprovalMediator:
     a policy violation.
     """
 
+    #: The :class:`evo_agent.tools.ToolRegistry` this mediator guards, when one is linked. Read only for
+    #: one purpose: plan mode must classify a tool by its *descriptor* (risk, declared permissions), and
+    #: the registry is the sole authority on what a descriptor says. A mediator with no link is not a
+    #: loophole - plan mode refuses what it cannot classify.
+    registry: Any = None
+
     def __init__(
         self,
         policy: SecurityPolicy | None = None,
@@ -208,6 +214,26 @@ class ApprovalMediator:
         Isolation, network denial, and output bounds still apply, and any command the *child* wants
         to run must still come back through :meth:`execute`.
         """
+        # Plan mode refuses the launch itself, not merely the child's tool calls. The argument against it
+        # was that the child's calls already come back through :meth:`execute`, where the same rule fires -
+        # true, and that is why this leg is short rather than clever. But a bridge that starts up in a
+        # read-only phase has already done something: it has spawned a process with a working directory and
+        # a config, and "nothing was changed" would be a claim about the child's behaviour rather than a
+        # property of this build. The phase answers with what it controls.
+        from ..modes import is_plan_mode
+
+        if is_plan_mode(self.policy):
+            return self._finish(
+                MediationDecision(
+                    False,
+                    "plan_mode",
+                    f"'{tool_name}' would launch the configured program '{program}', and plan mode is a read-only phase: "
+                    "no child process is started, whatever its tool calls would have been told",
+                    details={"tool": tool_name, "program": str(program)},
+                ),
+                request,
+                True,
+            )
         expected = str(program)
         actual = str(request.argv[0]) if request.argv else ""
         if not request.argv:
@@ -256,13 +282,27 @@ class ApprovalMediator:
                 return self._finish(MediationDecision(False, "no_isolation", str(exc), details={"enforcement": enforcement}), amended, True)
             if getattr(selected, "name", "") == "host":
                 return self._finish(MediationDecision(False, "no_isolation", "strict enforcement cannot run a bridge outside the sandbox", details={"provider": "host"}), amended, True)
+        # ``isolated`` is the provider's answer, not the enforcement level's. Claiming "isolated" whenever
+        # the level is not ``off`` is what the first draft did, and it is the wrong kind of optimistic: with
+        # no usable provider, ``auto`` and ``degrade`` both run the child unconfined, so the audit line said
+        # *confined* about an unconfined process while ``isolation_state()`` - the same object, asked a
+        # moment later - said the opposite. Two authorities answering one question is the defect; the fix is
+        # to ask the one that knows, and to let a degraded run look degraded.
+        confined, why = self.isolation_state()
+        details: dict[str, object] = {"enforcement": enforcement, "argv": list(amended.argv)[:2], "program_resolved_to": resolved}
+        if not confined and enforcement != "off":
+            details["isolation_unavailable"] = why
         return self._finish(
             MediationDecision(
                 True,
                 "allowed",
-                "configured program, confined, no egress; every command the child asks for is mediated separately",
-                isolated=enforcement != "off",
-                details={"enforcement": enforcement, "argv": list(amended.argv)[:2], "program_resolved_to": resolved},
+                (
+                    "configured program, confined, no egress; every command the child asks for is mediated separately"
+                    if confined
+                    else f"configured program, NOT confined ({why}); no egress is granted either way"
+                ),
+                isolated=confined,
+                details=details,
             ),
             amended,
             True,
@@ -273,7 +313,24 @@ class ApprovalMediator:
         decision, amended = self.authorize_infrastructure(request, program=program, tool_name=tool_name)
         if not decision.allowed:
             return ExecResult(returncode=-1, output="", isolated=False, provider="mediator", refusal=decision.text)
-        return run_confined(amended, settings=self.settings(), providers=self.providers, on_event=self._event_for(amended))
+        result = run_confined(amended, settings=self.settings(), providers=self.providers, on_event=self._event_for(amended))
+        if decision.isolated and not result.isolated:
+            # The provider outvotes the snapshot in the direction of caution, and the disagreement stays
+            # visible in `notes` rather than being reconciled silently: an auditor comparing the decision to
+            # the result should see that they differ, not a result quietly rewritten to match.
+            result = replace(result, notes=(*result.notes, "mediator expected confinement; the provider did not deliver it"))
+        if not decision.isolated and not result.degraded_reason:
+            # A degraded run says so on the result, not only in a log line. Fallback is legitimate while it
+            # is visible to whoever reads the outcome, and indistinguishable from confinement when it is not.
+            result = replace(
+                result,
+                isolated=False,
+                degraded_reason=str(
+                    decision.details.get("isolation_unavailable")
+                    or f"sandbox_enforcement '{decision.details.get('enforcement')}' ran the child without a usable isolation provider"
+                ),
+            )
+        return result
 
     def isolation_state(self) -> tuple[bool, str]:
         """Whether a process launched through this mediator right now would be confined, and by what.
@@ -325,6 +382,28 @@ class ApprovalMediator:
         policy decision is how the pre-merge state came to exist in the first place.
         """
         payload = dict(arguments or {})
+        # Plan mode is checked here, first, rather than in the tool handlers: this function is the one
+        # place every executable path crosses - kernel, bridge, adapter, infrastructure - and a read-only
+        # phase enforced per-handler is a read-only phase with doors. Note that this precedes the
+        # approval branch on purpose: a plan-mode refusal is not "awaiting consent", and an operator who
+        # approves the ask must not thereby have turned the mode off.
+        from ..modes import is_plan_mode, refuses_in_plan_mode
+
+        if is_plan_mode(self.policy):
+            registry = getattr(self, "registry", None)
+            descriptor = getattr(registry, "_tools", {}).get(tool_name) if registry is not None else None
+            refused, mode_reason = refuses_in_plan_mode(
+                tool_name,
+                risk=risk if risk is not None else getattr(descriptor, "risk", None),
+                permissions=getattr(descriptor, "permissions", ()) if descriptor is not None else (),
+                known=descriptor is not None or tool_name in {"shell", "workspace_list", "workspace_read", "workspace_write"},  # the shipped four, for a mediator with no registry link
+            )
+            if refused:
+                return self._finish(
+                    MediationDecision(False, "plan_mode", mode_reason, details={"tool": tool_name, "mode": "plan"}),
+                    request,
+                    record,
+                )
         if not request.argv:
             return self._finish(MediationDecision(False, "empty_request", "no command was supplied", details={"tool": tool_name}), request, record)
         if request.network:
@@ -390,16 +469,19 @@ class ApprovalMediator:
                     amended,
                     record,
                 )
+        # Same rule as the infrastructure leg above: the flag reports what the boundary actually is.
+        confined, why = self.isolation_state()
         decision = MediationDecision(
             True,
             "allowed",
-            "policy, approval, and isolation requirements satisfied",
-            isolated=enforcement != "off",
+            "policy, approval, and isolation requirements satisfied" if confined else f"policy and approval satisfied; isolation degraded ({why})",
+            isolated=confined,
             details={
                 "enforcement": enforcement,
                 "argv_count": len(amended.argv),
                 "read_only": [str(item) for item in amended.read_only],
                 "approval_evidence": "carried" if approved else ("callback" if self.approver is not None else "not_required"),
+                **({"isolation_unavailable": why} if not confined and enforcement != "off" else {}),
             },
         )
         return self._finish(decision, amended, record)

@@ -443,9 +443,24 @@ class SkillInstaller:
     one thing this phase must not add is a door that bypasses the version registry.
     """
 
-    def __init__(self, staging_root: Path | str, *, scanner: SecurityScanner | None = None) -> None:
+    def __init__(
+        self,
+        staging_root: Path | str,
+        *,
+        scanner: SecurityScanner | None = None,
+        store: Any = None,
+        policy: Any = None,
+        on_event: Any = None,
+    ) -> None:
         self.staging_root = Path(staging_root).expanduser().resolve()
         self.scanner = scanner or SecurityScanner()
+        #: ``skill_packages`` is the reviewed inventory, not the activation authority: a row saying
+        #: ``installed`` while no overlay carries the bundle changes nothing, because the catalog mounts what
+        #: the *active version* contains. Recording the verdict and the digest is what lets a reviewer
+        #: answer "which bytes did I approve" after the directory has moved on.
+        self.store = store
+        self.policy = policy
+        self.on_event = on_event
 
     def _path_findings(self, relative: Path) -> list[SkillFinding]:
         text = relative.as_posix()
@@ -476,6 +491,15 @@ class SkillInstaller:
         source_dir = Path(source).expanduser().resolve()
         skill_name = name or source_dir.name
         report: dict[str, Any] = {"name": skill_name, "ok": False, "refusals": [], "written": [], "digest": ""}
+        from .modes import is_plan_mode
+
+        if is_plan_mode(self.policy):
+            # Checked first, and not as an approval prompt: staging a bundle writes into the workspace, and
+            # a "read-only phase" that can still install a capability is not read-only in the sense anyone
+            # cares about. Refusing before the walk also means a plan-mode turn cannot leave a half-staged
+            # directory behind while it discovers that it was not allowed to stage at all.
+            report["refusals"].append("plan mode is a read-only phase: skill staging writes files and is refused")
+            return report
         if not _NAME_SHAPE.match(skill_name):
             report["refusals"].append(f"skill name {skill_name!r} must match [a-z0-9][a-z0-9._-] and be safe as a path component")
             return report
@@ -523,6 +547,7 @@ class SkillInstaller:
             blocking.extend(run_scanner(self.scanner, text))
         if blocking:
             report["refusals"] = [f"{item.rule}: {item.detail}" for item in blocking]
+            self._record(skill_name, digest="", status="quarantined", verdict="blocked", path=str(source_dir), findings=report["refusals"])
             return report  # nothing has been written; validation came first
         destination = self.staging_root / SKILL_SUBPATH / skill_name
         staging_parent = destination.parent
@@ -545,7 +570,35 @@ class SkillInstaller:
         report["digest"] = digest.hexdigest()
         report["ok"] = True
         report["path"] = str(destination)
+        self._record(skill_name, digest=report["digest"], status="candidate", verdict="clean", path=str(destination), findings=[])
         return report
+
+    def _record(self, name: str, *, digest: str, status: str, verdict: str, path: str, findings: Sequence[str]) -> None:
+        """Best-effort inventory write and event. A bookkeeping failure never changes the verdict."""
+        if self.store is not None:
+            try:
+                from datetime import datetime, timezone
+
+                self.store.record_skill_package(
+                    name=name,
+                    version=digest[:12] if digest else "unverified",
+                    digest=digest or "unhashed",
+                    provenance=f"installer:{self.staging_root}",
+                    scan_verdict=verdict,
+                    status=status,
+                    path=path,
+                    recorded_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                )
+            except Exception:  # noqa: BLE001 - the refusal above already stands on its own
+                pass
+        emit = self.on_event
+        if emit is None:
+            return
+        event = "skill_scan_blocked" if status == "quarantined" else "skill_candidate_created"
+        try:
+            emit(event, {"skill": name, "status": status, "digest": digest, "findings": list(findings)[:8]})
+        except Exception:  # noqa: BLE001 - same rule as the store above
+            return
 
 
 def catalog_from_policy(

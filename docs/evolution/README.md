@@ -90,15 +90,23 @@ the 14-stage pipeline orders, both integrations serve real turns, and `active_ve
 skipped** on `python3 -m pytest -o addopts="" -q tests/`, and `verify_sovereign_digest.py --gate` reports
 **10/10 invariants ok** over a 20-file protected set. The 2 environmental bwrap failures P2 ended with were
 investigated in P3 and are **resolved** - environment-only, no production defect, and the sandbox was not
-weakened to get there; the 2 remaining skips are that same bwrap pair. P5 (capability and verification
-completion) is **partially complete**: the memory-policy and skills capabilities are integrated end to end
-with real consumers, `config/prompts.json` / `config/strategy.json` are retired as stated refusals rather
-than gaps, the upstream components are pinned with an accepted surface per component, and a new
-`I-ownership-boundary` invariant states one owner for each of 23 capabilities - 821 passed / 2 skipped / 0
-failed, 11/11 invariants over the same 20-file protected set. Its remaining `07` §8 acceptance names
-(mcp, hooks/plugins, delegation depth, the degradation matrix, plan-mode) are **P5b**, recorded as
-unimplemented in `08-IMPLEMENTATION-LOG.md`. P6 (the evolution engine) and P7 (metamorphosis as the
-controlled lifecycle, never unrestricted self-rewriting) follow.
+weakened to get there; the 2 remaining skips are that same bwrap pair. **P5 (capability and verification
+completion) is complete**, in two batches, with the second batch recorded as P5b in
+`08-IMPLEMENTATION-LOG.md`: the memory-policy and skills capabilities are integrated end to end with real
+consumers, `config/prompts.json` / `config/strategy.json` are retired as stated refusals rather than gaps, the
+upstream components are pinned with an accepted surface per component, and a new `I-ownership-boundary`
+invariant states one owner for each of 23 capabilities. P5b then closed every remaining `07` §8 acceptance
+name: plan-mode (`evo_agent/modes.py`, gated on the tool path **and** on the infrastructure/bridge launch
+path), MCP policy with a deliberately inert transport (`evo_agent/mcp.py`), delegation depth
+(`evo_agent/specialist.py`'s in-flight ledger), adversarial plugin handling (`evo_agent/plugins.py`), the
+degradation matrix (`evo_agent/backends/availability.py` and the mediator's honest `isolated` /
+`degraded_reason`), memory-scope isolation with an idempotent migration, the CLI surface, and E3's
+`test_monotonic_hardening.py`. **976 passed / 2 skipped / 0 failed** (978 collected) on
+`python3 -m pytest -o addopts="" -q tests/`, with `verify_sovereign_digest.py --gate` reporting **11/11
+invariants ok** over the same 20-file protected set. P6 (the evolution engine) and P7 (metamorphosis as the
+controlled lifecycle, never unrestricted self-rewriting) follow, and P5's one recorded wiring gap - the plain
+`evo 'goal'` path has no `memory_policy` consumer, though the file is validated for every verb - is listed
+under "Blockers carried forward (into P6)".
 
 What P3 delivered that P0–P2 could not: promoting a version now **changes what the agent does**. The
 founding finding in `00` §B - an evolution loop whose payload nothing loaded - is closed by

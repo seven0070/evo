@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -16,6 +17,15 @@ from .version import __version__
 
 SPECIALIST_SCHEMA_VERSION = "specialist-v1"
 _MAX_CONTEXT_BYTES = 12000
+
+#: Executions currently in flight, keyed by the SQLite file they write through. Deliberately module-level
+#: rather than per-engine: the ceiling is on *nesting*, and a subagent that builds its own
+#: :class:`SpecialistDelegationEngine` over the same database is still a subagent. A per-instance set would
+#: be trivially escaped by exactly that - which is the one move the limit exists to stop. Guarded by a
+#: lock because the pool threads are the writers, and keyed on the store path because two workspaces in one
+#: process must not block each other.
+_IN_FLIGHT: dict[str, set[str]] = {}
+_IN_FLIGHT_LOCK = threading.Lock()
 _MAX_OUTPUT_BYTES = 24000
 _PROTECTED_TERMS = {"governance", "approval", "promotion", "rollback", "protected_core", "metamorphosis", "evolver", "credentials", "production", "kill_switch"}
 
@@ -588,6 +598,16 @@ class SpecialistLimits:
     circuit_breaker_threshold: int = 3
     max_context_bytes: int = _MAX_CONTEXT_BYTES
     max_output_bytes: int = _MAX_OUTPUT_BYTES
+    #: How far below the Evo loop a delegated task may delegate again. One, and it is not a throughput
+    #: setting: a tree of subagents is a tree of context windows, and every isolation guarantee in this
+    #: module (bounded prompt, no sibling memory, no inherited authority, single-verifier attribution) has
+    #: to be re-proved at each level. The kernel is the only thing that turns a result into state, so a
+    #: second level multiplies the paths into it while adding no capability.
+    max_delegation_depth: int = 1
+    #: The turn ceiling an executor may be given. The engine cannot count an executor's turns - the
+    #: executor owns its loop - so what the engine enforces is the ceiling *in the contract it hands over*:
+    #: a contract asking for more is clamped down on the way out (E3, tighten only).
+    max_turns_per_specialist: int = 8
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -760,6 +780,7 @@ class SpecialistDelegationEngine:
         self.context_builder = ContextIsolation(self.workspace, self.limits.max_context_bytes)
         self.fusion_engine = EvidenceFusionEngine(store)
         self.conflict_resolver = ConflictResolver(store)
+        self._ledger = self._ledger_key()
 
     def _emit(self, event_type: EventType, payload: dict[str, Any], task_id: str) -> None:
         self.store.append_event(Event(task_id, event_type, _safe_payload(payload)))
@@ -821,8 +842,18 @@ class SpecialistDelegationEngine:
         self._emit(EventType.SPECIALIST_MESSAGE_SENT, {"message": message.to_dict()}, message.parent_task_id)
         return message
 
-    def _validate_output(self, contract: SpecialistTaskContract, output: SpecialistOutput) -> list[str]:
+    def _validate_output(self, contract: SpecialistTaskContract, output: SpecialistOutput, *, max_tool_calls: int | None = None) -> list[str]:
         errors: list[str] = []
+        if max_tool_calls is not None:
+            # The engine cannot count an executor's turns, and it will not pretend to. What it *can* do is
+            # refuse an output that reports having used more than the ceiling it handed down - which is what
+            # turns the clamp from a note into a bound.
+            try:
+                used = int((output.resource_usage or {}).get("tool_calls", 0) or 0)
+            except (TypeError, ValueError):
+                used = max_tool_calls + 1  # an unparseable usage report is not evidence of compliance
+            if used > max_tool_calls:
+                errors.append(f"specialist reported {used} tool calls, above the enforced ceiling of {max_tool_calls}")
         if output.specialist_task_id != contract.specialist_task_id:
             errors.append("specialist output task does not match contract")
         if len(_canonical(output.to_dict()).encode("utf-8")) > int(contract.resource_limits.get("max_output_bytes", self.limits.max_output_bytes)):
@@ -844,7 +875,60 @@ class SpecialistDelegationEngine:
             return SpecialistOutput(task_id, raw.get("claim"), list(raw.get("observations", [])), list(raw.get("evidence", [])), raw.get("inference"), float(raw.get("confidence", 0.0)), VerificationStatus(raw.get("verification_status", VerificationStatus.UNVERIFIED.value)), bool(raw.get("success", True)), str(raw.get("error", "")), dict(raw.get("resource_usage", {})), dict(raw.get("provenance", {})))
         return SpecialistOutput(task_id, raw, confidence=0.5, provenance={"source": "specialist_executor"})
 
+    def _ledger_key(self) -> str:
+        return str(Path(getattr(self.store, "path", "specialist")).resolve())
+
+    def _execution_depth(self) -> int:
+        """How many specialist executions are in flight for this database right now."""
+        with _IN_FLIGHT_LOCK:
+            return len(_IN_FLIGHT.get(self._ledger_key(), set()))
+
     def execute_task(self, task: SpecialistTask | str, context: SpecialistContext | None = None, executor: Callable[[SpecialistTaskContract, SpecialistContext], Any] | None = None) -> SpecialistOutput:
+        # The depth is measured by the engine, not declared by the caller, and it is recorded in a ledger
+        # rather than in thread state: the executor is dispatched onto its own thread so that its wall-clock
+        # limit can be enforced, and anything stored on a thread would be invisible to the one call - the
+        # nested ``delegate`` - that has to be caught.
+        task_id = task if isinstance(task, str) else getattr(task, "specialist_task_id", "unknown")
+        with _IN_FLIGHT_LOCK:
+            _IN_FLIGHT.setdefault(self._ledger_key(), set()).add(str(task_id))
+        try:
+            return self._execute_task(task, context, executor)
+        finally:
+            with _IN_FLIGHT_LOCK:
+                _IN_FLIGHT.get(self._ledger_key(), set()).discard(str(task_id))
+
+    def _turn_ceiling(self, contract: SpecialistTaskContract) -> tuple[int, int, bool]:
+        """``(requested, effective, clamped)`` for the tool-call ceiling an executor is held to.
+
+        Deliberately *not* a mutation of ``contract.resource_limits``: the contract's ``scope_hash`` covers
+        that mapping, so rewriting it - even to tighten it - makes the signed document fail
+        ``contract.validate()`` with "contract scope hash is invalid". An approved contract is immutable here;
+        the ceiling travels to the executor as a parent constraint and to the verifier as an argument.
+        """
+        ceiling = int(self.limits.max_turns_per_specialist)
+        try:
+            asked = int((contract.resource_limits or {}).get("max_tool_calls", ceiling) or ceiling)
+        except (TypeError, ValueError):
+            asked = ceiling
+        effective = min(asked, ceiling) if asked > 0 else ceiling
+        return asked, effective, effective != asked
+
+    def _constrained_context(self, context: SpecialistContext | None, *, requested: int, effective: int) -> SpecialistContext | None:
+        if context is None or requested == effective:
+            return context
+        from dataclasses import replace
+
+        return replace(
+            context,
+            parent_constraints={
+                **context.parent_constraints,
+                "max_tool_calls": effective,
+                "max_tool_calls_requested": requested,
+                "max_tool_calls_clamped_by": f"SpecialistLimits.max_turns_per_specialist={self.limits.max_turns_per_specialist}",
+            },
+        )
+
+    def _execute_task(self, task: SpecialistTask | str, context: SpecialistContext | None = None, executor: Callable[[SpecialistTaskContract, SpecialistContext], Any] | None = None) -> SpecialistOutput:
         if isinstance(task, SpecialistTask):
             persisted = self.store.specialist_task_by_id(task.specialist_task_id)
             task_obj = specialist_task_from_row(persisted) if persisted else task
@@ -903,6 +987,14 @@ class SpecialistDelegationEngine:
             output = SpecialistOutput(task_obj.specialist_task_id, success=False, error="no subordinate executor configured")
         else:
             started = datetime.now(timezone.utc)
+            requested_turns, effective_turns, turns_clamped = self._turn_ceiling(contract)
+            if turns_clamped:
+                # The clamp is recorded on the *task*, not smuggled into the signed contract, so an auditor
+                # can see both numbers: what the contract asked for and what the engine allowed.
+                task_obj.resource_usage["max_tool_calls_requested"] = requested_turns
+                task_obj.resource_usage["max_tool_calls_enforced"] = effective_turns
+                task_obj.resource_usage["max_tool_calls_clamped_by"] = f"SpecialistLimits.max_turns_per_specialist={self.limits.max_turns_per_specialist}"
+                context = self._constrained_context(context, requested=requested_turns, effective=effective_turns)
             try:
                 pool = ThreadPoolExecutor(max_workers=1)
                 future = pool.submit(executor, contract, context)
@@ -920,7 +1012,7 @@ class SpecialistDelegationEngine:
             except Exception as exc:
                 output = SpecialistOutput(task_obj.specialist_task_id, success=False, error=f"{type(exc).__name__}: {exc}")
                 task_obj.failure_class = "reasoning_failure"
-        output_errors = self._validate_output(contract, output)
+        output_errors = self._validate_output(contract, output, max_tool_calls=effective_turns)
         if output_errors:
             output.success = False
             output.error = "; ".join(output_errors)
@@ -996,6 +1088,14 @@ class SpecialistDelegationEngine:
             raise ValueError("at least one specialist assignment is required")
         if len(items) > self.limits.max_specialists_per_delegation:
             raise ResourceWarning("specialist delegation ceiling exceeded")
+        # Refused before the run row exists, so an over-deep request leaves no delegation that would be
+        # audited as though it had started.
+        depth = self._execution_depth()
+        if depth + 1 > self.limits.max_delegation_depth:
+            raise ResourceWarning(
+                f"delegation depth {depth + 1} exceeds the ceiling of {self.limits.max_delegation_depth}: "
+                "a delegated specialist may not delegate again in this build"
+            )
         run = DelegationRun(new_id("delegation"), parent_task_id, DelegationStatus.RUNNING, [task.specialist_task_id for task, _, _ in items], min(len(items), self.limits.max_concurrent_specialists))
         self.store.save_delegation_run(run)
         self._emit(EventType.DELEGATION_STARTED, {"delegation": run.to_dict()}, parent_task_id)

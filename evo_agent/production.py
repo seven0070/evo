@@ -169,6 +169,12 @@ class ProductionConfig:
         return bounds
 
 
+#: The memory schema's own version, separate from ``PRODUCTION_SCHEMA_VERSION`` because the two are
+#: allowed to move apart: ``scope_key`` (07 §5, Q6) is additive and lands in a release that does not touch
+#: operational metadata, and a single counter would force one phase's schema change to claim the other's.
+MEMORY_SCHEMA_VERSION = 1
+
+
 class ProductionSchemaManager:
     """Forward-only operational metadata schema sharing the Runtime SQLite file."""
 
@@ -212,7 +218,38 @@ class ProductionSchemaManager:
                 db.execute("INSERT OR REPLACE INTO production_schema(schema_name, schema_version, updated_at) VALUES ('production', ?, ?)", (PRODUCTION_SCHEMA_VERSION, _utc_now()))
             elif current < PRODUCTION_SCHEMA_VERSION:
                 db.execute("UPDATE production_schema SET schema_version = ?, updated_at = ? WHERE schema_name = 'production'", (PRODUCTION_SCHEMA_VERSION, _utc_now()))
+        self.ensure_memory_scope()
         return PRODUCTION_SCHEMA_VERSION
+
+    def memory_schema_version(self) -> int:
+        with self.store._connect() as db:
+            row = db.execute("SELECT schema_version FROM production_schema WHERE schema_name = 'memory'").fetchone()
+        return int(row[0]) if row else 0
+
+    def ensure_memory_scope(self) -> int:
+        """Record the memory schema version, forward-only, after the column exists.
+
+        The order matters and is the whole design of the guard: :class:`SQLiteStore` adds the column
+        itself (so a fresh install and an upgraded one converge), and this row records *that the upgrade
+        has been seen by a version of the application that understands it*. A database carrying a higher
+        version than the running code raises rather than reading rows it cannot interpret - the same rule
+        ``ensure_current`` applies to operational metadata, for the same reason: a program that guesses at
+        a newer schema produces data nobody can trust afterwards.
+        """
+        with self.store._connect() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS production_schema (schema_name TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, updated_at TEXT NOT NULL)")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(memory_records)").fetchall()}
+            if "scope_key" not in columns:
+                raise RuntimeError("memory schema requires memory_records.scope_key; run scripts/migrate_memory_consolidation.py")
+            row = db.execute("SELECT schema_version FROM production_schema WHERE schema_name = 'memory'").fetchone()
+            current = int(row[0]) if row else 0
+            if current > MEMORY_SCHEMA_VERSION:
+                raise RuntimeError("memory database schema is newer than this application")
+            if current == 0:
+                db.execute("INSERT OR REPLACE INTO production_schema(schema_name, schema_version, updated_at) VALUES ('memory', ?, ?)", (MEMORY_SCHEMA_VERSION, _utc_now()))
+            elif current < MEMORY_SCHEMA_VERSION:
+                db.execute("UPDATE production_schema SET schema_version = ?, updated_at = ? WHERE schema_name = 'memory'", (MEMORY_SCHEMA_VERSION, _utc_now()))
+        return MEMORY_SCHEMA_VERSION
 
 
 class OperationalJournal:

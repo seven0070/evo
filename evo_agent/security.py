@@ -27,6 +27,14 @@ class SecurityPolicy:
     source_read_only: bool = True
     sandbox_read_only_paths: tuple[str, ...] = ()
 
+    #: What this process may let a turn *change*. ``plan`` is the read-only phase: writes, process
+    #: spawning, and anything high-risk are refused before approval is considered (``evo_agent/modes.py``),
+    #: and skill staging and promotion are refused outright. It is a policy field rather than a runtime
+    #: argument because the sandbox mediator is the enforcement point, and the mediator reads its rules
+    #: from the policy - a mode that lived on the runtime object would be invisible to a bridge turn, which
+    #: is precisely the path a read-only phase must not have.
+    agent_mode: str = "build"
+
     #: Skill bundles whose declared secrets may be resolved without a per-use approval.
     #:
     #: A skill may say it needs a credential; whether it may *use* one while nobody is watching is a
@@ -51,6 +59,9 @@ class SecurityPolicy:
         self.sandbox_provider = str(self.sandbox_provider or "auto").strip().lower() or "auto"
         self.sandbox_read_only_paths = tuple(str(item) for item in (self.sandbox_read_only_paths or ()))
         self.skill_autonomous_secrets = tuple(str(item) for item in (self.skill_autonomous_secrets or ()))
+        from .modes import AgentMode  # local: ``modes`` reads the policy, and the policy names the mode
+
+        self.agent_mode = AgentMode.parse(self.agent_mode).value
 
     def to_dict(self) -> dict[str, Any]:
         """Self-describing policy, for the audit record and for ``evo security show``.
@@ -70,6 +81,7 @@ class SecurityPolicy:
             "source_read_only": bool(self.source_read_only),
             "sandbox_read_only_paths": list(self.sandbox_read_only_paths),
             "skill_autonomous_secrets": list(self.skill_autonomous_secrets),
+            "agent_mode": self.agent_mode,
         }
 
     def resolve_workspace_path(self, raw_path: str) -> Path:

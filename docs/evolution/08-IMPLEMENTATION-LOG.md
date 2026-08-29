@@ -750,19 +750,21 @@ executable without the mediator.
 
 ---
 
-## P5 — Capability and verification completion (partially complete; the rest is P5b)
+## P5 — Capability and verification completion
 
 **Goal.** Resolve the blockers P3 and P4 recorded rather than add new surface: give every
 `active_version.DOCUMENTS` row a loader or a stated refusal, integrate the capabilities that already
 existed as modules but had no consumer, complete sandbox coverage, pin the upstream components, and
 state - in code, not prose - who owns each capability.
 
-This phase is recorded as **partially complete**. Batch 1 (memory policy) and Batch 2 (skills, upstream
-pins, ownership boundary) are implemented and green on their own suites; the remaining `07` §8 acceptance
-names - `test_mcp_refusals`, `test_delegation_depth`, `test_adversarial_plugins`, `test_degradation_matrix`,
-and plan-mode - are carried to **P5b** and are *not* claimed here. Saying "P5 green" without those five
-tests would be the exact failure mode `00` documents: a capability recorded as done because a nearby
-capability was.
+P5 was executed in two batches and is recorded as **complete**. Batch 1 (memory policy) and Batch 2 (skills,
+upstream pins, ownership boundary) are described below; **P5b** closed the acceptance names `07` §8 still
+owed - plan-mode, MCP policy, delegation depth, adversarial plugins, memory-scope isolation, the degradation
+matrix, the CLI surface, and the E3 monotonicity file - and is described in the second "Built" block. The
+distinction matters only as history: the phase's claim to completion is the eight test files, and
+`07` §8's P5 row is now satisfied name by name, with each name resolved to an artefact that exists rather
+than to a nearby capability (the failure mode `00` documents, and the reason the first version of this
+section said "partial").
 
 ### Built
 
@@ -847,8 +849,69 @@ capability was.
   read-only in every sandboxed execution for as long as the version that carries them is active, and no
   longer the moment it is not.
 
-**Tests.** `tests/test_memory_policy.py` (24), `tests/test_skills.py` (25),
-`tests/test_upstream_ownership.py` (20).
+**P5b - the six capability areas `07` §8 named, plus the two surfaces that carry them.**
+
+* `evo_agent/modes.py` (new): `AgentMode{BUILD, PLAN}`, `PLAN_FORBIDDEN_TOOLS` (the five tools that change
+  state), `is_plan_mode`, `refuses_in_plan_mode(...) -> (bool, reason)`, and a `report()` the CLI prints.
+  Wired into `security.py` (a `agent_mode` field, normalised in `__post_init__`, carried in `to_dict()`),
+  into `sovereign/mediation.py`'s `_decide` **before** the approval leg, and - the leg the matrix test found
+  missing - as the **first** leg of `authorize_infrastructure`, so the bridge and DSH launch paths cannot
+  start a child in a read-only phase. A mistyped mode resolves to `plan`, the safer answer; `--promote` in
+  plan mode refuses through `refuse_startup`; nothing about the mode is readable from a candidate payload.
+* `evo_agent/mcp.py` (new): `MCPServerPolicy` (frozen, `digest`, `clamped`; output capped at 1 MiB, timeout
+  at 900 s, unknown risk strings mapped to `critical`), `MCPRegistry(catalog, *, policy, store, on_event)`
+  with `register / lookup / invoke / report`, and `evo_agent/migrations.py`-backed hydration. `invoke()`
+  stages `unregistered → approval → transport` and **always refuses at the transport leg**: the policy is
+  implemented and reviewed, the client is deliberately inert, which is the order `07` §8 asked for
+  ("policy before any transport"). A server that collides with an existing tool name, declares a
+  mutating-looking tool without `mutating_allowed`, has a blank or non-existent `command`, declares no
+  tools, or has no `approved_by` is refused at `register`, before anything is written.
+* `evo_agent/plugins.py` (new): `PluginKind{HOOK, VERIFICATION, RESEARCH, EXECUTABLE_CODE}`,
+  `PluginLifecycle{CANDIDATE, ACTIVE, QUARANTINED, RETIRED}`, `PluginRecord.assess(payload, result, checks)`,
+  `PluginInventory` (register / bind / activate / quarantine / retire / dispatch_hook / report) with
+  `TIGHTEN_ONLY` enforced structurally - the inventory **never imports anything**, and an
+  `EXECUTABLE_CODE` plugin is deferred with a stated reason. `Verifier(policy=, plugins=)` consults bound
+  verification plugins through `_consult` and its `_finish` is tighten-only, so a plugin can fail a
+  verification and cannot pass one.
+* Delegation depth in `evo_agent/specialist.py`: `SpecialistLimits.max_delegation_depth` (default 1), a
+  process-wide in-flight ledger (`_IN_FLIGHT`, keyed by `store.path`) that knows the *calling depth* rather
+  than trusting a contract field, `SpecialistContext.parent_constraints` to publish the ceilings a delegated
+  task inherits, and enforcement in `_validate_output` - a specialist that reports 40 tool calls against a
+  ceiling of 8 is an error, not a truncation. Depth is not a caller-settable field, which is the whole
+  point: a task that could widen its own recursion limit could delegate until the ledger stopped mattering.
+* Memory-scope isolation: `scope_key TEXT NOT NULL DEFAULT 'local'` on `memory_records` (additive `ALTER`,
+  index created *after* the guarded migration), `RetrievalQuery.scope`, `MemoryStore.list(scope=)`,
+  `find_memories(scope=)` where `None`/`"*"` mean unfiltered and `""` matches nothing, `capture_specialist`
+  tagging rows `subagent:<id>`, `update` inheriting the record's scope instead of laundering it,
+  `ConsolidationEngine.consolidate` grouping by `(scope, key)` so a fold cannot generalise a subagent's
+  memory into the local pool, `migrations.ensure_memory_scope` (idempotent, `schema_version 1`) and
+  `consolidate_memories(dry_run=, limit=)`, and `scripts/migrate_memory_consolidation.py` (`--check`,
+  `--dry-run`, `--limit`, JSON always, exit 1 on problems). `production.py`: `MEMORY_SCHEMA_VERSION = 1` and
+  `ProductionSchemaManager.ensure_memory_scope()`.
+* `evo_agent/backends/availability.py` + `BackendRegistry.availability_report()` - shipped in the same tree as
+  batch 2 (`2ea14f9`), and the P5b matrix is what tests it, so it is recorded here rather than there:
+  `AVAILABLE /
+  DEGRADED / UNAVAILABLE`, `classify(avail, *, enabled)`, `build_report(registrations, availabilities)`
+  where a registration with no probe is `UNAVAILABLE` with `"probe"` in the reason - a missing answer
+  degrades rather than passing - and `merge_reports` taking the worst per name, so omitting a backend from
+  the second report lowers it instead of raising it.
+* `sovereign/mediation.py`'s confinement honesty (batch 2's file, tested in P5b): `isolated` is now answered by `isolation_state()` or the
+  provider's result and never by "an enforcement level is configured", with `degraded_reason` and `notes`
+  stamped onto `execute_infrastructure` results via `replace`. `strict` with no usable provider refuses with
+  `no_isolation`; `off` is explicit and unconfined; network egress is refused at every level.
+* `evo_agent/cli.py`: the skill verbs (`--skills-list`, `--skill-install SRC`, `--skill-show NAME` with
+  `--skill-name` for the staging root) that P5's first batch left as library API only; `--agent-mode
+  build|plan`; `_with_agent_mode(policy, requested)` which normalises without mutating the input and
+  rebuilds only when the mode actually changes; `refuse_startup` extended to cover the plan-mode `--promote`
+  refusal; and `--memory-config` hoisted out of the runtime branch into `_load_memory_policy`, called at the
+  top of `inspect_command` and from `main`, so a broken policy file is refused whatever verb accompanied it.
+
+**Tests.** `tests/test_memory_policy.py` (27), `tests/test_skills.py` (29),
+`tests/test_upstream_ownership.py` (20), and for P5b: `tests/test_plan_mode.py` (17),
+`tests/test_mcp_refusals.py` (25), `tests/test_delegation_depth.py` (19),
+`tests/test_adversarial_plugins.py` (27), `tests/test_memory_scope_isolation.py` (19),
+`tests/test_degradation_matrix.py` (21), `tests/test_cli_surface.py` (7),
+`tests/test_monotonic_hardening.py` (16).
 
 ### Deliberate design choices worth reviewing
 
@@ -891,9 +954,11 @@ capability was.
 
 Per-file, each run as `python3 -m pytest tests/<file> -o addopts="" -q -p no:randomly`:
 
+Batches 1 and 2:
+
 | file | result |
 |---|---|
-| `tests/test_skills.py` | 25 passed |
+| `tests/test_skills.py` | 29 passed (25 at the batch's close; +4 for the inventory-is-not-authority leg, added in P5b) |
 | `tests/test_upstream_ownership.py` | 20 passed |
 | `tests/test_memory_policy.py` | 27 passed (24 for the leg; +3 for the CLI refusal and its exit code) |
 | `tests/test_active_version.py` | 34 passed (33 before P5; +1 undo-completeness regression) |
@@ -902,16 +967,31 @@ Per-file, each run as `python3 -m pytest tests/<file> -o addopts="" -q -p no:ran
 | `tests/test_metamorphosis_closed_loop.py` | 13 passed |
 | `tests/test_sovereign_invariants.py` | 37 passed, without any drift override |
 | `tests/test_sandbox.py` | 20 passed, 1 skipped (no `bwrap` here) |
-| `tests/test_documentation_integrity.py` | 40 passed |
 
-Full suite after the manifest re-publication: **823 collected, 821 passed, 2 skipped, 0 failed** in
-354 s, the two skips being the same environmental `bwrap` pair P2 through P4 ended with.
+P5b, the eight `07` §8 names plus the two supporting surfaces:
+
+| file | result | what it holds |
+|---|---|---|
+| `tests/test_plan_mode.py` | 17 passed | the five removed tools by `permitted`/`reasons` rather than by `offered()` set difference; `--promote` refusal; a mistyped mode resolving to `plan`; the mediator leg ordering |
+| `tests/test_mcp_refusals.py` | 25 passed | every registration refusal, the inert transport, the ceiling clamps, the tool-name collision, and the "allow-list of nothing is not an allow-list" case |
+| `tests/test_delegation_depth.py` | 19 passed | the depth-2 refusal, published ceilings through `parent_constraints`, output-ceiling enforcement as an error, and the ledger's release on exception |
+| `tests/test_adversarial_plugins.py` | 27 passed | fixture payloads probed on every refusal path: authority claims, `entry_point` import refusal, verdict override, lifecycle transitions without an approver |
+| `tests/test_memory_scope_isolation.py` | 19 passed | cross-scope retrieval, an older database converging (`{"local": 1}` then `{"local": 2}` after a fold), `update` and `consolidate` refusing to move a row, and the dry-run/limit legs of the migration |
+| `tests/test_degradation_matrix.py` | 21 passed | the measured matrix over `auto / strict / degrade / off / banana` × network × plan mode, the backend availability algebra, and the honest `isolated`/`degraded_reason` pair |
+| `tests/test_cli_surface.py` | 7 passed | structural CLI properties: every flag the inspection body dispatches is recognised by the gate, every flag is read by something, the modifiers' companions are commands, `--agent-mode auto` is argparse's problem (exit 2), `_with_agent_mode` semantics, refusals exit 1 |
+| `tests/test_monotonic_hardening.py` | 16 passed | E3 for the fields P5b added: no overlay path at all for `agent_mode`/`sandbox_enforcement`, ceilings clamp down only, floors clamp up only, uplift ranks below a registered floor are refused, and the plugin inventory exposes no granting verb |
+
+Full suite after the manifest re-publication: **978 collected, 976 passed, 2 skipped, 0 failed** in 436 s,
+the two skips being the same environmental `bwrap` pair P2 through P4 ended with. 821 → 976 is exactly the
+151 P5b tests plus the 4 skill tests: the phase added surface without retiring an assertion, which is the
+thing worth checking when a run goes from "partial" to "complete".
 `python3 scripts/verify_sovereign_digest.py --gate` reports the 20-file protected set verified and
 **11/11 invariants ok**, the eleventh being `I-ownership-boundary` ("23 capabilities owned, 2 upstream
-components pinned").
+components pinned"), and `run_invariants(cheap_only=True)` reports 3/3 for the startup set.
 
-Four defects were found by writing these tests rather than by reading the design, and all four were fixed in
-production rather than accommodated by a weaker assertion:
+Nine defects were found by writing these tests rather than by reading the design - four in the first two
+batches, five in P5b - and every one was fixed in production rather than accommodated by a weaker
+assertion:
 
 * `SkillMaterializer.validate` returned `[""]` on success. `problems = [gate]` kept the empty *success*
   string in the list, so every caller read a refusal. P3 could not reach the branch because the document
@@ -931,17 +1011,61 @@ production rather than accommodated by a weaker assertion:
   also failed" and **broke out of the undo loop**, so a leg applied before the failure was never restored.
   `test_a_later_leg_that_raises_undoes_the_earlier_legs_completely` is the regression; the state it
   describes is exactly the P3 rollback criterion the closed-loop test pins for a different leg.
-* Three of these four are bugs **the previous phases introduced and this phase's tests found** - which is
-  the argument for writing the consumer's test rather than trusting the contract's prose. The fourth (the
-  exit code) was a convention inherited from the file, and a convention that maps an error to success is
-  worth breaking rather than joining.
+The P5b five, in the order they were found:
+
+* `MCPRegistry.register` accepted a **blank `command`** - `{"command": ""}` - which is a server with no
+  program, and the only field the refusal text was about. Caught by the fixture that was meant to test
+  something else. A shape check that lets the empty value through is not a shape check.
+* An index created inside the same `executescript` as the additive `ALTER` **prevented the store from
+  opening at all** on a pre-P5 database: the `CREATE TABLE` is a no-op there, so the index statement referenced
+  a column the guarded migration had not yet added. `storage.py` now creates `idx_memory_scope` after the
+  `ALTER`, and the pre-P5-database test is what proves the ordering rather than the schema.
+* `MemoryManager.update` could **launder a row's scope** (an update carrying no scope wrote the default), and
+  `ConsolidationEngine.consolidate` could **generalise a subagent's memory into the local pool** by grouping
+  on `key` alone. Both are the same defect as a scope-limited read with an unscope-limited write: isolation is
+  only real if the mutation paths agree with the query paths.
+* A **falsy `scope` widened a query to every scope** in `find_memories` / `MemoryStore.list`, because `if
+  scope:` treats `""` as "no filter". The three-way meaning (`None`/`"*"` unfiltered, `""` matching nothing)
+  is now explicit, and the default on the *listing* API stayed unfiltered on purpose after a test showed why:
+  the listing is an operator surface, and scoping it was the wrong layer - retrieval isolation lives in
+  `RetrievalEngine.retrieve`, driven by `RetrievalQuery.scope`.
+* Two authorities were answering one question about confinement: `ExecResult.isolated` was set from the
+  *enforcement level* (`isolated = enforcement != "off"`) while `isolation_state()` was saying the provider was
+  unusable. A degraded run therefore reported "isolated" while its own note explained that nothing was
+  confining it. `isolated` now comes from `isolation_state()` or the provider's result, and the level is only
+  what the operator asked for. The same class of bug was then found in the reverse direction by the matrix:
+  plan mode was gating the tool path but not `authorize_infrastructure`, so a bridge launch in a read-only
+  phase returned `rule='allowed'` for `/bin/rm`.
+* `--show-profile` stopped being a command. Editing `inspect_command`'s gate expression by *replacing* its
+  tail clause dropped `args.show_profile` from the condition: the flag still parsed, still had a documented
+  entry, still printed nothing, and the CLI exited 2 with "Provide a goal". Only an exit-code assertion in an
+  unrelated test noticed. `tests/test_cli_surface.py` now pins the structural property - every flag the
+  dispatch body reads must be recognised by the gate - which is a weaker-looking claim than "test every verb"
+  and is actually the strong one, because it is about the shape that breaks rather than the 90 instances.
+
+Three of the first four are bugs **the previous phases introduced and this phase's tests found** - which is
+the argument for writing the consumer's test rather than trusting the contract's prose. The fourth (the
+exit code) was a convention inherited from the file, and a convention that maps an error to success is
+worth breaking rather than joining. The P5b set adds one lesson worth keeping for P6: two tests
+(`test_degradation_matrix.py`'s availability rows) were written against APIs I had inferred rather than read,
+and `inspect.signature` on a real object found it in one run instead of three. Probing the surface is not
+slower than guessing it.
 
 ### Deviations from `07`
 
-* §8's P5 row lists five acceptance tests plus plan-mode; three of the capability areas (mcp policy,
-  hooks/plugins, delegation depth, degradation matrix) are **not implemented**, and the phase is reported
-  as partial. The refusal mechanism they will use (`DocumentSpec.blocked_by`, `_loader_gate`,
-  `loadable_kinds`, `consistency_with_sandbox`) exists now, so P5b is integration rather than design.
+* §8 names the plugin extension points as `hooks/`, `research/`, and `verification/`. There are **no
+  packages by those names** - the three capabilities are delivered as `PluginKind.HOOK` /
+  `PluginKind.RESEARCH` / `PluginKind.VERIFICATION` in the one inventory (`evo_agent/plugins.py`), dispatched
+  through `dispatch_hook` for hooks, through the existing capability/flexibility/upstream surfaces for
+  research, and through `Verifier._consult` for verification. Creating three empty packages to match three
+  directory names would have added three import paths, an `__init__` each, and no behaviour; the inventory is
+  the loadable unit and the kind is the distinction. This is a deviation from the letter of §8 and not from
+  its requirement.
+* `07`'s E3 line points at `test_monotonic_hardening.py`, and that file did not exist: monotonic hardening
+  was enforced (the uplift refusal in `ToolRegistry.plan_risk_uplift`, the merge-over-baseline in
+  `plan_overlays`, the clamps in `SecurityPolicy.__post_init__`) and tested from three other files. The named
+  file now exists and covers the fields P5b introduced; the older coverage was left where it was rather than
+  moved, on the principle that a test's home is the file whose defect it found.
 * `config/memory.json` is loadable *for ranking weights only*; §4's table lists retention and staleness as
   fields of that document. They remain valid operator configuration and invalid evolution payloads; the
   refusal is in `MemoryPolicyTarget`'s materializer, and the reason is in the registry row.
@@ -951,13 +1075,38 @@ production rather than accommodated by a weaker assertion:
 * DeerFlow's public skill corpus is *not* copied. `skills/public` is in `must_not_exist`, and the corpus
   stays theirs to benchmark against.
 
-### Blockers carried forward (into P5b)
+### P5 exit criteria
 
-* The five `07` §8 acceptance names, plus `evo_agent/modes.py` (plan-mode removing write and process tools
-  from `offered()`) and the backend-failure matrix for the two bridges.
-* No CLI surface for skills: install and catalog exist as library API and as an overlay document, so
-  `evo status` and promotion can see them, but there is no `evo skills list` / `evo skill install` verb.
-* The 120-table memory model still has no schema migration path, and P5's policy leg deliberately writes
-  none of it.
+| criterion | state | evidence |
+|---|---|---|
+| every `active_version.DOCUMENTS` row has a loader or a stated refusal | met | `_loader_gate`, `blocked_by`, `loadable_kinds()`, `test_active_version.py` |
+| verifier checks candidate expectations, not only structure | met | `Verifier(policy=, plugins=)`, `_consult`, `test_adversarial_plugins.py` |
+| memory policy is an evolution target; memory contents are not | met | `MemoryPolicyTarget`, `OPERATOR_ONLY_MEMORY_FIELDS`, `test_memory_policy.py` |
+| skill install → review → mount, with promotion the only activation path | met | `SkillInstaller`, `SkillCatalog`, `TestInventoryIsNotAuthority` |
+| upstream components pinned; ownership boundaries enforced | met | `evo_agent/upstream.py`, `I-ownership-boundary`, `test_upstream_ownership.py` |
+| MCP policy implemented with an inert transport | met | `evo_agent/mcp.py`, `test_mcp_refusals.py` (25) |
+| plan mode removes state-changing tools on **every** execution route | met | `evo_agent/modes.py`, `mediation._decide`, `authorize_infrastructure`, `test_plan_mode.py` |
+| delegation depth capped and unwidenable by the task | met | `_IN_FLIGHT` ledger, `test_delegation_depth.py` (19) |
+| memory scoping survives migration of an older database | met | `ensure_memory_scope`, `test_memory_scope_isolation.py` (19) |
+| degradation reported honestly | met | `isolation_state()`, `degraded_reason`, `availability.classify`, `test_degradation_matrix.py` (21) |
+| full suite green, digest gate ok, invariants ok | met | 978 collected / 976 passed / 2 skipped / 0 failed; 20 files verified; 11/11 |
+
+### Blockers carried forward (into P6)
+
+* **`--memory-config` has no consumer on the plain `evo 'goal'` path.** The file is now validated for every
+  verb (`_load_memory_policy` is called before `inspect_command`'s gate and from `main`), so a broken policy
+  is never silently accepted; but `AgentKernel` has no `memory_policy` parameter, so ranking on the legacy
+  path still comes from the shipped defaults. The wiring belongs to P6, where the loop is assembled from the
+  active version's documents, and it is recorded here rather than fixed by a shortcut that would give the same
+  flag two different loaders.
+* The MCP transport is inert by design and stays inert until `07`'s sequencing allows a client; what exists is
+  policy, registration, refusal, and audit. A reviewer should read `report()['transport'] == 'inert'` as the
+  claim, not as a missing feature.
+* Executable plugin code is deferred (2.1 in `07`'s terms). The inventory can record, assess, activate, and
+  quarantine such a record; it cannot import it, and `dispatch_hook` only calls builtins and bound objects.
+* The 120-table memory model is still not built. P5b added the one column isolation actually needs
+  (`scope_key`) plus an idempotent migration and a consolidation script; the rest of the model is a P6/P7
+  question that should stay out of an evolution-target surface until there is a benchmark that justifies it.
 * `bwrap` remains absent from this environment, so the two provider skips stand; `unshare` covers the
-  confinement assertions.
+  confinement assertions, which is why the degradation matrix asserts refusals and reasons rather than
+  return codes from a provider that is not installed.

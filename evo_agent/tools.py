@@ -47,6 +47,12 @@ class ToolRegistry:
         #: decides. ``registry.execute`` never spawns anything itself, so an integrated harness
         #: cannot get a weaker gate by calling a different entry point.
         self.mediator = mediator or ApprovalMediator(policy, approver=approver, on_event=on_event)
+        # Linked after ``register_defaults`` would be tidier, but the mediator is constructed before the
+        # descriptors exist because a caller may hand in its own. The link is only ever read - plan mode
+        # classifying a tool by its descriptor - and a mediator supplied by someone else keeps whatever
+        # link its owner made, with plan mode's refuse-what-you-cannot-classify rule behind it.
+        if getattr(self.mediator, "registry", None) is None:
+            self.mediator.registry = self
         self.register_defaults()
         #: Registration order, captured once. An overlay may reorder the tools; only this makes the
         #: reordering reversible without a restart.
@@ -58,7 +64,32 @@ class ToolRegistry:
     def register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
 
+    def mcp_namespace_refusal(self, name: Any) -> str:
+        """Why a name in the ``mcp:`` namespace is refused here rather than dispatched.
+
+        Checked before the registry's own lookup so the reason is "this build has no MCP transport"
+        instead of "unknown tool" - two sentences with different meanings to whoever reads the audit
+        record, and only one of them is true. Names without the prefix are untouched, so this is not a
+        general gate on unfamiliar tools: that is what the catalog's resolution already is.
+        """
+        text = str(name or "")
+        if not text.startswith("mcp:"):
+            return ""
+        parts = text.split(":")
+        if len(parts) != 3 or not all(parts[1:]):
+            return (
+                f"'{text}' is not a well-formed MCP tool name; the addressable shape is 'mcp:<server>:<tool>', "
+                "and a malformed name is refused rather than repaired"
+            )
+        return (
+            f"'{text}' is an MCP tool name. MCP policy is implemented and enforced (evo_agent/mcp.py) and the "
+            "transport is inert in this build: no server is contacted, and no fallback to a bare spelling exists"
+        )
+
     def get(self, name: str) -> ToolSpec:
+        refusal = self.mcp_namespace_refusal(name)
+        if refusal:
+            raise KeyError(refusal)
         if name not in self._tools:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name]
@@ -179,6 +210,12 @@ class ToolRegistry:
         ]
 
     def execute(self, call: ToolCall) -> ToolResult:
+        # Refused as a result, not as an exception: a tool name a model produced is *data*, and the
+        # registry's job is to answer it. A KeyError here would surface as a crash in whichever caller
+        # forgot to catch it, and the audit trail would record a failure instead of a refusal.
+        refusal = self.mcp_namespace_refusal(call.tool_name)
+        if refusal:
+            return ToolResult(call.call_id, call.tool_name, False, error=refusal)
         spec = self.get(call.tool_name)
         if call.risk != spec.risk:
             call.risk = spec.risk
@@ -487,6 +524,22 @@ class ToolCatalog:
         confined, why = self._confined(canonical)
         if not confined:
             reasons.append(f"confined: {why}")
+        policy = getattr(self.registry, "policy", None)
+        from .modes import is_plan_mode, refuses_in_plan_mode
+
+        if policy is not None and is_plan_mode(policy):
+            refused, mode_reason = refuses_in_plan_mode(
+                canonical,
+                risk=getattr(spec, "risk", None) if spec is not None else None,
+                permissions=getattr(spec, "permissions", ()) if spec is not None else (),
+                known=spec is not None,
+            )
+            if refused:
+                # Folded into ``permitted`` rather than a fourth boolean: ``offered()`` and every caller asks
+                # "may this be shown", and a Usability whose fourth field some caller forgot to read is how
+                # a refused tool ends up in a prompt anyway.
+                permitted = False
+                reasons.append(f"plan mode: {mode_reason}")
         return Usability(canonical, registered, permitted, confined, tuple(reasons))
 
     def _confined(self, canonical: str) -> tuple[bool, str]:

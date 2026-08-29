@@ -536,6 +536,14 @@ class EventType(str, Enum):
     SECURITY_DEGRADED = "security_degraded"
     RUNTIME_BACKEND_SELECTED = "runtime_backend_selected"
     MEMORY_RETRIEVED = "memory_retrieved"
+    #: P5's capability package and MCP events, appended in the order ``07`` §5 lists them. The remaining
+    #: names in that list are appended by the phases that emit them rather than declared now, because an
+    #: event type no code writes is how an audit log acquires vocabulary it never uses.
+    SKILL_CANDIDATE_CREATED = "skill_candidate_created"
+    SKILL_SCAN_BLOCKED = "skill_scan_blocked"
+    SKILL_PROMOTED = "skill_promoted"
+    MCP_TOOL_REFUSED = "mcp_tool_refused"
+    TOOL_NAME_CONFLICT = "tool_name_conflict"
     SOVEREIGN_DRIFT_ACCEPTED = "sovereign_drift_accepted"
     #: P4's routing record. ``..._REFUSED`` is a refusal to route at all (the operator asked for a
     #: backend that cannot serve), which is a different fact from a backend running and failing;

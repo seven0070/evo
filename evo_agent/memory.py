@@ -135,6 +135,12 @@ class MemoryRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
     executable: bool = False
 
+    #: Which context this row may surface in. ``local`` is the operator's own agent; a delegated
+    #: specialist writes under its own scope, and retrieval filters by it in SQL rather than in each
+    #: caller (07 §5, Q6). A default of ``local`` is what makes the column additive: every pre-P5 row is
+    #: back-filled to it, so nothing that was retrievable before becomes invisible now.
+    scope_key: str = "local"
+
     def __post_init__(self) -> None:
         if not self.first_seen:
             self.first_seen = self.created_at
@@ -208,6 +214,9 @@ class RetrievalQuery:
     max_memory_bytes: int = 12000
     max_retrieval_time_ms: int = 250
     min_confidence: float = 0.0
+    #: The scope to read. ``local`` for the agent's own memory; ``*`` deliberately widens to everything,
+    #: and only an operator-facing inspection path asks for it.
+    scope: str = "local"
 
     def text(self) -> str:
         return " ".join(item for item in (self.goal, self.task_type, self.subtask, self.failure, self.tool, self.capability, self.strategy) if item).lower()
@@ -320,8 +329,17 @@ class MemoryStore:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             return None
 
-    def list(self, memory_type: MemoryType | None = None, status: MemoryStatus | None = None, limit: int = 100) -> list[MemoryRecord]:
-        rows = self.sqlite_store.find_memories(memory_type.value if memory_type else None, status.value if status else None, limit)
+    def list(self, memory_type: MemoryType | None = None, status: MemoryStatus | None = None, limit: int = 100, scope: str | None = None) -> list[MemoryRecord]:
+        """An unfiltered listing by default; :class:`RetrievalQuery` is what applies the scope.
+
+        The asymmetry is deliberate. Listing is the operator's view - ``evo memory list``, an integrity
+        sweep, a review of what a subagent wrote - and a listing that silently hid rows would make the
+        inventory incomplete at exactly the moment someone is auditing it. Retrieval is the agent's view, and
+        that one *does* filter, in SQL, from ``RetrievalQuery.scope`` (default ``local``) at
+        :meth:`RetrievalEngine.retrieve`. Isolation belongs on the path that feeds a prompt, not on the path
+        that shows a human what exists.
+        """
+        rows = self.sqlite_store.find_memories(memory_type.value if memory_type else None, status.value if status else None, limit, scope)
         records: list[MemoryRecord] = []
         for row in rows:
             try:
@@ -545,7 +563,10 @@ class RetrievalEngine:
 
     def retrieve(self, query: RetrievalQuery) -> list[RetrievedMemory]:
         started = datetime.now(timezone.utc)
-        candidates = self.memory_store.list(limit=max(100, query.max_memories * 10))
+        # Scoped *in the query*, not in a post-filter: the row that a subagent recollects must not be
+        # reachable by the parent's retrieval at all, and a filter an engine can forget to apply is not an
+        # isolation boundary. ``*`` is the documented way to ask for everything, used by inspection paths.
+        candidates = self.memory_store.list(limit=max(100, query.max_memories * 10), scope=str(getattr(query, "scope", "local") or "local"))
         results: list[RetrievedMemory] = []
         query_tokens = _tokens(query.text())
         for memory in candidates:
@@ -650,12 +671,17 @@ class ConsolidationEngine:
         self.minimum_evidence = minimum_evidence
 
     def consolidate(self, records: list[MemoryRecord]) -> list[MemoryRecord]:
-        groups: dict[str, list[MemoryRecord]] = {}
+        groups: dict[tuple[str, str], list[MemoryRecord]] = {}
         for record in records:
             key = record.key or _fingerprint_text(record.content)
-            groups.setdefault(key, []).append(record)
+            # Scoped *into* the group key, not filtered afterwards. Consolidation reads every scope - an
+            # operator's sweep has to see what a subagent wrote - and if the group key were the memory key
+            # alone, three subagent recollections would be enough to mint a `local` generalisation, which is
+            # exactly the promotion of unverified evidence into the parent's planning context that the
+            # boundary exists to stop.
+            groups.setdefault((str(getattr(record, "scope_key", "local") or "local"), key), []).append(record)
         created: list[MemoryRecord] = []
-        for key, group in groups.items():
+        for (scope, key), group in groups.items():
             if len(group) < self.minimum_evidence:
                 continue
             successes = sum(1 for item in group if item.metadata.get("outcome") in {"success", "succeeded"})
@@ -671,6 +697,7 @@ class ConsolidationEngine:
             source_ids = [item.memory_id for item in group]
             provenance = Provenance(ProvenanceSource.INFERENCE, source_ids[0], source_ids, actor="consolidator", validated=False, note="Derived conservatively from repeated evidence")
             record = MemoryRecord(new_memory_id(), MemoryType.SEMANTIC, statement, statement, ProvenanceSource.INFERENCE, source_ids[0], provenance, ConfidenceLevel.MEDIUM if successes >= self.minimum_evidence else ConfidenceLevel.LOW, min(0.9, 0.45 + len(group) * 0.1), 0.75, 0.0, architecture_version=group[0].architecture_version, source_version=group[0].source_version, environment=group[0].environment, knowledge_kind=kind, key=key, source_ids=source_ids, metadata={"evidence_count": len(group), "successes": successes, "failures": failures, "untrusted_as_policy": True})
+            record.scope_key = scope
             created.append(record)
             if self.manager:
                 self.manager.store(record)
@@ -812,6 +839,10 @@ class MemoryManager:
         prior.updated_at = now()
         self.memory_store.save(prior)
         updated = self._record(prior.type, content, _summary(content), source, source_id, confidence, prior.confidence_score, prior.importance, key=prior.key, architecture_version=prior.architecture_version, source_version=prior.source_version, metadata={"update_reason": reason, "supersedes": memory_id}, provenance_chain=[memory_id] + prior.provenance.chain)
+        # The new version inherits the scope, and the line above would otherwise make it ``local`` by
+        # default: an *edit* to a subagent's memory would move it into the parent's retrieval context, which
+        # is the one way to launder a row across the boundary that no caller would describe as their intent.
+        updated.scope_key = prior.scope_key
         updated.version = prior.version + 1
         self.store(updated, "supersedes", memory_id)
         return updated
@@ -875,7 +906,14 @@ class MemoryManager:
         specialist_id = str(safe.get("specialist_id", "unknown"))
         task_id = str(safe.get("specialist_task_id", new_memory_id()))
         summary = f"Specialist {specialist_id} completed task {task_id}: success={bool(safe.get('success', False))}, verified={bool(safe.get('verified', False))}."
-        return self.store(self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"specialist:{task_id}", ConfidenceLevel.MEDIUM, min(1.0, max(0.0, float(safe.get("quality_score", 0.5)))), 0.55, metadata=safe))
+        record = self._record(MemoryType.EPISODIC, summary, summary, ProvenanceSource.OBSERVATION, f"specialist:{task_id}", ConfidenceLevel.MEDIUM, min(1.0, max(0.0, float(safe.get("quality_score", 0.5)))), 0.55, metadata=safe)
+        # Scoped to the specialist that produced it. Delegated work is the reason Q6 said "now, not later":
+        # without this column, a subagent's confident-but-unverified recollection is ranked exactly like
+        # the operator's own verified experience, and the ranking policy is not where that asymmetry can be
+        # expressed. The record is kept - it is evidence about the delegation - it is just not the parent's
+        # planning context.
+        record.scope_key = f"subagent:{specialist_id}"
+        return self.store(record)
 
     def capture_model_performance(self, evidence: dict[str, Any]) -> MemoryRecord:
         """Persist bounded model-performance metadata only; prompts and responses never enter memory."""
