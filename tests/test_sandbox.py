@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 import pytest
 
@@ -219,7 +220,9 @@ def test_sandbox_events_are_auditable(tmp_path: Path):
 def test_bwrap_command_preserves_working_directory_and_private_writable_state(tmp_path: Path, monkeypatch):
     engine, _, _ = setup_engine(tmp_path, make_proposal())
     experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
-    monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
+    # Force the availability oracle so the bwrap contract is verified deterministically
+    # on hosts without a usable bubblewrap installation.
+    monkeypatch.setattr(engine, "_bwrap_usable", lambda: True)
     command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
     assert command[0] == "bwrap"
     assert {"--unshare-user-try", "--unshare-net", "--unshare-pid"}.issubset(command)
@@ -263,7 +266,7 @@ def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, bac
     location = tmp_path / "experiment" / "candidate"
     location.mkdir()
     if backend == "bwrap":
-        monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
+        monkeypatch.setattr(engine, "_bwrap_usable", lambda: True)
         command = engine._isolated_command(location, ["python3", "-m", "pytest", "-q"])
         assert command[0] == "bwrap"
         assert ["--bind", str(location), str(location)] == command[command.index("--bind"):command.index("--bind") + 3]
@@ -284,3 +287,34 @@ def test_unusable_bwrap_probe_selects_namespace_fallback(tmp_path: Path, monkeyp
     assert command[0] == "unshare"
     assert {"--mount", "--net", "--pid", "--fork"}.issubset(command)
     engine.destroy_sandbox(experiment)
+
+
+@pytest.mark.parametrize("probe_exit_code,expected_backend", [(0, "bwrap"), (1, "unshare")])
+def test_bwrap_probe_result_selects_backend(tmp_path: Path, monkeypatch, probe_exit_code: int, expected_backend: str):
+    # A stub executable keeps the real probe path under test without requiring a
+    # host bubblewrap installation. Hosts that cannot execute from tmp_path skip.
+    stub = tmp_path / "bwrap-stub.sh"
+    stub.write_text(f"#!/bin/sh\nexit {probe_exit_code}\n", encoding="utf-8")
+    stub.chmod(0o755)
+    guard = subprocess.run([str(stub), "--probe"], capture_output=True, check=False)
+    if guard.returncode != probe_exit_code:
+        pytest.skip("host cannot execute the temporary probe stub")
+
+    monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: str(stub) if name == "bwrap" else None)
+    engine, _, _ = setup_engine(tmp_path, make_proposal())
+    experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
+    assert engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])[0] == expected_backend
+    engine.destroy_sandbox(experiment)
+
+    from evo_agent.benchmark import BenchmarkEngine
+
+    monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda name: str(stub) if name == "bwrap" else None)
+    benchmark_engine = BenchmarkEngine(SQLiteStore(tmp_path / "benchmark-store.sqlite3"), tmp_path)
+    (tmp_path / "benchmark-experiment" / "metadata" / "home").mkdir(parents=True)
+    (tmp_path / "benchmark-experiment" / "results").mkdir()
+    benchmark_location = tmp_path / "benchmark-experiment" / "candidate"
+    benchmark_location.mkdir()
+    benchmark_experiment = {"sandbox_location": str(tmp_path / "benchmark-experiment"), "experiment_id": "experiment_test"}
+    assert benchmark_engine._isolated_command(benchmark_location, ["python3", "-m", "pytest", "-q"])[0] == expected_backend
+    environment = benchmark_engine._sanitized_environment(benchmark_experiment)
+    assert environment["EVO_NETWORK_POLICY"] == "denied"
