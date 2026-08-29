@@ -11,6 +11,8 @@ from evo_agent.models import CandidateStatus, ComparisonClass, ExperimentStatus,
 from evo_agent.sandbox import SandboxEngine
 from evo_agent.storage import SQLiteStore
 
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / "evo_agent"
+
 
 def make_proposal(proposal_id: str = "proposal_test", status: ProposalStatus = ProposalStatus.APPROVED, target: str = "strategy-selection") -> EvolutionProposal:
     return EvolutionProposal(
@@ -216,18 +218,63 @@ def test_sandbox_events_are_auditable(tmp_path: Path):
     assert all(event["payload"]["experiment_id"] == experiment.experiment_id for event in events)
 
 
-def test_bwrap_command_preserves_working_directory_and_private_writable_state(tmp_path: Path, monkeypatch):
+def test_bwrap_command_preserves_working_directory_and_private_writable_state(tmp_path: Path, monkeypatch, stub_bwrap):
+    """The bwrap branch, on a host without bwrap.
+
+    This test used to fake only ``shutil.which``. That is half the decision: ``_bwrap_usable()``
+    *runs* the binary, so on a machine without bubblewrap the probe answered "unusable" and the
+    assertion that the bwrap branch works became a report that it does not. The fixture's stub
+    answers the probe and refuses to run anything else, so what is verified here is command
+    construction. Real confinement is the next test's job, and it runs only where bwrap exists.
+    """
     engine, _, _ = setup_engine(tmp_path, make_proposal())
     experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
-    monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
+    monkeypatch.setattr("evo_agent.sandbox.shutil.which", lambda name: str(stub_bwrap.path) if name == "bwrap" else None)
     command = engine._isolated_command(candidate_dir, ["python3", "-m", "pytest", "-q"])
-    assert command[0] == "bwrap"
+    assert command[0] == "bwrap"  # argv[0] is the bare name; see the P3 seam test on exec resolution
     assert {"--unshare-user-try", "--unshare-net", "--unshare-pid"}.issubset(command)
     assert command[command.index("--bind") + 1] == str(candidate_dir)
     assert command[command.index("--chdir") + 1] == str(candidate_dir)
     assert ["--bind", str(Path(experiment.sandbox_location) / "results")] == command[command.index("--bind", command.index("--bind") + 1):command.index("--bind", command.index("--bind") + 1) + 2]
     assert (Path(experiment.sandbox_location) / "metadata" / "home").is_dir()
+    # The two assertions that keep the stub from becoming a way to pass a test without sandboxing:
+    # selection must rest on a probe that actually ran, and the payload must never reach the stub.
+    assert stub_bwrap.probe_calls, "branch selection must rest on a probe that ran, not on PATH alone"
+    assert stub_bwrap.executed_payloads == [], "a stub bwrap must never be asked to execute a payload"
+    # Writable surface: the candidate tree, the experiment's results dir, and the managed HOME - the
+    # last because tools that write ~/.cache must not fail, and it lives inside the experiment
+    # directory rather than on the real home. Everything else is reachable read-only at best.
+    writable = [command[i + 1] for i, flag in enumerate(command) if flag == "--bind"]
+    assert set(writable) == {
+        str(candidate_dir),
+        str(Path(experiment.sandbox_location) / "results"),
+        str(Path(experiment.sandbox_location) / "metadata" / "home"),
+    }
+    assert not any(path.startswith(str(SOURCE_ROOT)) for path in writable), "the experiment must not hand out writes into the repo"
+    assert ["/"] in [[command[i + 1]] for i, flag in enumerate(command) if flag == "--ro-bind"]
     engine.destroy_sandbox(experiment)
+
+
+def test_isolation_actually_confines_with_an_installed_bwrap(tmp_path: Path, real_bwrap):
+    """End-to-end confinement on the bwrap branch, where bubblewrap genuinely works.
+
+    The stub proves selection; only a real binary proves containment. This is the test that settles
+    whether the bwrap failure is environmental: on a host with a usable bwrap, the same command shape
+    must deny a write outside the workspace. Where there is none, the test reports a skip rather than
+    silently passing - an unexercised branch must stay visible as unexercised.
+    """
+    engine, _, _ = setup_engine(tmp_path, make_proposal())
+    experiment, _, _, candidate_dir = engine.create_sandbox("proposal_test")
+    outside = tmp_path / "outside.txt"
+    payload = ["python3", "-c", f"open({str(outside)!r}, 'w').write('escaped')"]
+    import subprocess
+
+    isolated = subprocess.run(engine._isolated_command(candidate_dir, payload), cwd=candidate_dir, capture_output=True, text=True, timeout=120, check=False)
+    assert isolated.returncode != 0, f"a write outside the workspace succeeded under bwrap: {isolated.stdout}"
+    assert not outside.exists(), "the read-only root bind did not hold"
+    assert "EVO_STUB_BWRAP_REFUSAL" not in (isolated.stderr or ""), "real confinement must not be served by the stub"
+    engine.destroy_sandbox(experiment)
+
 
 
 def test_isolation_fallback_keeps_namespace_controls_when_bwrap_unavailable(tmp_path: Path, monkeypatch):
@@ -253,7 +300,7 @@ def test_sanitized_environment_uses_managed_home_and_tmpdir(tmp_path: Path):
 
 
 @pytest.mark.parametrize("backend", ["bwrap", "unshare"])
-def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, backend: str):
+def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, stub_bwrap, backend: str):
     from evo_agent.benchmark import BenchmarkEngine
 
     engine = BenchmarkEngine(SQLiteStore(tmp_path / "store.sqlite3"), tmp_path)
@@ -263,9 +310,16 @@ def test_benchmark_backend_contract_is_portable(tmp_path: Path, monkeypatch, bac
     location = tmp_path / "experiment" / "candidate"
     location.mkdir()
     if backend == "bwrap":
-        monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
+        # Same lesson as the sandbox-level test: the benchmark engine probes bwrap too, so PATH
+        # alone does not select the branch. The stub answers the probe and refuses to execute.
+        monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda name: str(stub_bwrap.path) if name == "bwrap" else None)
         command = engine._isolated_command(location, ["python3", "-m", "pytest", "-q"])
+        # The benchmark engine re-implements this construction and spawns the bare name "bwrap"
+        # rather than the executable it probed; the sandbox engine uses the resolved path. The
+        # difference is recorded as a P3 dedupe item, and asserted here so the day it is unified this
+        # test is where it shows up.
         assert command[0] == "bwrap"
+        assert stub_bwrap.probe_calls and stub_bwrap.executed_payloads == []
         assert ["--bind", str(location), str(location)] == command[command.index("--bind"):command.index("--bind") + 3]
     else:
         monkeypatch.setattr("evo_agent.benchmark.shutil.which", lambda _: None)

@@ -62,6 +62,10 @@ class LocalBwrapProvider:
             ],
             timeout=PROBE_TIMEOUT_SECONDS,
         )
+        if usable:
+            # bwrap's boundary is the wide one, but it is not a secret store: the host root is bound
+            # read-only, which still exposes every world-readable file to the child.
+            reason = "host root is read-only, not hidden; world-readable files remain readable"
         return ProviderAvailability(
             name=self.name,
             usable=usable,

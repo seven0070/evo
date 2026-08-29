@@ -38,6 +38,19 @@ from .base import (
 MOUNT_FAILURE_MARKER = "EVO_MOUNT_FAILURE"
 MOUNT_FAILURE_EXIT = 97
 
+#: What this provider does *not* do, phrased so a caller can display it instead of inferring it.
+#:
+#: A user namespace may make its own mounts private and re-bind declared paths read-only, but it
+#: cannot remount the host's superblock read-only - that needs privilege the namespace does not have,
+#: and ``mount -o remount,ro /`` answers "permission denied". So the filesystem guarantee here is
+#: "the declared read-only set is honoured", not "nothing outside the workspace is writable" the way
+#: ``bwrap --ro-bind / /`` provides. Recorded rather than glossed: an unspoken limit becomes an
+#: assumed one, and the assumption is what a future reader would get wrong.
+RESIDUAL_FILESYSTEM_LIMIT = (
+    "read-only set is the declared roots only; a user namespace cannot mask the host filesystem, "
+    "so prefer bwrap when a whole-tree boundary is required"
+)
+
 _MOUNT_SCRIPT = (
     "set -u; "
     'export HOME="$1"; export TMPDIR="$1"; '
@@ -74,6 +87,10 @@ class UnshareProvider:
             + (["--net"] if self.deny_network else []),
             timeout=5.0,
         )
+        if usable:
+            # Usable probes normally carry an empty reason. Here the empty string would be a lie by
+            # omission, so the residual limit is reported as the reason even on success.
+            reason = RESIDUAL_FILESYSTEM_LIMIT
         return ProviderAvailability(
             name=self.name,
             usable=usable,
