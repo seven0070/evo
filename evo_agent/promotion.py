@@ -224,6 +224,25 @@ class PromotionEngine:
         safety = evidence.get("safety_results") or {}
         if not safety or not all(bool(value) for value in safety.values()):
             errors.append("safety regression or failed safety result")
+        # `07` §9.7: promotion requires `better` on the target suite **and** no regression on
+        # `regression`/`hold-out` **and** unchanged `isolation-attestation`. The clause below is the coverage
+        # half of that sentence - were the required suites run at all, and what did each say - because a
+        # single-suite `better` is precisely the result a candidate can shop for, and a decision field alone
+        # cannot distinguish "measured and improved" from "measured one convenient thing".
+        #
+        # Gated on the evidence carrying v2 metadata, deliberately. A v1 experiment was benchmarked before
+        # the requirement existed, and refusing it now would not protect anything: it would make the gate's
+        # answer depend on when the record was written rather than on what it shows. New evidence must cover
+        # the set, and old evidence keeps the meaning it had.
+        if str(evidence.get("benchmark_version") or "") == "benchmark-v2":
+            from .benchmark_suites import coverage as suite_coverage
+
+            rows = [self._payload(row) for row in self.store.find_evidence(version.experiment_id, 200)]
+            covered = suite_coverage(rows)
+            if covered["missing"]:
+                errors.append("benchmark coverage is incomplete for promotion; missing suites: " + ", ".join(covered["missing"]))
+            if covered["regressed"]:
+                errors.append("regression on a required benchmark suite: " + ", ".join(covered["regressed"]))
         if version.status not in {VersionStatus.CANDIDATE, VersionStatus.PREVIOUS}:
             errors.append(f"candidate version status is not promotable: {version.status.value}")
         integrity = self.verify_candidate_integrity(version, evidence)

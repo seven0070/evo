@@ -108,6 +108,21 @@ controlled lifecycle, never unrestricted self-rewriting) follow, and P5's one re
 `evo 'goal'` path has no `memory_policy` consumer, though the file is validated for every verb - is listed
 under "Blockers carried forward (into P6)".
 
+**P6 (evolution completion + benchmark v2) is in progress**, and only the part it has measured is claimed: 6.1 -
+the benchmark corpus - is delivered. `evo_agent/benchmark_suites.py` holds 8 suites, 34 cases, and 34 probe bodies - one per case, none orphaned;
+each probe body imports the *candidate's own tree* and asserts on it, replacing the four
+`evolution_config.json`-existence assertions `03` §I.3 identified as the reason no `BETTER` verdict meant
+anything. Per-suite `max_score_variance` and `max_cost_ratio` now gate the comparison (unstable measurement ⇒
+`INCONCLUSIVE`; spending more to win ⇒ `WORSE`), and `PromotionEngine.validate_eligibility` requires the
+evidence set to cover `recovery`, `isolation-attestation` and `hold-out`, so a `better` on one convenient suite
+no longer promotes. `scripts/run_benchmark_probe_corpus.py` runs all 34 bodies against the tree it is executed
+in and is green (0 failures) - which is also how the corpus found a real hole the same day it was written: the
+memory injection screen matched fixed phrases and missed "ignore **all** previous instructions", and it is now
+a case-insensitive shape match (`08` records both the widening and the measured limit that remains). 6.2-6.6 -
+`metamorphosis/operator.py` with `undergo` and a dry run, the `METAMORPHOSIS_REQUEST` intent, the per-invariant
+test files, `evo serve`, the `evo <noun> <verb>` subcommands with their parity test, the desktop bridge's
+growth to ~14 commands, and the `web/` RPC wiring - are **not started** and are listed as such.
+
 What P3 delivered that P0–P2 could not: promoting a version now **changes what the agent does**. The
 founding finding in `00` §B - an evolution loop whose payload nothing loaded - is closed by
 `evo_agent/active_version.py` (the policy table and resolver), `evo_agent/ports/evolution_target.py`

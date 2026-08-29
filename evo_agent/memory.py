@@ -1079,9 +1079,36 @@ def _fingerprint_text(text: str) -> str:
     return hashlib.sha256(_normalize(text).encode()).hexdigest()
 
 
+#: The instruction-override *shape*. Substring matching against a fixed phrase list was the control, and it
+#: missed the commonest real phrasing: "ignore **all** previous instructions" - one filler word between verb
+#: and object, and the record read as ordinary memory. A bounded regex over the shape is wider than any list
+#: of phrases while staying deterministic, which matters because this runs at capture and at retrieval on every
+#: record. Over-flagging costs an `untrusted_content` mark and `executable = False` - never a lost record - so
+#: the widening is one-directional in the E3 sense, and the ordinary-prose cases in the tests are the guard
+#: against turning the screen into noise an operator learns to ignore.
+_INJECTION_OVERRIDE_SHAPE = re.compile(
+    r"\b(?:ignore|disregard|discard|forget|override|bypass|skip)\b"
+    r"[\s\S]{0,40}?\b(?:previous|prior|above|earlier|all|any|your|the|these|those)\b"
+    r"[\s\S]{0,24}?\b(?:instructions?|rules?|prompts?|directives?|guidance|guardrails?)\b",
+    re.IGNORECASE,
+)
+
+_INJECTION_PHRASES = (
+    "ignore all safety",
+    "ignore previous instructions",
+    "execute unrestricted",
+    "disable verification",
+    "bypass approval",
+    "reveal the system prompt",
+    "print the system prompt",
+    "send the credentials",
+    "exfiltrate",
+)
+
+
 def _looks_like_injection(text: str) -> bool:
-    lowered = text.lower()
-    return any(pattern in lowered for pattern in ("ignore all safety", "ignore previous instructions", "execute unrestricted", "disable verification", "bypass approval"))
+    lowered = str(text or "").lower()
+    return bool(_INJECTION_OVERRIDE_SHAPE.search(lowered)) or any(pattern in lowered for pattern in _INJECTION_PHRASES)
 
 
 def _payload(row: dict[str, Any]) -> dict[str, Any]:

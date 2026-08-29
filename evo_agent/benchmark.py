@@ -102,6 +102,12 @@ class AggregateMetrics:
     recovery_attempts: int
     successful_recoveries: int
     human_interventions: int
+    # Defaulted, not required: `AggregateMetrics` is built by keyword here and by position elsewhere
+    # (including persisted v1 evidence rows), and an insertion in the middle would silently renumber those.
+    # A v1 aggregate simply has no variance, which reads as 0.0 - the same value a perfectly stable suite has,
+    # so an old row stays interpretable instead of failing to load.
+    score_variance: float = 0.0
+    duration_variance_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -151,11 +157,43 @@ class EvolutionEvidence:
         return data
 
 
+def _variance(values: Iterable[float]) -> float:
+    """Population variance, rounded like every other metric in this module.
+
+    Owned here rather than in `benchmark_suites` because the aggregation is what produces it, and a variance
+    computed by a *caller* of `aggregate_results` would be a second number answering the same question - the
+    defect class the degradation matrix exists to keep out of this tree.
+    """
+    rows = [float(value) for value in values]
+    if not rows:
+        return 0.0
+    mean = sum(rows) / len(rows)
+    return round(sum((value - mean) ** 2 for value in rows) / len(rows), 4)
+
+
+def _corpus_probes() -> frozenset[str]:
+    from .benchmark_suites import known_probes
+
+    return known_probes()
+
+
+def _suite_of(benchmark: "Benchmark") -> str:
+    from .benchmark_suites import suite_of
+
+    return suite_of(benchmark)
+
+
+
 class BenchmarkEngine:
     """Compares an existing isolated candidate and baseline without promoting either."""
 
     VALID_PROBES = {"controlled_environment", "candidate_configuration_present", "candidate_configuration_absent", "always_pass", "always_fail"}
     SECRET_KEYS = {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK"}
+
+    # The v2 corpus' probe names are deliberately not merged into `VALID_PROBES` above. `benchmark_suites`
+    # imports `TaskCase` from this module to build its suites at import time, so a module-level import in the
+    # other direction would be a cycle; `validate_benchmark` therefore asks the corpus for its set. One
+    # definition of "known probe" on each side, and neither side keeps a copy of the other to drift.
 
     def __init__(self, store: SQLiteStore, source_root: Path, agent_version: str = __version__, evaluator_version: str = "benchmark-evaluator-v1"):
         self.store = store
@@ -194,7 +232,7 @@ class BenchmarkEngine:
         for case in benchmark.task_cases:
             if not case.task_id or not case.goal or not case.expected_behavior or not case.verification_method:
                 errors.append(f"task case {case.task_id or '<missing>'} is incomplete")
-            if case.probe not in self.VALID_PROBES:
+            if case.probe not in self.VALID_PROBES and case.probe not in _corpus_probes():
                 errors.append(f"task case {case.task_id} uses unsupported probe {case.probe}")
             if case.timeout < 1 or case.timeout > benchmark.timeout:
                 errors.append(f"task case {case.task_id} timeout must be within benchmark timeout")
@@ -313,6 +351,8 @@ class BenchmarkEngine:
             mean_retries=round(sum(item.retries for item in records) / divisor, 4),
             mean_replans=round(sum(item.replans for item in records) / divisor, 4),
             mean_strategy_changes=round(sum(item.strategy_changes for item in records) / divisor, 4),
+            score_variance=_variance([item.score for item in records]),
+            duration_variance_ms=_variance([item.duration_ms for item in records]),
             recovery_attempts=sum(item.metrics.get("recovery_attempts", 0) for item in records),
             successful_recoveries=sum(item.metrics.get("successful_recoveries", 0) for item in records),
             human_interventions=sum(item.human_interventions for item in records),
@@ -366,6 +406,22 @@ class BenchmarkEngine:
             return ComparisonClass.WORSE
         if candidate_metrics.get("verification_rate", 0) < float(criteria.get("minimum_verification_rate", 1.0)):
             return ComparisonClass.WORSE
+        # `03` §I.3's determinism rules as a gate rather than a wish: a suite whose trials disagree beyond its
+        # own variance ceiling has not measured anything, and a candidate that spent materially more time to
+        # get its answer did not get a better one. Variance yields INCONCLUSIVE - an unstable measurement is
+        # not evidence of harm, and calling it harm would push a candidate to reroll until it landed high.
+        # Cost yields WORSE - "more work" is a regression, and the direction has to be unbuyable.
+        variance_ceiling = criteria.get("max_score_variance")
+        if variance_ceiling is not None:
+            observed = max(float(baseline_metrics.get("score_variance", 0.0) or 0.0), float(candidate_metrics.get("score_variance", 0.0) or 0.0))
+            if observed > float(variance_ceiling):
+                return ComparisonClass.INCONCLUSIVE
+        cost_ceiling = criteria.get("max_cost_ratio")
+        if cost_ceiling is not None:
+            before = float(baseline_metrics.get("mean_duration_ms", 0.0) or 0.0)
+            after = float(candidate_metrics.get("mean_duration_ms", 0.0) or 0.0)
+            if before > 0 and after > before * float(cost_ceiling):
+                return ComparisonClass.WORSE
         if difference >= delta:
             return ComparisonClass.BETTER
         if abs(difference) <= float(criteria.get("regression_tolerance", 0.0)):
@@ -389,6 +445,16 @@ class BenchmarkEngine:
             reasons.append("functional, verification, timeout, efficiency, or safety regression detected")
         elif candidate_metrics.get("verification_rate", 0) < float(criteria.get("minimum_verification_rate", 1.0)):
             reasons.append("candidate verification rate is below the required minimum")
+        elif decision is ComparisonClass.INCONCLUSIVE:
+            reasons.append(
+                f"trial variance exceeds the suite ceiling of {criteria.get('max_score_variance')}; "
+                "a measurement that disagrees with itself is not evidence of improvement"
+            )
+        elif decision is ComparisonClass.WORSE and float(baseline_metrics.get("mean_duration_ms", 0) or 0) > 0 and float(candidate_metrics.get("mean_duration_ms", 0) or 0) > float(baseline_metrics.get("mean_duration_ms", 0)) * float(criteria.get("max_cost_ratio", 10**9)):
+            reasons.append(
+                f"candidate exceeded the suite's cost ceiling of {criteria.get('max_cost_ratio')}x the baseline duration; "
+                "an improvement paid for with more work is not an improvement"
+            )
         elif target_improvement:
             reasons.append(f"target metric improved by at least {target_delta}")
         elif abs(differences.get(target_metric, 0)) <= float(criteria.get("regression_tolerance", 0.0)):
@@ -417,7 +483,7 @@ class BenchmarkEngine:
             benchmark_version=benchmark.benchmark_version,
             evaluator_version=self.evaluator_version,
             created_at=now,
-            reproducibility_metadata={"benchmark_version": benchmark.version, "benchmark_id": benchmark.benchmark_id, "trial_count_per_side": benchmark.trial_count, "deterministic_seed": benchmark.deterministic_seed, "source_commit": experiment.get("candidate", {}).get("source_commit", "unknown"), "baseline_version": experiment["baseline_version"], "candidate_version": experiment["candidate_version"], "timeout": benchmark.timeout, "evaluation_rules": benchmark.evaluation_metrics, "sandbox_policy": experiment.get("isolation_policy", {})},
+            reproducibility_metadata={"suite": _suite_of(benchmark), "score_variance": {"baseline": baseline_metrics.get("score_variance", 0.0), "candidate": candidate_metrics.get("score_variance", 0.0)}, "benchmark_version": benchmark.version, "benchmark_id": benchmark.benchmark_id, "trial_count_per_side": benchmark.trial_count, "deterministic_seed": benchmark.deterministic_seed, "source_commit": experiment.get("candidate", {}).get("source_commit", "unknown"), "baseline_version": experiment["baseline_version"], "candidate_version": experiment["candidate_version"], "timeout": benchmark.timeout, "evaluation_rules": benchmark.evaluation_metrics, "sandbox_policy": experiment.get("isolation_policy", {})},
         )
 
     def _run_trial(self, benchmark: Benchmark, experiment: dict[str, Any], case: TaskCase, fixture: Path, location: Path, side: str, trial_number: int) -> TrialResult:
@@ -482,6 +548,20 @@ class BenchmarkEngine:
 
     @staticmethod
     def _probe_source(case: TaskCase) -> str:
+        """The pytest body for one case.
+
+        Benchmark v2 (`03` §I.3) moved the corpus out of this method and into `benchmark_suites`, where a case
+        is a name plus a body that runs *the candidate's own modules*, rather than the four file-existence
+        assertions this method used to be the whole of. The legacy four stay exactly here - a persisted v1
+        benchmark row must still mean what it meant, and re-defining an old probe to be "better" would be the
+        benchmark rewriting its own history. The import is function-local for the cycle reason at
+        `known_probes`; this method remains the one writer of trial fixtures.
+        """
+        from .benchmark_suites import probe_source as corpus_probe_source
+
+        corpus_body = corpus_probe_source(case)
+        if corpus_body is not None:
+            return corpus_body
         if case.probe == "controlled_environment":
             body = "assert Path.cwd().name in {'baseline', 'candidate'}"
         elif case.probe == "candidate_configuration_present":
