@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from .backend_registry import BackendRegistry, BackendProvider, NativeBackendProvider
 from .checkpoints import CheckpointManager
 from .evaluation import EvaluationEngine
 from .experience import ExperienceEngine
@@ -24,7 +25,8 @@ class AgentKernel:
     def __init__(
         self,
         workspace: Path,
-        model: ModelAdapter,
+        model: ModelAdapter | None = None,
+        backend_registry: BackendRegistry | None = None,
         store: SQLiteStore | None = None,
         approval_callback: ApprovalCallback | None = None,
         max_steps: int = 12,
@@ -40,7 +42,21 @@ class AgentKernel:
         self.store = store or SQLiteStore(self.workspace / ".evo" / "agent.sqlite3")
         self.policy = security_policy or SecurityPolicy(self.workspace)
         self.tools = ToolRegistry(self.policy)
-        self.model = model
+        
+        # Initialize BackendRegistry and route model through it
+        self.backend_registry = backend_registry or BackendRegistry(self.store)
+        if model is not None:
+            # Register the provided model adapter as a backend provider
+            native_provider = NativeBackendProvider(model)
+            self.backend_registry.register_backend("native", native_provider, is_default=True)
+        elif not self.backend_registry.has_backends():
+            # Default to native backend if none registered
+            from .model_adapter import RuleBasedAdapter
+            default_model = RuleBasedAdapter()
+            native_provider = NativeBackendProvider(default_model)
+            self.backend_registry.register_backend("native", native_provider, is_default=True)
+        
+        self.model = self.backend_registry.get_default_backend()
         self.verifier = Verifier(self.policy)
         self.checkpoints = CheckpointManager(self.workspace, self.store)
         self.flexibility = flexibility or FlexibilityEngine(model, self.tools)
