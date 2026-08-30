@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Any, Callable
 import uuid
@@ -153,6 +155,12 @@ class PromotionEngine:
         self._atomic_switch(path)
         return record
 
+    @staticmethod
+    def _safe_version_id(value: str) -> str:
+        cleaned = re.sub(r"[\\/:*?\"<>|]+", "_", str(value)).strip(" .") or "version"
+        cleaned = re.sub(r"_+", "_", cleaned)
+        return cleaned[:120]
+
     def register_candidate(self, experiment_id: str, evidence_id: str, version_id: str | None = None) -> VersionRecord:
         evidence_row = self.store.evidence_by_id(evidence_id)
         if not evidence_row:
@@ -170,7 +178,7 @@ class PromotionEngine:
             raise ValueError("Candidate sandbox is unavailable; retain the passed sandbox before registration")
         if experiment_row.get("status") != PromotionStatus.ACTIVE.value and experiment_row.get("status") != "passed":
             raise ValueError("Only a passed sandbox experiment can be registered")
-        version_id = version_id or f"candidate_{candidate.get('candidate_id', uuid.uuid4().hex[:12])}"
+        version_id = self._safe_version_id(version_id or f"candidate_{candidate.get('candidate_id', uuid.uuid4().hex[:12])}")
         if self.store.version_by_id(version_id):
             return self._version_from_row(self.store.version_by_id(version_id))
         record = VersionRecord(version_id, candidate.get("source_commit", "unknown"), self._active_version().version_id if self._active_version() else None, experiment["proposal_id"], experiment_id, evidence_id, self._now(), VersionStatus.CANDIDATE, str(candidate_path), self._manifest_hash(candidate_path), {"candidate_source_path": str(candidate_path), "candidate_id": candidate.get("candidate_id"), "benchmark_version": evidence.get("benchmark_version"), "candidate_commit": candidate.get("candidate_commit"), "promotion_policy_version": self.policy_version})
@@ -243,14 +251,21 @@ class PromotionEngine:
             raise ValueError("Evidence does not exist")
         evidence = self._payload(evidence_row)
         experiment_id = evidence.get("experiment_id")
-        if not self.store.version_by_id(candidate_version):
-            self.register_candidate(experiment_id, evidence_id, candidate_version)
-        version = self._version_from_row(self.store.version_by_id(candidate_version))
-        eligible, errors, context = self.validate_eligibility(candidate_version, evidence_id)
+        version_id = candidate_version.strip() if isinstance(candidate_version, str) else ""
+        version = None
+        if version_id:
+            version_row = self.store.version_by_id(version_id)
+            if version_row:
+                version = self._version_from_row(version_row)
+        if version is None:
+            version = self.register_candidate(experiment_id, evidence_id, version_id or None)
+            version_id = version.version_id
+        eligible, errors, context = self.validate_eligibility(version_id, evidence_id)
         active = self._active_version()
         request = PromotionRequest(self._new_id("promotion"), version.proposal_id, version.experiment_id, evidence_id, candidate_version, active.version_id if active else None, self._now(), requested_by, eligibility_status=PromotionEligibilityStatus.ELIGIBLE if eligible else PromotionEligibilityStatus.REJECTED, status=PromotionStatus.REQUESTED if eligible else PromotionStatus.REJECTED)
+        request.candidate_version = version_id
         self.store.save_promotion_request(request)
-        self._event(EventType.PROMOTION_REQUESTED, request, {"candidate_version": candidate_version, "requested_by": requested_by})
+        self._event(EventType.PROMOTION_REQUESTED, request, {"candidate_version": version_id, "requested_by": requested_by})
         self._event(EventType.PROMOTION_ELIGIBILITY_CHECKED, request, {"eligible": eligible, "errors": errors, "context": context})
         if not eligible:
             request.approval_reason = "; ".join(errors)
@@ -405,16 +420,22 @@ class PromotionEngine:
         if missing:
             return {"healthy": False, "reason": f"missing required files: {missing}", "smoke_test": {"passed": False}}
         try:
-            with tempfile.TemporaryDirectory(prefix="evo-health-") as directory:
-                directory_path = Path(directory)
-                db_path = directory_path / "health.sqlite3"
-                SQLiteStore(db_path)
-                smoke_file = directory_path / "test_health.py"
-                smoke_file.write_text("from pathlib import Path\ndef test_health():\n    assert Path.cwd().is_dir()\n    assert (Path.cwd() / 'evo_agent').is_dir()\n", encoding="utf-8")
-                env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": directory, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1", "NO_PROXY": "*", "no_proxy": "*", "EVO_NETWORK_POLICY": "denied"}
-                smoke = subprocess.run(["python3", "-m", "pytest", "-q", str(smoke_file)], cwd=version_path, env=env, capture_output=True, text=True, timeout=10, check=False)
-                smoke_result = {"passed": smoke.returncode == 0, "return_code": smoke.returncode, "output": smoke.stdout + smoke.stderr}
-                return {"healthy": smoke.returncode == 0, "reason": "healthy" if smoke.returncode == 0 else "smoke test failed", "kernel_initialized": True, "tools_initialized": True, "database_opened": True, "safety_controls_present": True, "workspace_protected": True, "smoke_test": smoke_result}
+            import sqlite3
+            with sqlite3.connect(":memory:") as connection:
+                connection.execute("SELECT 1")
+            code = (
+                "from pathlib import Path; "
+                "root = Path.cwd(); "
+                "assert root.is_dir(); "
+                "assert (root / 'evo_agent').is_dir(); "
+                "assert (root / 'evo_agent' / 'kernel.py').is_file(); "
+                "print('health-ok')"
+            )
+            env = os.environ.copy()
+            env.update({"PYTHONNOUSERSITE": "1", "EVO_NETWORK_POLICY": "denied"})
+            smoke = subprocess.run([sys.executable, "-c", code], cwd=str(version_path), env=env, capture_output=True, text=True, timeout=10, check=False)
+            smoke_result = {"passed": smoke.returncode == 0, "return_code": smoke.returncode, "output": smoke.stdout + smoke.stderr}
+            return {"healthy": smoke.returncode == 0, "reason": "healthy" if smoke.returncode == 0 else "smoke test failed", "kernel_initialized": True, "tools_initialized": True, "database_opened": True, "safety_controls_present": True, "workspace_protected": True, "smoke_test": smoke_result}
         except subprocess.TimeoutExpired:
             return {"healthy": False, "reason": "health smoke test timed out", "smoke_test": {"passed": False, "timeout": True}}
         except Exception as exc:
@@ -457,7 +478,7 @@ class PromotionEngine:
         return self._promotion_record_from_row(self.store.promotion_record_by_id(record.promotion_id))
 
     def _active_version(self) -> VersionRecord | None:
-        if self.active_link.is_symlink():
+        if self.active_link.is_symlink() or self.active_link.exists():
             target = self.active_link.resolve()
             row = next((item for item in self.store.find_versions(status=VersionStatus.ACTIVE.value) if Path(self._version_from_row(item).version_path).resolve() == target), None)
             if row:
@@ -503,13 +524,37 @@ class PromotionEngine:
             raise KeyError(f"Promotion request not found: {promotion_id}")
         return self._request_from_row(row)
 
+    @staticmethod
+    def _remove_link(path: Path) -> None:
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.exists():
+            os.rmdir(path)
+
     def _atomic_switch(self, target: Path) -> None:
         target = target.resolve()
         if not target.is_dir() or not target.is_relative_to(self.version_dir):
             raise PermissionError("Activation target is outside the immutable version registry")
         temp_link = self.versions_root / f".active-{uuid.uuid4().hex}"
         relative = os.path.relpath(target, self.versions_root)
-        os.symlink(relative, temp_link)
+        if os.name == "nt":
+            try:
+                os.symlink(relative, temp_link)
+            except OSError as exc:
+                if exc.winerror not in {1314, 4390, 5}:
+                    raise
+                if self.active_link.exists() or self.active_link.is_symlink():
+                    self._remove_link(self.active_link)
+                subprocess.run(["cmd", "/c", "mklink", "/J", str(temp_link), str(target)], check=True, capture_output=True, text=True)
+            else:
+                if self.active_link.exists() or self.active_link.is_symlink():
+                    self._remove_link(self.active_link)
+                os.replace(temp_link, self.active_link)
+                return
+        else:
+            os.symlink(relative, temp_link)
+        if self.active_link.exists() or self.active_link.is_symlink():
+            self._remove_link(self.active_link)
         os.replace(temp_link, self.active_link)
 
     @staticmethod
@@ -571,7 +616,9 @@ class PromotionEngine:
         return json.loads(raw) if isinstance(raw, str) else raw
 
     @staticmethod
-    def _version_from_row(row: dict[str, Any]) -> VersionRecord:
+    def _version_from_row(row: dict[str, Any] | None) -> VersionRecord:
+        if row is None:
+            raise ValueError("Version record not found")
         if "payload" in row:
             payload = PromotionEngine._payload(row)
         else:

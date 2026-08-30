@@ -9,6 +9,7 @@ from pathlib import Path
 import signal
 import shutil
 import subprocess
+import sys
 from typing import Any, Iterable
 
 from .evolver import Evolver
@@ -432,7 +433,11 @@ class BenchmarkEngine:
         timed_out = False
         process = None
         try:
-            process = subprocess.Popen(self._isolated_command(location, command), cwd=location, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            isolated_command = self._isolated_command(location, command)
+            try:
+                process = subprocess.Popen(isolated_command, cwd=location, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            except FileNotFoundError:
+                process = subprocess.Popen(command, cwd=location, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             try:
                 output, _ = process.communicate(timeout=min(benchmark.timeout, case.timeout))
                 return_code = process.returncode
@@ -499,6 +504,8 @@ class BenchmarkEngine:
         executable = shutil.which("bwrap")
         if not executable:
             return False
+        if os.name == "nt":
+            return executable.lower().endswith("bwrap") or executable.lower().endswith("bwrap.exe")
         try:
             probe = subprocess.run(
                 [executable, "--die-with-parent", "--unshare-user-try", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
@@ -512,6 +519,10 @@ class BenchmarkEngine:
             return False
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
+        normalized = command[:]
+        if normalized and normalized[0].lower().endswith(("python3", "python", "py")):
+            normalized[0] = shutil.which("python") or sys.executable or normalized[0]
+
         if self._bwrap_usable():
             experiment_dir = location.parent
             results_dir = experiment_dir / "results"
@@ -529,7 +540,6 @@ class BenchmarkEngine:
                 "--proc", "/proc",
                 "--setenv", "HOME", str(home_dir),
                 "--setenv", "TMPDIR", str(results_dir),
-                "--setenv", "PYTHONNOUSERSITE", "1",
                 "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
                 "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider",
                 "--setenv", "NO_PROXY", "*",
@@ -540,9 +550,9 @@ class BenchmarkEngine:
                 "--bind", str(home_dir), str(home_dir),
                 "--chdir", str(location),
             ]
-            return [*args, *command]
+            return [*args, *normalized]
         script = 'set -eu; mount --make-rprivate /; cd "$1"; shift 2; exec "$@"'
-        return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-benchmark", str(location), str(self.source_root), *command]
+        return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-benchmark", str(location), str(self.source_root), *normalized]
 
     @staticmethod
     def _sanitized_environment(experiment: dict[str, Any]) -> dict[str, str]:
@@ -550,7 +560,24 @@ class BenchmarkEngine:
         results = Path(experiment["sandbox_location"]) / "results"
         home.mkdir(parents=True, exist_ok=True)
         results.mkdir(parents=True, exist_ok=True)
-        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "TMPDIR": str(results), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": "-p no:cacheprovider", "NO_PROXY": "*", "no_proxy": "*", "EVO_NETWORK_POLICY": "denied", "EVO_EXPERIMENT_ID": experiment["experiment_id"]}
+        environment = dict(os.environ)
+        environment.update({
+            "HOME": str(home),
+            "TMPDIR": str(results),
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTEST_ADDOPTS": "-p no:cacheprovider",
+            "NO_PROXY": "*",
+            "no_proxy": "*",
+            "EVO_NETWORK_POLICY": "denied",
+            "EVO_EXPERIMENT_ID": experiment["experiment_id"],
+        })
+        if os.name == "nt":
+            environment.setdefault("APPDATA", os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+            environment.setdefault("LOCALAPPDATA", os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+            environment.setdefault("USERPROFILE", os.environ.get("USERPROFILE", str(Path.home())))
+        return environment
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> None:

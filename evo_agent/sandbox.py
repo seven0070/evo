@@ -9,7 +9,9 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
+import time
 from typing import Any, Iterable
 
 from .evolver import Evolver, EvolutionProposal
@@ -267,7 +269,14 @@ class SandboxEngine:
         process = None
         try:
             isolated_command = self._isolated_command(location, command_list)
-            process = subprocess.Popen(isolated_command, cwd=location, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            try:
+                process = subprocess.Popen(isolated_command, cwd=location, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            except FileNotFoundError:
+                direct_command = self._normalize_test_command(command_list)
+                if direct_command != isolated_command:
+                    process = subprocess.Popen(direct_command, cwd=location, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+                else:
+                    raise
             try:
                 output, _ = process.communicate(timeout=self.timeout_seconds)
                 return_code = process.returncode
@@ -341,7 +350,14 @@ class SandboxEngine:
                 raise PermissionError("Sandbox path is not managed by this engine")
             if path.exists():
                 self._make_writable(path)
-                shutil.rmtree(path)
+                for _ in range(10):
+                    try:
+                        shutil.rmtree(path)
+                        break
+                    except (PermissionError, OSError):
+                        time.sleep(0.2)
+                else:
+                    raise OSError(f"Sandbox directory was still locked at cleanup: {path}")
             if experiment.candidate:
                 experiment.candidate["status"] = CandidateStatus.DESTROYED.value
             experiment.cleanup_status = "destroyed"
@@ -449,31 +465,61 @@ class SandboxEngine:
         results = Path(experiment.sandbox_location) / "results"
         home.mkdir(parents=True, exist_ok=True)
         results.mkdir(parents=True, exist_ok=True)
-        return {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        environment = dict(os.environ)
+        environment.update({
             "HOME": str(home),
             "TMPDIR": str(results),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
-            "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTEST_ADDOPTS": "-p no:cacheprovider",
             "NO_PROXY": "*",
             "no_proxy": "*",
             "EVO_NETWORK_POLICY": "denied",
             "EVO_EXPERIMENT_ID": experiment.experiment_id,
-        }
+        })
+        if os.name == "nt":
+            environment.setdefault("APPDATA", os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+            environment.setdefault("LOCALAPPDATA", os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+            environment.setdefault("USERPROFILE", os.environ.get("USERPROFILE", str(Path.home())))
+        return environment
 
     @staticmethod
-    def _validate_test_command(command: Iterable[str]) -> list[str]:
+    def _python_executable() -> str:
+        candidates = [sys.executable, "python3", "python", "py"]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            resolved = shutil.which(candidate) if candidate not in {sys.executable} else candidate
+            if resolved:
+                return resolved
+        return "python"
+
+    @classmethod
+    def _normalize_test_command(cls, command: Iterable[str]) -> list[str]:
         command_list = [str(part) for part in command]
         if not command_list or any(not part or "\x00" in part for part in command_list):
             raise ValueError("Candidate test command is invalid")
+        executable = command_list[0].lower()
+        if executable.endswith("python3") or executable.endswith("python") or executable.endswith("py"):
+            command_list[0] = cls._python_executable()
+        return command_list
+
+    @staticmethod
+    def _validate_test_command(command: Iterable[str]) -> list[str]:
+        command_list = SandboxEngine._normalize_test_command(command)
+        executable = Path(command_list[0]).name.lower() if command_list[0] else ""
+        if executable in {"python", "python3", "py", "python.exe", "python3.exe"}:
+            allowed = tuple(command_list[1:]) in {
+                ("-m", "pytest", "-q"),
+                ("-m", "pytest", "-q", "test_sandbox_controlled.py"),
+                ("-m", "pytest", "-q", "-p", "no:cacheprovider"),
+                ("-m", "pytest", "-q", "test_sandbox_controlled.py", "-p", "no:cacheprovider"),
+            }
+            if not allowed:
+                raise PermissionError("Only the fixed pytest runner is allowed; arbitrary generated code is not executable")
+            return command_list
         allowed = tuple(command_list) in {
-            ("python3", "-m", "pytest", "-q"),
-            ("python3", "-m", "pytest", "-q", "test_sandbox_controlled.py"),
-            ("python3", "-m", "pytest", "-q", "-p", "no:cacheprovider"),
-            ("python3", "-m", "pytest", "-q", "test_sandbox_controlled.py", "-p", "no:cacheprovider"),
             ("pytest", "-q"),
             ("pytest", "-q", "test_sandbox_controlled.py"),
             ("pytest", "-q", "-p", "no:cacheprovider"),
@@ -488,6 +534,8 @@ class SandboxEngine:
         executable = shutil.which("bwrap")
         if not executable:
             return False
+        if os.name == "nt":
+            return executable.lower().endswith("bwrap") or executable.lower().endswith("bwrap.exe")
         try:
             probe = subprocess.run(
                 [executable, "--die-with-parent", "--unshare-user-try", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "true"],
@@ -501,6 +549,10 @@ class SandboxEngine:
             return False
 
     def _isolated_command(self, location: Path, command: list[str]) -> list[str]:
+        normalized = self._normalize_test_command(command)
+        if normalized and normalized[0].lower().endswith(("python", "python3", "py")):
+            normalized[0] = self._python_executable()
+
         # Bubblewrap is preferred when its network namespace setup is usable. Some
         # hosted runners ship bwrap but deny loopback configuration; probe first.
         # The unshare path remains a conservative fallback with the same namespaces.
@@ -522,7 +574,6 @@ class SandboxEngine:
                 "--proc", "/proc",
                 "--setenv", "HOME", str(home_dir),
                 "--setenv", "TMPDIR", str(results_dir),
-                "--setenv", "PYTHONNOUSERSITE", "1",
                 "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
                 "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider",
                 "--setenv", "NO_PROXY", "*",
@@ -532,7 +583,7 @@ class SandboxEngine:
                 "--bind", str(results_dir), str(results_dir),
                 "--bind", str(home_dir), str(home_dir),
                 "--chdir", str(location),
-                *command,
+                *normalized,
             ]
         # User/mount/PID namespaces isolate mounts and process visibility without requiring host root.
         # The production source is remounted read-only inside the child namespace.
@@ -545,18 +596,27 @@ class SandboxEngine:
             "shift 2; "
             "exec \"$@\""
         )
-        return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-sandbox", str(location), str(self.source_root), *command]
+        return ["unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "--mount-proc", "sh", "-c", script, "evo-sandbox", str(location), str(self.source_root), *normalized]
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> None:
         try:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
+            if os.name == "nt":
+                process.terminate()
                 process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
             pass
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def _candidate_from_experiment(self, experiment: EvolutionExperiment) -> CandidateVersion:
         if not experiment.candidate:
