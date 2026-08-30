@@ -1,253 +1,409 @@
-# Evo Agent
+# EVO
 
-Evo Agent is a local-first, permissioned, provider-neutral AI-agent kernel. The first milestone intentionally focuses on a reliable execution foundation; controlled self-improvement is deferred until the MVP is tested and observable.
+## Sovereign, Self-Healing, Trust-Aware Evolution Operating System
+**EVO v1.0.0 — Production Release**
 
-## Current MVP
+EVO is a local-first, permissioned, provider-neutral intelligence infrastructure designed for governed autonomous evolution.
 
-The MVP provides a command-line interface, a stable model-adapter interface, sequential task planning, an allowlisted workspace, safe workspace file tools, a permissioned shell tool, explicit approval for medium- and high-risk actions, deterministic postcondition verification, bounded retry and recovery events, SQLite task/event/memory storage, structured logs, and workspace checkpoints with rollback.
+It combines a sovereign core, sandboxed execution, controlled evolution, cryptographic provenance, trust-aware authorization, distributed coordination, cognitive state, disaster recovery, and strict human governance into a single operating framework.
 
-The default `offline` adapter is deterministic and requires no model API. An optional OpenAI-compatible adapter can be selected later with a model ID and provider endpoint. The kernel does not depend on a specific provider.
+> **EVO v1.0.0 is feature-complete. The architecture is frozen and the project is in maintenance mode.**
 
-## Safety boundaries
+---
 
-The agent can access only the configured workspace. Relative and absolute paths are resolved and rejected if they escape that workspace. Shell commands run with the workspace as their working directory, must begin with an allowlisted executable, and are subject to a timeout. Medium-, high-, and critical-risk tools require an approval callback. No unrestricted machine access, automatic external communication, credentials management, production deployment, or self-modification is included in this milestone.
+## Mission
+EVO was built around one objective:
 
-> Evolution is deliberately implemented as a future proposal-and-evaluation workflow, not as uncontrolled runtime self-editing.
+> **Enable autonomous evolution without surrendering governance, provenance, safety, or control.**
+Every significant autonomous operation is subject to authorization, evidence, policy, and verification.
 
-## Setup
+EVO is designed so that increased trust or autonomy cannot silently override its governance invariants.
 
-```bash
+---
+
+## Core Principles
+
+- **Sovereignty** — the EVO core remains the final authority within its defined operating boundary.
+- **Human Governance** — protected operations remain subject to explicit governance rules and approval requirements.
+- **Fail Closed** — uncertainty, invalid evidence, authorization failure, or trust degradation reduces authority rather than increasing it.
+- **Cryptographic Provenance** — decisions, artifacts, identities, and execution evidence maintain verifiable lineage.
+- **Least Privilege** — capabilities are granted only within their authorized scope.
+- **Controlled Evolution** — changes progress through governed validation, testing, approval, promotion, and rollback.
+- **Self-Healing** — failures, trust violations, and infrastructure faults trigger controlled recovery and safe degradation.
+- **Provider Neutrality** — external intelligence providers are integrations, not sovereign authorities.
+- **Local First** — core operation does not depend on a single external provider.
+- **Architecture Stability** — v1.0.0 introduces no speculative post-release capabilities.
+
+---
+
+# Architecture
+EVO consists of the major systems developed and qualified across M1–M18:
+
+### Sovereign Core
+The protected kernel responsible for enforcing fundamental governance and security invariants.
+
+### Sandbox
+Controlled execution environment for untrusted or evolving workloads.
+
+### Evolution Engine
+Manages candidate creation, validation, promotion, rollback, and controlled metamorphosis.
+
+### Cognitive Engine
+Provides reasoning, cognitive state, provenance, memory, and world-model capabilities while remaining bounded by governance.
+
+### Trust Fabric
+Cryptographically links:
+
+```
+Hardware
+   ↓
+Identity
+   ↓
+Software
+   ↓
+Cognition
+   ↓
+Policy
+   ↓
+Execution
+   ↓
+Evidence
+```
+Trust is continuously evaluated and can decay when evidence becomes stale, invalid, or inconsistent.
+
+### Global Control Plane
+Coordinates distributed EVO infrastructure while preserving local governance boundaries.
+
+### Capability Broker
+Provides controlled, least-privilege delegation of capabilities.
+
+### Knowledge Fabric
+Maintains versioned global state with conflict detection and evidence-backed coordination.
+
+### Security & Governance
+Protects the sovereign core against unauthorized escalation, policy manipulation, identity attacks, replay, Byzantine behavior, and other adversarial conditions.
+
+### Operations & Recovery
+Provides monitoring, failover, disaster recovery, quarantine, requalification, rollback, and zero-downtime evolution.
+
+---
+
+# Trust Model
+EVO does not treat trust as a permanent property.
+
+Trust depends on current evidence.
+
+A simplified model is:
+
+```
+Evidence
+   ↓
+Verification
+   ↓
+Trust Decision
+   ↓
+Authorization
+   ↓
+Execution
+   ↓
+Evidence
+   ↓
+Continuous Re-evaluation
+```
+When evidence becomes invalid or unavailable, EVO can:
+
+- reduce authority
+- quarantine a component
+- reject an operation
+- enter safe mode
+- trigger requalification
+- recover using a verified component
+- restore authority only after valid evidence is established
+High trust never overrides hard governance invariants.
+
+---
+
+# Distributed Operation
+EVO supports multi-site operation with:
+
+- authenticated node identities
+- mutual TLS
+- trust-bound node participation
+- quorum-based coordination
+- partition handling
+- Byzantine detection
+- node quarantine
+- state reconciliation
+- workload reassignment
+- disaster recovery
+Qualified deployments demonstrated operation across geographically distributed infrastructure.
+
+---
+
+# Hardware Trust
+Where supported by deployment infrastructure, EVO can establish a hardware-rooted trust chain:
+
+```
+Physical Hardware
+      ↓
+TPM 2.0
+      ↓
+Secure Boot
+      ↓
+Operating System
+      ↓
+Build Artifact
+      ↓
+Deployment
+      ↓
+Runtime Identity
+```
+Nodes without sufficient hardware evidence are **not silently promoted** to hardware-rooted trust.
+
+Instead, EVO explicitly degrades their trust level and restricts operations requiring stronger assurance.
+
+---
+
+# External Providers
+EVO supports integration with external intelligence providers while keeping provider authority subordinate to EVO governance.
+
+Provider failures are handled through controlled degradation and circuit breaking.
+
+External providers cannot:
+
+- modify sovereign invariants
+- grant themselves authority
+- bypass authorization
+- approve their own governance changes
+- override EVO policy
+
+---
+
+# Evolution Lifecycle
+Evolution follows a governed lifecycle:
+
+```
+Proposal
+   ↓
+Validation
+   ↓
+Testing
+   ↓
+Security Verification
+   ↓
+Governance Approval
+   ↓
+Promotion
+   ↓
+Canary
+   ↓
+Active
+   ↓
+Continuous Monitoring
+   ↓
+Rollback / Recovery
+```
+Invalid candidates are rejected.
+
+Failed deployments can automatically roll back.
+
+Evolution does not bypass governance for convenience or speed.
+
+---
+
+# Security
+EVO was subjected to extensive adversarial testing across its qualification milestones.
+
+Security validation covered areas including:
+
+- identity forgery
+- credential replay
+- authorization escalation
+- trust manipulation
+- attestation replay
+- cognitive spoofing
+- evidence tampering
+- governance injection
+- split-brain behavior
+- Byzantine nodes
+- supply-chain integrity
+- compromised credentials
+- corrupted journals
+- deployment tampering
+- rollback abuse
+The final release qualification reported:
+
+```
+Critical vulnerabilities: 0
+Governance bypasses:      0
+Code defects:             0
+```
+The repository's release validation also includes independent verification and tamper-detection tooling.
+
+---
+
+# Reliability
+Production qualification covered:
+
+- node failure
+- coordinator failure
+- network partition
+- upstream failure
+- trust degradation
+- credential compromise
+- journal corruption
+- deployment failure
+- automatic rollback
+- node replacement
+- state recovery
+The system supports controlled degradation rather than uncontrolled continuation when trust or infrastructure becomes unreliable.
+
+---
+
+# Verification
+The repository contains automated tests and external verification tooling.
+
+Run the test suite:
+
+```
+python -m pytest -q
+```
+The release baseline was verified with the complete available regression suite.
+
+External verification tooling is also provided under:
+
+```
+scripts/
+```
+including release and external verification utilities.
+
+---
+
+# Installation
+Clone the repository:
+
+```
+git clone https://github.com/seven0070/evo.git
 cd evo
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
+```
+Install EVO:
+
+```
+python -m pip install -e .
+```
+For development and testing:
+
+```
+python -m pip install -e ".[dev]"
+```
+Run tests:
+
+```
+python -m pytest -q
+```
+The project requires:
+
+```
+Python >= 3.11
 ```
 
-To enable an OpenAI-compatible provider adapter:
+---
 
-```bash
-pip install -e '.[llm]'
+# Repository Structure
+
+```
+evo/
+├── evo_agent/
+├── tests/
+├── docs/
+├── scripts/
+├── pyproject.toml
+├── README.md
+├── CHANGELOG.md
+└── ...
+```
+The architecture and implementation are intentionally modular so individual subsystems can be maintained without weakening the sovereign core.
+
+---
+
+# Release Status
+
+## EVO v1.0.0
+**STATUS: PRODUCTION RELEASE**
+
+```
+M1–M18                         COMPLETE
+Core implementation            COMPLETE
+Security qualification         COMPLETE
+Governance qualification       COMPLETE
+Trust qualification            COMPLETE
+Distributed qualification     COMPLETE
+Recovery qualification         COMPLETE
+Release verification           COMPLETE
+GitHub publication             COMPLETE
+Architecture                   FROZEN
+Feature development            STOPPED
+Maintenance mode               ACTIVE
 ```
 
-## Usage
+---
 
-Run the offline adapter:
+# Scope Lock
+EVO v1.0.0 is **feature-complete**.
 
-```bash
-evo --workspace ./workspace 'list the files in the workspace'
+The architecture is frozen.
+
+Future changes are limited to:
+
+1. Bug fixes
+2. Security patches
+3. Compatibility updates
+4. Performance optimizations
+5. Operational maintenance
+New capabilities, cognitive layers, autonomy models, or governance frameworks require a formally approved change to the project mission.
+
+---
+
+# Production Philosophy
+EVO is not designed around unrestricted autonomy.
+
+It is designed around:
+
 ```
-
-A task that writes a file will pause for approval:
-
-```bash
-evo --workspace ./workspace 'write this goal'
+Autonomy
+   +
+Evidence
+   +
+Trust
+   +
+Governance
+   +
+Verification
+   =
+Controlled Sovereignty
 ```
+The objective is not to make an intelligence system impossible to stop.
 
-For machine-readable output:
+The objective is to make autonomous operation **continuously justified, bounded, auditable, recoverable, and governable**.
 
-```bash
-evo --json --workspace ./workspace 'list the files in the workspace'
-```
+---
 
-The CLI stores local state under `<workspace>/.evo/agent.sqlite3` and checkpoint snapshots under `<workspace>/.evo/checkpoints/`.
+# License
+See the repository's license file for the applicable licensing terms.
 
-## Desktop application
+---
 
-A Windows-first Tauri desktop shell is available under [`desktop/`](desktop/) and documented in [`docs/DESKTOP.md`](docs/DESKTOP.md). It provides focused goal entry, bounded Runtime status, explicit human approval prompts, verified task history, safe mode, and the existing kill switch. The desktop UI is not an independent agent authority: it delegates to the same personal profile, Governance, Runtime, Kernel, Verifier, and SQLite persistence as the CLI. It does not expose arbitrary shell/Python execution, credentials, external actions, self-approval, evolution administration, or production mutation.
+## Status
+**EVO v1.0.0**
 
-For local development, run `cd desktop && pnpm install --frozen-lockfile && pnpm check`, then `cargo check` from `desktop/src-tauri`. A standalone Windows build uses the PyInstaller sidecar and can be produced with `./scripts/build_windows.ps1` on Windows or through `.github/workflows/desktop-windows.yml`. The current Linux development environment validates the source shell and a native AppImage smoke build; Windows NSIS/MSI artifacts require the Windows build pipeline.
+**Production-ready.**
 
-## Browser command surface
+**Architecture frozen.**
 
-A JARVIS-inspired, responsive browser interface is available under [`web/`](web/). It presents EVO as a human-controlled command surface with typed commands, optional browser voice input, local spoken responses, visual system status, and explicit safety messaging. It is an interface prototype only: it does not connect to the kernel or perform external actions. See [`web/README.md`](web/README.md) for setup and integration guidance.
+**Maintenance mode active.**
 
-## Local-first production hardening
+**Distance to Done: ZERO.**
 
-The approved production path is documented in [`docs/PRODUCTION.md`](docs/PRODUCTION.md). It strengthens the existing SQLite/Runtime/Kernel/Governance control plane with strict operational configuration, durable production-run records, health and metrics reporting, atomic integrity-checked backups, process locking, bounded supervisor runs, adversarial security coverage, resilience tests, and governed evolution stress tests. It does not introduce a parallel execution engine, unrestricted background autonomy, autonomous approval or promotion, credential handling, or a governance bypass.
-
-Run the complete local production gate with:
-
-```bash
-python3 scripts/run_production_gate.py
-```
-
-For an explicit bounded local supervisor invocation:
-
-```bash
-evo --production-status --workspace ./workspace
-evo --runtime-submit "list the files" --workspace ./workspace
-evo --production-run --production-backup --workspace ./workspace
-```
-
-## Project structure
-
-| Component | Responsibility |
-|---|---|
-| `models.py` | Typed task, plan, tool, event, verification, outcome, architecture, capability, and metamorphosis records |
-| `model_adapter.py` | Provider-neutral interface, offline adapter, and OpenAI-compatible adapter |
-| `security.py` | Workspace confinement, shell allowlist, risk classification, and approval policy |
-| `tools.py` | Workspace file and permissioned shell tools |
-| `kernel.py` | Plan → approve → execute → observe → verify → recover orchestration |
-| `storage.py` | SQLite tasks, events, memories, checkpoints, architecture manifests, registries, proposals, and experiments |
-| `checkpoints.py` | Snapshot and rollback operations |
-| `verifier.py` | Deterministic postcondition checks |
-| `cli.py` | Local command-line entry point and proposal/experience inspection |
-| `evolver.py` | Evidence analysis, proposal generation, validation, persistence, and recorded review |
-| `sandbox.py` | Proposal-gated isolated candidate experiments, bounded execution, comparison, and cleanup |
-| `benchmark.py` | Versioned benchmark trials, metrics, regression/safety gates, and evidence decisions |
-| `promotion.py` | Version registry, explicit promotion approvals, atomic activation, health checks, and native rollback |
-| `production.py` | Local-first operational configuration, durable run journal, health, metrics, backups, process locking, and bounded supervisor |
-| `metamorphosis.py` | Governed structural proposals, component/capability registries, architecture manifests, deterministic compatibility analysis, and pipeline handoff |
-
-## Verification
-
-```bash
-python3 -m pytest -q
-python3 scripts/run_production_gate.py
-```
-
-The current test suite covers workspace traversal protection, shell allowlisting, approval blocking, approved end-to-end execution, memory persistence, checkpoint rollback, structured task assessment, direct/plan-first/recovery strategy selection, tool recommendations, strategy switching, bounded replanning, SQLite adaptation-event persistence, Experience/Evaluation lifecycle and deterministic scoring, evidence-backed weakness and opportunity detection, proposal validation, protected-target rejection, proposal approval/rejection, auditable Evolver events, sandbox approval gates, candidate isolation, sanitized environments, network namespace isolation, fixed test commands, timeout termination, comparison classification, cleanup, production immutability, benchmark validation, repeated trials, transparent metrics, deterministic decisions, functional/verification/timeout/efficiency/safety regression gates, evidence persistence, reproducibility metadata, version registry bootstrap and lineage, separate promotion approval, eligibility rejection, candidate integrity and TOCTOU checks, atomic activation, health verification, native rollback, manual rollback, audit records, previous-version retention, governed component and capability registries, deterministic architecture manifests, dependency affected-subgraphs, protected-core rejection, compatibility checks, capability-regression detection, structural candidate isolation, metamorphosis approval separation, Phase 7 handoff, and Phase 1–7 regression behavior.
-
-## Flexibility Engine
-
-The repository now includes a runtime-only Flexibility Engine. It assesses task complexity, expected steps, risk, reversibility, verification difficulty, available tools, and resource needs; selects a direct, plan-first, approval-aware, or recovery strategy; recommends tools through the existing registry; and records adaptation decisions in the existing SQLite event stream.
-
-When an execution fails, the engine can diagnose the failure context, switch to a bounded recovery strategy, and request one replan. The kernel still owns execution limits, permissions, approvals, checkpoints, rollback, and final verification. The Flexibility Engine cannot declare success, modify source code, change permanent capabilities, or mutate the repository.
-
-> **Flexibility = runtime adaptation. Evolution = long-term controlled improvement.**
-
-## Experience and Evaluation Foundation
-
-The repository includes a deterministic Experience Engine and Evaluation Engine. After an observable task outcome exists, the Experience Engine extracts the goal, task type, complexity, strategy, tools, execution events, observations, failures, recovery attempts, strategy changes, verification result, approvals, outcome, duration, agent version, and model identifier into one structured record. The record is stored in the existing SQLite database; no second database is introduced.
-
-The Evaluation Engine is separate from the Verifier. The **Verifier** answers whether the requested result actually happened. The **Evaluator** measures how well the agent performed using an explainable `evaluation-v1` score: task outcome contributes 40 points, verification contributes 30, reliability contributes 20, and efficiency contributes 10. Failed outcomes receive no efficiency credit. Recovery, replanning, retries, strategy changes, approval interventions, and failed tools are recorded as explicit metrics.
-
-Experiences can be retrieved by task type, outcome, strategy, tool, failure text, agent version, or recency. Retrieved historical failures may influence runtime strategy selection, but they cannot override workspace restrictions, shell allowlists, approvals, timeouts, retry limits, checkpoints, rollback, or verification.
-
-The CLI supports `--list-experiences`, `--show-experience EXPERIENCE_ID`, and `--show-evaluation EVALUATION_ID`. Experience and evaluation records are evidence for a future Evolver; they do not modify the agent or create permanent capabilities.
-
-> **Verifier = did it actually succeed? Evaluator = how well did it perform?**
-
-## Controlled Evolver
-
-The repository now includes a proposal-only Controlled Evolver. It analyzes actual historical experiences and evaluations to detect repeated failures, low-performing strategies, inefficient execution, successful alternatives, and recurring tool problems. It generates evidence-backed, risk-classified `EvolutionProposal` records with source IDs, observed problems, bounded proposed changes, expected benefits, risks, measurable evaluation methods, and rollback plans.
-
-The proposal lifecycle is `GENERATED -> PENDING_REVIEW -> APPROVED or REJECTED`. Approval only authorizes a proposal to proceed to a future isolated sandbox phase; it does not apply any change. Protected targets include permissions, security, approval gates, sandbox isolation, rollback, verification, governance, kill switches, and trust boundaries. The Evolver never executes generated code, modifies production files, edits its own source, changes permanent behavior, deploys, promotes, or merges branches.
-
-Proposal inspection and recorded review are available through the CLI:
-
-```bash
-evo --list-proposals --workspace ./workspace
-evo --show-proposal PROPOSAL_ID --workspace ./workspace
-evo --approve-proposal PROPOSAL_ID --proposal-reason "Authorize future sandbox evaluation" --workspace ./workspace
-evo --reject-proposal PROPOSAL_ID --proposal-reason "Insufficient evidence" --workspace ./workspace
-```
-
-> **No proposal becomes an agent modification without passing the future controlled evolution pipeline.**
-
-## Isolated Evolution Sandbox
-
-The repository now includes a proposal-gated `SandboxEngine`. It independently verifies that a proposal is `APPROVED`, creates a unique experiment outside the production source root, snapshots a read-only baseline, creates a separate candidate copy, applies only a validated structured configuration change, runs a fixed pytest command under bounded isolation, captures output and errors, compares candidate and baseline results, persists the experiment, and cleans up the candidate directory.
-
-The sandbox uses an unprivileged user/mount/PID/network namespace where available, a read-only production bind mount, a sanitized environment, no host API keys or credential variables, a denied-by-default network namespace, a fixed test runner, a process timeout, and process-group termination. It excludes `.git`, runtime databases, checkpoints, caches, and workspace state from candidate copies. Production immutability is checked by a before/after manifest hash as an additional invariant.
-
-Only these structured targets are initially supported: strategy selection, strategy parameters, tool selection, retry/recovery configuration, planning configuration, and prompt/configuration parameters. Protected or unsupported targets fail closed. The candidate writes `evolution_config.json`; it does not execute generated code or rewrite arbitrary source files.
-
-Sandbox commands are:
-
-```bash
-evo --sandbox-proposal PROPOSAL_ID --source-root . --sandbox-root ../evo-sandboxes --workspace ./workspace
-evo --list-experiments --source-root . --sandbox-root ../evo-sandboxes --workspace ./workspace
-evo --show-experiment EXPERIMENT_ID --source-root . --sandbox-root ../evo-sandboxes --workspace ./workspace
-```
-
-> `PASSED` means the candidate test command passed in isolation. It does not mean the candidate is better, approved for production, promoted, or deployed.
-
-## Evolution Benchmark and Comparative Evaluation
-
-The repository now includes a deterministic `BenchmarkEngine` that evaluates an eligible, retained sandbox experiment against its baseline. It requires an approved proposal, a valid passed sandbox experiment, candidate metadata, and available baseline/candidate directories. It uses the same versioned benchmark, task cases, inputs, fixed runner, timeout, trial count, evaluation rules, and safety policy for both sides.
-
-The initial benchmark suite is intentionally small and repeatable. It checks isolated execution, candidate configuration presence, and verification-preserving behavior. Repeated trials record success, verification, score, timeout, output, errors, duration, step/recovery fields, version, deterministic seed, environment policy, and benchmark version. Aggregated metrics include success rate, verification rate, failure rate, timeout rate, mean score, duration, steps, retries, replans, strategy changes, recovery, and human interventions.
-
-The comparison policy is deterministic and conservative. `BETTER` requires the configured target metric to improve by the configured delta, verification to remain above its minimum, and no functional, verification, timeout, efficiency, or safety regression. `NO_CHANGE` means the target metric is within tolerance. `WORSE` is a hard result for regressions, target decline, insufficient verification, or safety-gate failure. `INCONCLUSIVE` is used for ineligible experiments or insufficient evidence. This phase reports descriptive statistics only and does not claim statistical significance.
-
-CLI commands are:
-
-```bash
-evo --list-benchmarks --workspace ./workspace --source-root .
-evo --run-benchmark BENCHMARK_ID --experiment EXPERIMENT_ID --workspace ./workspace --source-root .
-evo --show-evidence EVIDENCE_ID --workspace ./workspace --source-root .
-```
-
-Evidence is persisted in the existing SQLite database using `benchmarks`, `benchmark_trials`, and `evolution_evidence` tables. Every decision includes machine-readable metrics, regression and safety results, a human-readable explanation, version information, benchmark configuration, trial count, seed, timeout, and sandbox policy.
-
-> **Sandbox asks whether a candidate can execute safely. Benchmark asks whether it performs better. Promotion is a later phase.**
-
-## Controlled Promotion and Native Rollback
-
-The repository now includes a separate `PromotionEngine` for the final controlled transition from a benchmark-proven candidate to an immutable active version. Promotion requires all of the following: approved proposal, passed and retained sandbox experiment, valid `BETTER` evidence, no safety regression, matching candidate integrity, registered lineage, and explicit human promotion approval. Proposal approval authorizes experimentation only; it can never substitute for promotion approval.
-
-The version registry preserves source commit, parent version, proposal, experiment, evidence, manifest hash, immutable path, status, and metadata. It bootstraps a known-good `v0`, maintains a single `ACTIVE` version, retains the previous version, and keeps failed or rolled-back candidates available for investigation. Activation uses an atomic `active` symlink switch after staging and a final integrity check, so the previous version is never destructively overwritten.
-
-After activation, the engine verifies required agent files, database opening, safety-control presence, workspace protection, and a bounded smoke test. A failed health check automatically invokes the native rollback path to restore the checkpointed previous version. Manual rollback is also available. Rollback verifies the actual active pointer and restored manifest and preserves all promotion, experiment, benchmark, evidence, candidate, and audit history.
-
-Promotion commands are:
-
-```bash
-evo --list-versions --workspace ./workspace --source-root .
-evo --show-version VERSION_ID --workspace ./workspace --source-root .
-evo --request-promotion CANDIDATE_VERSION --evidence EVIDENCE_ID --workspace ./workspace --source-root .
-evo --approve-promotion PROMOTION_ID --proposal-reason "Promote verified candidate" --workspace ./workspace --source-root .
-evo --reject-promotion PROMOTION_ID --proposal-reason "Insufficient confidence" --workspace ./workspace --source-root .
-evo --promote PROMOTION_ID --workspace ./workspace --source-root .
-evo --rollback VERSION_ID --rollback-reason "Post-promotion regression" --workspace ./workspace --source-root .
-```
-
-> **Only an explicitly approved, benchmark-proven, integrity-verified candidate may become active. Every promotion remains reversible.**
-
-## Governed Metamorphosis Engine
-
-Phase 8 adds a **Governed Metamorphosis Engine** for bounded structural change. Metamorphosis means changing the declared composition, dependencies, configuration, or capability registry—not unrestricted source rewriting or autonomous self-modification. Every proposal contains a current and proposed architecture manifest, affected components, dependency and capability changes, migration steps, compatibility requirements, benchmark requirements, risks, and a reversible rollback plan.
-
-Only these structural change types are accepted: `ADD_COMPONENT`, `REMOVE_COMPONENT`, `REPLACE_COMPONENT`, `UPGRADE_COMPONENT`, `ADD_CAPABILITY`, `REMOVE_CAPABILITY`, `REWIRE_DEPENDENCY`, and `CHANGE_CONFIGURATION`. The engine computes a reverse dependency affected subgraph and validates required interfaces, dependencies, required capabilities, configuration shape, database/event compatibility fields, and security-policy compatibility. The architecture manifest is content-hashed and persisted in SQLite with component and capability registries.
-
-The protected core is explicit and code-enforced. Governance, permission enforcement, approval authority, sandbox isolation, verification authority, rollback authority, audit integrity, kill switch, trust boundaries, and promotion authorization are immutable from the metamorphosis path. Attempts to remove, replace, rewire, disable, or modify those boundaries fail closed before sandbox execution. Structural candidates are manifest/configuration-only; no generated code is executed and no production source is rewritten.
-
-Approval is deliberately separated into three independent gates. Evolution proposal approval authorizes the ordinary Phase 5 evolution sandbox. Metamorphosis approval authorizes only the structural candidate path. Promotion approval remains a separate Phase 7 decision. A metamorphosis approval never implies evolution approval or production promotion, and no engine autonomously grants any of these approvals.
-
-Structural experimentation reuses the existing `SandboxEngine`, including its outside-source-root candidate directories, read-only baseline, namespace isolation, sanitized environment, fixed test runner, timeout handling, cleanup, and production immutability checks. Comparative evaluation reuses the existing `BenchmarkEngine` and evidence tables. Only a structurally compatible candidate with `BETTER` evidence can be handed to the existing `PromotionEngine`; activation still requires its separate human approval, atomic active-pointer switch, health verification, and native rollback. There is no parallel promotion or rollback system.
-
-Phase 8 inspection commands are:
-
-```bash
-evo --list-components --workspace ./workspace --source-root .
-evo --show-architecture --workspace ./workspace --source-root .
-evo --analyze-metamorphosis "add capability for structured context" --workspace ./workspace --source-root .
-evo --list-metamorphosis --workspace ./workspace --source-root .
-evo --show-metamorphosis METAMORPHOSIS_ID --workspace ./workspace --source-root .
-evo --approve-metamorphosis METAMORPHOSIS_ID --proposal-reason "Authorize structural experimentation" --workspace ./workspace --source-root .
-```
-
-> **Metamorphosis may propose and test bounded structural alternatives; it cannot approve itself, mutate production, disable governance, bypass verification, deploy autonomously, self-replicate, or rewrite arbitrary source.**
-
-
-## Governed Evolution Orchestrator
-
-Phase 9 adds the **Governed Evolution Orchestrator**, a persistent conductor over the existing Experience, Evaluation, Flexibility, Evolver, Metamorphosis, Sandbox, Benchmark, Promotion, and Rollback engines. It observes persisted experience, detects evidence-backed opportunities, classifies them deterministically, selects the smallest effective path, and records every lifecycle decision. The orchestrator coordinates specialized authorities; it does not replace or override them.
-
-The routing policy is conservative. A context-specific failure is routed to runtime-only Flexibility first. Repeated evidence can route to the proposal-only Controlled Evolver. An architectural, component, or capability limitation can route to the Phase 8 Metamorphosis Engine. Uncertain evidence becomes `INCONCLUSIVE`, and a non-justified change becomes `NO_CHANGE`; neither path creates a proposal.
-
-Each opportunity becomes a persistent `EvolutionWorkItem` with source evidence, source and architecture versions, selected path, proposal/experiment/benchmark/evidence/promotion lineage, attempt count, cooldown, state, and last error. Valid state transitions are enforced in code. No work item can jump from proposal, benchmark, or evidence directly to production. Only the existing Phase 7 PromotionEngine can activate a candidate, and it still requires its independent promotion approval, integrity checks, health verification, and native rollback.
-
-The orchestrator uses the existing SQLite database for `evolution_opportunities`, `evolution_work_items`, `orchestration_events`, `approval_requests`, `experiment_queue`, `promotion_queue`, and `evolution_cooldowns`. Approval requests distinguish evolution approval, metamorphosis approval, and promotion approval. The orchestrator may create and persist requests, but it cannot approve them itself. Promotion queue admission occurs only after `BETTER` evidence and a separate human promotion approval are recorded.
-
-Execution is bounded by a conservative `OrchestrationPolicy`, including maximum work items, experiments, promotions, failed attempts, same-opportunity attempts, and cooldown intervals. `evo --run-orchestrator` performs one observe/detect/classify/route/process cycle and stops. It does not start an uncontrolled daemon or infinite self-improvement loop. A file-backed exclusive lock serializes concurrent orchestrator processes, while version and architecture revalidation blocks stale work before sandbox or promotion execution.
-
-Restart recovery reloads work items, queue records, experiments, evidence, promotion records, and the actual active version. Interrupted sandbox or benchmark work is never blindly retried; incomplete state is safely marked failed or inconclusive unless an authoritative persisted result permits resumption. Interrupted promotion state is reconciled through Phase 7’s actual active-version and rollback authority.
-
-Phase 9 commands are:
-
-```bash
 evo --list-opportunities --workspace ./workspace --source-root .
 evo --show-opportunity OPPORTUNITY_ID --workspace ./workspace --source-root .
 evo --list-work-items --workspace ./workspace --source-root .
